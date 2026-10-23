@@ -289,6 +289,38 @@ def project_of(key):
     return key.split("-")[0].upper()
 
 
+def quote_query_value(value):
+    """Double-quotes a JQL/CQL value, so keys that are reserved words (AS, IN, ...) still parse."""
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def scope_clause(field, keys):
+    quoted = [quote_query_value(k) for k in keys]
+    return f"{field} = {quoted[0]}" if len(quoted) == 1 else f"{field} in ({', '.join(quoted)})"
+
+
+ORDER_BY_RE = re.compile(r"order\s+by\b", re.I)
+
+
+def split_order_by(query):
+    """Splits 'clauses ORDER BY x' into ('clauses', 'ORDER BY x'), ignoring ORDER BY inside quotes."""
+    quote, i = None, 0
+    while i < len(query):
+        ch = query[i]
+        if quote:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+        elif (i == 0 or not (query[i - 1].isalnum() or query[i - 1] == "_")) and ORDER_BY_RE.match(query, i):
+            return query[:i].strip(), query[i:].strip()
+        i += 1
+    return query.strip(), ""
+
+
 class _HtmlToText(HTMLParser):
     BLOCK = {"p", "div", "tr", "pre", "blockquote", "table", "ul", "ol", "ac:structured-macro"}
 
@@ -557,15 +589,12 @@ def fmt_issue_line(issue):
 
 def cmd_jira_search(args):
     c = jira_client(args, project=args.project)
-    projects = split_keys(args.project)
-    scope = f"project = {projects[0]}" if len(projects) == 1 else f"project in ({', '.join(projects)})"
-    jql = args.jql.strip()
-    if not jql:
-        jql = scope
-    elif jql.lower().startswith("order by"):
-        jql = f"{scope} {jql}"
-    else:
-        jql = f"{scope} AND ({jql})"
+    where, order = split_order_by(args.jql)
+    jql = scope_clause("project", split_keys(args.project))
+    if where:
+        jql += f" AND ({where})"
+    if order:
+        jql += f" {order}"
     fields = args.fields.split(",") if args.fields else ["summary", "status", "issuetype", "assignee", "priority", "updated"]
     issues, token, is_last = [], None, True
     while len(issues) < args.limit:
@@ -794,12 +823,15 @@ def cmd_conf_spaces(args):
 def cmd_conf_search(args):
     if not args.cql and not args.text:
         die("give a CQL query or --text")
-    clauses = [args.cql] if args.cql else [f'text ~ "{args.text}"']
-    spaces = split_keys(args.space)
-    clauses.append(f"space = {spaces[0]}" if len(spaces) == 1 else f"space in ({', '.join(spaces)})")
+    if args.cql:
+        where, order = split_order_by(args.cql)
+        clauses = [f"({where})"] if where else []
+    else:
+        clauses, order = [f"text ~ {quote_query_value(args.text)}"], ""
+    clauses.append(scope_clause("space", split_keys(args.space)))
     if args.type:
         clauses.append(f"type = {args.type}")
-    cql = " AND ".join(f"({c})" if " or " in c.lower() else c for c in clauses)
+    cql = " AND ".join(clauses) + (f" {order}" if order else "")
     c = conf_client(args, space=args.space)
     r = c.get("/wiki/rest/api/search", cql=cql, limit=args.limit)
     if args.json:
