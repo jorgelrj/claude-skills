@@ -1,0 +1,15 @@
+{
+  "name": "jorgelrj-skills",
+  "description": "Reusable Claude Code skills",
+  "owner": {
+    "name": "Jorge Luis",
+    "url": "https://github.com/jorgelrj"
+  },
+  "plugins": [
+    {
+      "name": "atlassian-multi",
+      "source": "./plugins/atlassian-multi",
+      "description": "Jira + Confluence Cloud across several Atlassian accounts, routed by project so nothing hits the wrong site"
+    }
+  ]
+}

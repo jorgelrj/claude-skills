@@ -1,0 +1,11 @@
+{
+  "name": "atlassian-multi",
+  "version": "0.1.0",
+  "description": "Jira + Confluence Cloud across several Atlassian accounts, routed by project so nothing hits the wrong site",
+  "author": {
+    "name": "Jorge Luis",
+    "url": "https://github.com/jorgelrj"
+  },
+  "repository": "https://github.com/jorgelrj/claude-skills",
+  "keywords": ["jira", "confluence", "atlassian"]
+}

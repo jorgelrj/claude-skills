@@ -7,17 +7,21 @@ Windows/WSL.
 
 ## Install
 
-Copy or symlink this folder into a skills directory:
+From the [jorgelrj-skills](../../../../README.md) marketplace:
 
 ```sh
-ln -s "$PWD/skills/atlassian-multi" ~/.claude/skills/atlassian-multi   # all projects
-# or: <project>/.claude/skills/atlassian-multi                          # one project
+claude plugin marketplace add jorgelrj/claude-skills
+claude plugin install atlassian-multi@jorgelrj-skills
 ```
 
-Optionally put the CLI on your PATH:
+Then ask Claude to "add a Jira account". It gives you the exact `accounts add`
+command for where the plugin is installed. Run that command in your own
+terminal, because it prompts for the API token.
+
+To use the CLI outside Claude, clone the repo and put the script on your PATH:
 
 ```sh
-ln -s "$PWD/skills/atlassian-multi/scripts/atl.py" ~/.local/bin/atl
+ln -s "$PWD/plugins/atlassian-multi/skills/atlassian-multi/scripts/atl.py" ~/.local/bin/atl
 ```
 
 ## Accounts
@@ -74,7 +78,7 @@ the full command reference Claude follows.
 ## Tests
 
 ```sh
-python3 -m unittest discover -s skills/atlassian-multi/tests -v
+python3 -m unittest discover -s plugins/atlassian-multi/skills/atlassian-multi/tests -v
 ```
 
 The tests run the CLI end to end against two fake Atlassian sites on
