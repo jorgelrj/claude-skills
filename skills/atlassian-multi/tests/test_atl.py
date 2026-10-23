@@ -136,7 +136,7 @@ class FakeSite:
 class AtlTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.work = FakeSite("me@work.com", "work-token", ["WRK", "OPS"], ["ENG"])
+        cls.work = FakeSite("me@work.com", "work-token", ["WRK", "OPS", "AS"], ["ENG", "IN"])
         cls.client = FakeSite("me@client.com", "client-token", ["DB"], ["DOCS"])
 
     def setUp(self):
@@ -169,8 +169,8 @@ class AtlTest(unittest.TestCase):
         self.add_both()
         cfg = json.loads(self.cfg.read_text())
         self.assertNotIn("default", cfg)
-        self.assertEqual(cfg["accounts"]["work"]["projects"], ["OPS", "WRK"])
-        self.assertEqual(cfg["accounts"]["work"]["spaces"], ["ENG"])  # personal ~space skipped
+        self.assertEqual(cfg["accounts"]["work"]["projects"], ["AS", "OPS", "WRK"])
+        self.assertEqual(cfg["accounts"]["work"]["spaces"], ["ENG", "IN"])  # personal ~space skipped
         self.assertEqual(stat.S_IMODE(self.cfg.stat().st_mode), 0o600)
 
     def test_add_rejects_bad_token_and_saves_nothing(self):
@@ -270,17 +270,42 @@ class AtlTest(unittest.TestCase):
         out = self.atl("jira", "search", "-p", "DB", "status = 'To Do'").stdout
         self.assertIn("# client: 3 issue(s)", out)
         req = self.client.last("POST", "/rest/api/2/search/jql")
-        self.assertEqual(req["body"]["jql"], "project = DB AND (status = 'To Do')")
+        self.assertEqual(req["body"]["jql"], "project = \"DB\" AND (status = 'To Do')")
         self.assertEqual(req["auth"], self.client.auth)
 
     def test_multi_project_search_and_flag_after_subcommand(self):
         self.add_both()
         self.atl("jira", "search", "-p", "wrk,OPS", "--account", "work", "assignee = currentUser()")
         self.assertEqual(self.work.last("POST", "/rest/api/2/search/jql")["body"]["jql"],
-                         "project in (WRK, OPS) AND (assignee = currentUser())")
+                         'project in ("WRK", "OPS") AND (assignee = currentUser())')
         self.atl("jira", "search", "-p", "DB")
         self.assertEqual(self.client.last("POST", "/rest/api/2/search/jql")["body"]["jql"],
-                         "project = DB ORDER BY updated DESC")
+                         'project = "DB" ORDER BY updated DESC')
+
+    def test_search_keeps_order_by_outside_the_scope(self):  # issue #1
+        self.add_both()
+        self.atl("jira", "search", "-p", "DB",
+                 "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC")
+        self.assertEqual(self.client.last("POST", "/rest/api/2/search/jql")["body"]["jql"],
+                         'project = "DB" AND (assignee = currentUser() AND statusCategory != Done) ORDER BY updated DESC')
+        self.atl("jira", "search", "-p", "DB", 'summary ~ "sort order by date" order  by created')
+        self.assertEqual(self.client.last("POST", "/rest/api/2/search/jql")["body"]["jql"],
+                         'project = "DB" AND (summary ~ "sort order by date") order  by created')
+        self.atl("jira", "search", "-p", "DB", "reorder_by = 1")  # not an ORDER BY
+        self.assertEqual(self.client.last("POST", "/rest/api/2/search/jql")["body"]["jql"],
+                         'project = "DB" AND (reorder_by = 1)')
+
+    def test_reserved_word_keys_are_quoted(self):  # issue #2
+        self.add_both()
+        self.atl("jira", "search", "-p", "AS,WRK", "assignee = currentUser()")
+        self.assertEqual(self.work.last("POST", "/rest/api/2/search/jql")["body"]["jql"],
+                         'project in ("AS", "WRK") AND (assignee = currentUser())')
+        self.atl("conf", "search", "--space", "IN,ENG", 'title ~ "x" ORDER BY created DESC')
+        self.assertEqual(self.work.last("GET", "/wiki/rest/api/search")["query"]["cql"][0],
+                         '(title ~ "x") AND space in ("IN", "ENG") ORDER BY created DESC')
+        self.atl("conf", "search", "--space", "ENG", "--text", 'say "hi"')
+        self.assertEqual(self.work.last("GET", "/wiki/rest/api/search")["query"]["cql"][0],
+                         'text ~ "say \\"hi\\"" AND space = "ENG"')
 
     def test_get_issue_from_url(self):
         self.add_both()
@@ -341,7 +366,7 @@ class AtlTest(unittest.TestCase):
         self.assertIn("42", out)
         self.assertNotIn("@@@", out)
         cql = self.client.last("GET", "/wiki/rest/api/search")["query"]["cql"][0]
-        self.assertEqual(cql, 'text ~ "deploy" AND space = DOCS AND type = page')
+        self.assertEqual(cql, 'text ~ "deploy" AND space = "DOCS" AND type = page')
 
     def test_conf_get_text(self):
         self.add_both()
