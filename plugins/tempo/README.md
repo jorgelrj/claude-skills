@@ -4,20 +4,29 @@ Task Execution & Multi-agent Pipeline Orchestrator. A Claude Code plugin that ta
 
 Architecture (draft 2): https://claude.ai/artifact/AuXx9nGXWqDxLeG72K1abT
 
-## Install for testing
+## Install
 
-From inside the project you want to test on:
+TEMPO ships in the `jorgelrj-skills` marketplace (this repo):
 
 ```bash
-# Option A: load straight from this folder for one session
-claude --plugin-dir /Volumes/MySSD/Projects/tempo
-
-# Option B: install through the local marketplace (persists)
-/plugin marketplace add /Volumes/MySSD/Projects/tempo
-/plugin install tempo@tempo-local
+claude plugin marketplace add jorgelrj/claude-skills
+claude plugin install tempo@jorgelrj-skills
 ```
 
-After editing files here, restart Claude Code (Option A) or run `/plugin marketplace update tempo-local` and reinstall (Option B).
+## Install for testing
+
+From inside the project you want to test on, with `<claude-skills>` being your checkout of this repo:
+
+```bash
+# Option A: load straight from the working tree for one session
+claude --plugin-dir <claude-skills>/plugins/tempo
+
+# Option B: register the checkout as a local marketplace (persists)
+/plugin marketplace add <claude-skills>
+/plugin install tempo@jorgelrj-skills
+```
+
+After editing files here, restart Claude Code (Option A) or run `/plugin marketplace update jorgelrj-skills` and reinstall (Option B).
 
 ## Use
 
@@ -73,8 +82,7 @@ Every stop comes with a recommended answer, so "yes" is always enough.
 
 ```
 .claude-plugin/
-  plugin.json                 plugin manifest
-  marketplace.json            local marketplace so /plugin install works
+  plugin.json                 plugin manifest (listed in the repo root's marketplace.json)
 commands/
   feature.md  bug.md  plan.md  resume.md  init.md
 agents/

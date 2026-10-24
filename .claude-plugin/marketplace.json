@@ -10,6 +10,11 @@
       "name": "atlassian-multi",
       "source": "./plugins/atlassian-multi",
       "description": "Jira + Confluence Cloud across several Atlassian accounts, routed by project so nothing hits the wrong site"
+    },
+    {
+      "name": "tempo",
+      "source": "./plugins/tempo",
+      "description": "TEMPO feature and bug-fix flows: Triage, Explore, Spec, Work Orders, parallel Build, Integrate, Review, QA and PR"
     }
   ]
 }

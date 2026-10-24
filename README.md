@@ -6,12 +6,14 @@ of reusable skills, named `jorgelrj-skills`.
 | Plugin | What it does |
 |---|---|
 | [atlassian-multi](plugins/atlassian-multi/skills/atlassian-multi) | Jira + Confluence Cloud across several Atlassian accounts, routed by project so nothing hits the wrong site |
+| [tempo](plugins/tempo) | Task Execution & Multi-agent Pipeline Orchestrator: feature and bug-fix flows from request to pull request, with parallel builders and review/QA loops |
 
 ## Install
 
 ```sh
 claude plugin marketplace add jorgelrj/claude-skills
 claude plugin install atlassian-multi@jorgelrj-skills
+claude plugin install tempo@jorgelrj-skills
 ```
 
 Or, inside a session (Claude Code 2.1.275+), in one step:
@@ -32,6 +34,7 @@ plugins/<plugin>/.claude-plugin/plugin.json     # plugin manifest (name must mat
 plugins/<plugin>/skills/<skill>/SKILL.md        # the skill
 plugins/<plugin>/skills/<skill>/scripts/        # code the skill runs
 plugins/<plugin>/skills/<skill>/tests/          # tests for that code
+plugins/<plugin>/commands/, agents/             # slash commands and subagents, when a plugin has them (see tempo)
 ```
 
 ## Adding a plugin
@@ -52,6 +55,7 @@ Load a plugin straight from the working tree, with no install:
 
 ```sh
 claude --plugin-dir plugins/atlassian-multi
+claude --plugin-dir plugins/tempo
 ```
 
 Or register this checkout as a local marketplace. Edits then show up at the
