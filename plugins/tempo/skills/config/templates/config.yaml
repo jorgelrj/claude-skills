@@ -1,0 +1,51 @@
+# yaml-language-server: $schema={{schema-path}}
+# TEMPO repo config. Every key is optional; delete what you do not need.
+# Values here override the workspace file and the built-in defaults.
+version: 1
+
+# toolchain: maven21            # a toolchain from the workspace file
+
+env: {}                         # exported for every command, e.g. JAVA_HOME
+
+commands:                       # null = not available; unset = detect from the repo
+  test: npm test
+  test_one: npm test -- {pattern}
+  build: npm run build
+  typecheck: npm run typecheck
+  lint: npm run lint
+  run_app: null
+
+git:
+  base_branch: main
+  branch: "feat/{ticket}"       # task branch = integration branch = PR branch
+  work_order_branch: "{branch}-wo-{nn}"
+  repro_branch: "{branch}-repro"
+  worktree_root: .tempo/worktrees
+  commit:
+    message: "{type}({ticket}): {summary}"
+    language: en
+    extra_args: []              # e.g. [--no-verify]
+
+pr:
+  draft: true
+  tool: gh                      # gh | none
+  title: "{type}({ticket}): {summary}"
+  language: en
+
+worktree:                       # a new worktree has only tracked files
+  copy: []                      # gitignored files to copy, e.g. [.env.local]
+  link: []                      # big gitignored folders to symlink, e.g. [node_modules]
+  setup: []                     # commands run inside the new worktree, in order
+  env: {}
+
+limits:
+  max_parallel_builders: 3
+  review_rounds: 3
+  qa_rounds: 3
+  repro_hypotheses: 3
+  repro_minutes: 30
+
+task:
+  id: ticket                    # ticket | sequence
+  ticket_pattern: "[A-Z][A-Z0-9]+-\\d+"
+  tracker: none                 # jira | github | linear | none
