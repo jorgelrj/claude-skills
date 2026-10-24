@@ -389,19 +389,30 @@ def migrate_md(text):
 
 # ---------- CLI ----------
 
+class Parser(argparse.ArgumentParser):
+    # Usage errors exit 1; 2 is reserved for a missing dependency (the orchestrator's uv fallback).
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(1, f"{self.prog}: error: {message}\n")
+
+
 def main(argv=None):
-    p = argparse.ArgumentParser(prog="tempo_config.py", description=__doc__.split("\n")[0])
+    p = Parser(prog="tempo_config.py", description=__doc__.split("\n")[0])
     p.add_argument("--repo", default=".")
+    # --repo is also accepted after the subcommand; SUPPRESS keeps a root value when it is absent there.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--repo", default=argparse.SUPPRESS)
     sp = p.add_subparsers(dest="cmd", required=True)
-    c = sp.add_parser("check"); c.add_argument("files", nargs="*")
-    r = sp.add_parser("resolve"); r.add_argument("--format", choices=["json", "yaml"], default="json")
-    n = sp.add_parser("names")
+    add = lambda name: sp.add_parser(name, parents=[common])
+    c = add("check"); c.add_argument("files", nargs="*")
+    r = add("resolve"); r.add_argument("--format", choices=["json", "yaml"], default="json")
+    n = add("names")
     n.add_argument("--task", required=True); n.add_argument("--ticket"); n.add_argument("--slug")
     n.add_argument("--wo", type=int, nargs="*", default=[])
-    m = sp.add_parser("cmd"); m.add_argument("name"); m.add_argument("--var", action="append", default=[])
-    s = sp.add_parser("setup"); s.add_argument("--worktree", required=True)
-    sp.add_parser("repos")
-    g = sp.add_parser("migrate"); g.add_argument("file")
+    m = add("cmd"); m.add_argument("name"); m.add_argument("--var", action="append", default=[])
+    s = add("setup"); s.add_argument("--worktree", required=True)
+    add("repos")
+    g = add("migrate"); g.add_argument("file")
     a = p.parse_args(argv)
 
     try:
