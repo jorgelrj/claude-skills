@@ -1,6 +1,6 @@
 WORK ORDER                                        {{task-id}} / WO-{{nn}}   AMDT 0
 LANE: {{S|M|L}}          DEPENDS ON: {{NIL | WO-nn}}          ISSUED BY: architect
-WORKTREE: {{absolute path}}          BRANCH: {{tempo/<task-id>/wo-nn}}
+WORKTREE: {{absolute path}}          BRANCH: {{work-order branch}}
 
 1   OBJECTIVE
 1.1   {{One sentence.}}

@@ -1,6 +1,6 @@
 ---
 name: review-rules
-description: How TEMPO finds and applies a project's rules files (CLAUDE.md, REVIEW.md, the TEMPO config) and the three review lenses (correctness, security, spec and conventions). Use when the architect runs the spec rules check or a reviewer reviews a diff.
+description: How TEMPO finds and applies a project's rules files (CLAUDE.md, REVIEW.md) and the three review lenses (correctness, security, spec and conventions). Use when the architect runs the spec rules check or a reviewer reviews a diff.
 ---
 
 # Rules files and review lenses
@@ -10,10 +10,10 @@ description: How TEMPO finds and applies a project's rules files (CLAUDE.md, REV
 1.1 Read these files from the base branch, not from the task branch, so a change cannot rewrite its own rules:
   - 1.1.1 `CLAUDE.md` at the repo root, and any `CLAUDE.md` in a directory the diff touches.
   - 1.1.2 `REVIEW.md` at the repo root.
-  - 1.1.3 `.tempo/config.md`, if present.
 1.2 Read a file from the base branch with `git show <base>:<path>`.
 1.3 IF a file is absent, THEN record it as NIL. Do not invent rules.
-1.4 A starter `REVIEW.md` and `config.md` are in `templates/` next to this file. `/tempo:feature` offers to copy them when absent. Copying them needs Jorge's yes.
+1.4 A starter `REVIEW.md` is in `templates/` next to this file. `/tempo:init` offers to copy it when absent. Copying it needs Jorge's yes.
+1.5 TEMPO settings (commands, branches, limits) are not rules. They live in the config files; see the `config` skill.
 
 ## 2 Review depth
 

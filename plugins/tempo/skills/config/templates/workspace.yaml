@@ -1,0 +1,31 @@
+# yaml-language-server: $schema={{schema-path}}
+# TEMPO workspace config: a folder that holds several git repos.
+# Each repo can still have its own .tempo/config.yaml, which wins over this file.
+version: 1
+workspace:
+  name: my-workspace
+
+defaults:                       # same keys as a repo config.yaml
+  git:
+    base_branch: develop
+    branch: "feat/{ticket}"
+  pr:
+    draft: true
+
+toolchains:                     # named env + commands, shared by repos
+  node20:
+    env: {}
+    commands:
+      test: npm test
+      build: npm run build
+    worktree:
+      setup: [npm ci]
+
+repos:                          # path is relative to this workspace folder
+  api:
+    path: services/api
+    toolchain: node20
+  web:
+    path: apps/web
+    toolchain: node20
+    depends_on: [api]           # web's change builds on api's

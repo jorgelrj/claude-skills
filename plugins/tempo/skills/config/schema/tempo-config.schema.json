@@ -1,0 +1,406 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tempo.local/schema/tempo-config.schema.json",
+  "title": "TEMPO config",
+  "description": "One schema for both TEMPO config files: a repo's .tempo/config.yaml and a workspace's .tempo/workspace.yaml. A file with a 'workspace' key is a workspace file.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/repoFile"
+    },
+    {
+      "$ref": "#/$defs/workspaceFile"
+    }
+  ],
+  "$defs": {
+    "template": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Text with placeholders in single braces, filled at run time: {ticket} {task} {slug} {branch} {nn} {type} {summary} {pattern} {module}. ${env:NAME}, ${workspace} and ${repo} are filled when the config is resolved."
+    },
+    "command": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Shell command run from the repo or worktree root. null means not available."
+    },
+    "env": {
+      "type": "object",
+      "description": "Environment variables set for every command, worktree setup step and agent shell.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "commands": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "test": {
+          "$ref": "#/$defs/command"
+        },
+        "test_one": {
+          "$ref": "#/$defs/command",
+          "description": "Runs one test or pattern. Use {pattern}, and {module} for multi-module builds."
+        },
+        "build": {
+          "$ref": "#/$defs/command"
+        },
+        "typecheck": {
+          "$ref": "#/$defs/command"
+        },
+        "lint": {
+          "$ref": "#/$defs/command"
+        },
+        "run_app": {
+          "$ref": "#/$defs/command"
+        }
+      }
+    },
+    "git": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "base_branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "branch": {
+          "$ref": "#/$defs/template",
+          "description": "The task branch. It is the integration branch and the PR branch. Example: feat/{ticket}."
+        },
+        "work_order_branch": {
+          "$ref": "#/$defs/template",
+          "description": "One per Work Order. SHALL NOT be '{branch}/...': git cannot hold a branch and a branch below it. Example: {branch}-wo-{nn}."
+        },
+        "repro_branch": {
+          "$ref": "#/$defs/template",
+          "description": "Bug flow reproduction branch. Example: {branch}-repro."
+        },
+        "worktree_root": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Relative to the repo root unless absolute."
+        },
+        "delete_merged_local_branches": {
+          "type": "boolean",
+          "description": "After SHIP, delete local work-order and repro branches already merged into the task branch. Never touches remote branches."
+        },
+        "commit": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "$ref": "#/$defs/template",
+              "description": "Example: {type}({ticket}): {summary}."
+            },
+            "language": {
+              "type": "string",
+              "description": "BCP 47 tag for commit messages, for example en or pt-BR."
+            },
+            "extra_args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Appended to every git commit, for example --no-verify."
+            }
+          }
+        }
+      }
+    },
+    "pr": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "draft": {
+          "type": "boolean"
+        },
+        "tool": {
+          "enum": [
+            "gh",
+            "none"
+          ],
+          "description": "none: TEMPO pushes nothing and prints the commands."
+        },
+        "base": {
+          "type": "string",
+          "description": "Defaults to git.base_branch."
+        },
+        "title": {
+          "$ref": "#/$defs/template",
+          "description": "Example: feat({ticket}): {summary}."
+        },
+        "language": {
+          "type": "string",
+          "description": "BCP 47 tag for the PR title and body."
+        },
+        "body_template": {
+          "type": "string",
+          "description": "Path to a markdown file used as the PR body layout, relative to the repo root. Default: .github/pull_request_template.md when present."
+        }
+      }
+    },
+    "worktree": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "How to make a new worktree usable. A worktree has only tracked files.",
+      "properties": {
+        "copy": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Gitignored files or folders copied from the main checkout, relative to the repo root (.env files, local secrets, generated config)."
+        },
+        "link": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Gitignored folders symlinked instead of copied (large caches such as node_modules)."
+        },
+        "setup": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Commands run in order inside the new worktree after copy and link."
+        },
+        "env": {
+          "$ref": "#/$defs/env"
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_parallel_builders": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "review_rounds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "qa_rounds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "repro_hypotheses": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "repro_minutes": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 240
+        }
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "enum": [
+            "ticket",
+            "sequence"
+          ],
+          "description": "ticket: the task ID is the ticket key found in the request (falls back to sequence). sequence: T-001, T-002 ..."
+        },
+        "ticket_pattern": {
+          "type": "string",
+          "description": "Regex for ticket keys, for example [A-Z]+-\\d+."
+        },
+        "tracker": {
+          "enum": [
+            "jira",
+            "github",
+            "linear",
+            "none"
+          ]
+        }
+      }
+    },
+    "repoFile": {
+      "type": "object",
+      "required": [
+        "version"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "toolchain": {
+          "type": "string",
+          "description": "Name of a toolchain in the workspace file."
+        },
+        "env": {
+          "$ref": "#/$defs/env"
+        },
+        "commands": {
+          "$ref": "#/$defs/commands"
+        },
+        "git": {
+          "$ref": "#/$defs/git"
+        },
+        "pr": {
+          "$ref": "#/$defs/pr"
+        },
+        "worktree": {
+          "$ref": "#/$defs/worktree"
+        },
+        "limits": {
+          "$ref": "#/$defs/limits"
+        },
+        "task": {
+          "$ref": "#/$defs/task"
+        }
+      }
+    },
+    "toolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "extends": {
+          "type": "string"
+        },
+        "env": {
+          "$ref": "#/$defs/env"
+        },
+        "commands": {
+          "$ref": "#/$defs/commands"
+        },
+        "worktree": {
+          "$ref": "#/$defs/worktree"
+        }
+      }
+    },
+    "repoEntry": {
+      "type": "object",
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Repo root, relative to the workspace root."
+        },
+        "depends_on": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Repos whose change this repo builds on. Sets the order of per-repo tasks."
+        },
+        "description": {
+          "type": "string"
+        },
+        "toolchain": {
+          "type": "string",
+          "description": "Name of a toolchain in the workspace file."
+        },
+        "env": {
+          "$ref": "#/$defs/env"
+        },
+        "commands": {
+          "$ref": "#/$defs/commands"
+        },
+        "git": {
+          "$ref": "#/$defs/git"
+        },
+        "pr": {
+          "$ref": "#/$defs/pr"
+        },
+        "worktree": {
+          "$ref": "#/$defs/worktree"
+        },
+        "limits": {
+          "$ref": "#/$defs/limits"
+        },
+        "task": {
+          "$ref": "#/$defs/task"
+        }
+      }
+    },
+    "workspaceFile": {
+      "type": "object",
+      "required": [
+        "version",
+        "workspace"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "workspace": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            }
+          }
+        },
+        "defaults": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "toolchain": {
+              "type": "string",
+              "description": "Name of a toolchain in the workspace file."
+            },
+            "env": {
+              "$ref": "#/$defs/env"
+            },
+            "commands": {
+              "$ref": "#/$defs/commands"
+            },
+            "git": {
+              "$ref": "#/$defs/git"
+            },
+            "pr": {
+              "$ref": "#/$defs/pr"
+            },
+            "worktree": {
+              "$ref": "#/$defs/worktree"
+            },
+            "limits": {
+              "$ref": "#/$defs/limits"
+            },
+            "task": {
+              "$ref": "#/$defs/task"
+            }
+          },
+          "description": "Settings every repo in the workspace starts from."
+        },
+        "toolchains": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/toolchain"
+          }
+        },
+        "repos": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/repoEntry"
+          }
+        }
+      }
+    }
+  }
+}

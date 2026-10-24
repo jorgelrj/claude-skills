@@ -6,7 +6,7 @@ argument-hint: <task-id> [your answer]
 Resume TEMPO task: $ARGUMENTS
 
 1. Load the TEMPO `orchestrator` skill (listed as `tempo:orchestrator` when installed as a plugin) and follow it.
-2. The first word above is the task ID, for example `T-042`. Everything after it is my answer to the open escalation, if any.
+2. The first word above is the task ID, for example `AV-5696` or `T-042`. Everything after it is my answer to the open escalation, if any.
 3. IF no task ID is given, THEN list the tasks in `.tempo/` with their stage and status from each `state.md`, and ask which one to resume. Stop.
 4. Read `.tempo/<task-id>/state.md`. Trust the files over the state: confirm that the artifacts named in the stage log exist and pass the document checker.
 5. IF the state is WAITING-ON-JORGE:

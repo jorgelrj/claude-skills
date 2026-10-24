@@ -1,3 +1,4 @@
 .tempo-plugin-upload.tgz
 .DS_Store
 __pycache__/
+.sync.tgz

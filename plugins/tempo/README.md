@@ -26,8 +26,25 @@ After editing files here, restart Claude Code (Option A) or run `/plugin marketp
 | `/tempo:feature <request>` | Feature flow: Triage → Explore → Spec → Work Orders → parallel Build → Integrate → Review → QA → PR |
 | `/tempo:bug <report>` | Bug flow: [Investigate] → Reproduce (failing test) → Root cause → Fix → Integrate → Review + sibling sweep → QA → PR |
 | `/tempo:resume <task-id> [answer]` | Continue a task from its last artifact, or answer the question it is waiting on |
+| `/tempo:init [repo\|workspace] [notes]` | Write or update the TEMPO config for a repo or a multi-repo workspace, detected from the code |
 
-Everything for a task lives in `.tempo/<task-id>/` in the target repo. TEMPO adds `.tempo/` to `.git/info/exclude`, so artifacts never show up in the diff.
+Everything for a task lives in `.tempo/<task-id>/` in the target repo. The task ID is the ticket key when the request names one (`AV-5696`), else `T-NNN`. TEMPO adds `.tempo/` to `.git/info/exclude`, so artifacts and config never show up in the diff.
+
+## Config
+
+YAML, checked against `skills/config/schema/tempo-config.schema.json`. Later files win:
+
+1. `skills/config/defaults.yaml` (built in)
+2. `<workspace>/.tempo/workspace.yaml`: shared defaults, named toolchains, and the repos of a multi-repo workspace with their `depends_on` order
+3. `<repo>/.tempo/config.yaml`
+
+```bash
+uv run skills/config/scripts/tempo_config.py --repo <repo> check      # validate
+uv run skills/config/scripts/tempo_config.py --repo <repo> resolve    # merged result
+uv run skills/config/scripts/tempo_config.py migrate <repo>/.tempo/config.md > <repo>/.tempo/config.yaml
+```
+
+See `skills/config/SKILL.md` for every key and subcommand. A legacy `.tempo/config.md` still works and is converted on the fly with a warning.
 
 ## Where Jorge is needed
 
@@ -42,7 +59,7 @@ Every stop comes with a recommended answer, so "yes" is always enough.
   plugin.json                 plugin manifest
   marketplace.json            local marketplace so /plugin install works
 commands/
-  feature.md  bug.md  resume.md
+  feature.md  bug.md  resume.md  init.md
 agents/
   triage.md        classify, clarity check, size, route → task.md
   scout.md         read-only explorer, one lens per instance → merged into context.md
@@ -60,8 +77,8 @@ skills/
   artifact-templates/        one template per artifact in templates/
   triage-rubric/             clarity questions, task types, S/M/L lanes, routes
   review-rules/              rules files, review depth, the three lenses
+  config/                    config schema, defaults, starters, scripts/tempo_config.py
     templates/REVIEW.md      starter REVIEW.md for a target repo
-    templates/config.md      starter .tempo/config.md (commands, limits, branches)
 ```
 
 ## Document checker
@@ -75,12 +92,12 @@ It reads each document type's required sections from its template, so editing a 
 ## How it runs inside Claude Code
 
 - The main session is the orchestrator. Subagents cannot start other subagents, so the orchestrator starts every agent, including the parallel scouts, builders and reviewers.
-- Each builder gets its own git worktree at `.tempo/worktrees/<task-id>-wo-NN` on branch `tempo/<task-id>/wo-NN`. The integrator merges them into `tempo/<task-id>`, which becomes the PR branch.
+- Each builder gets its own git worktree at `.tempo/worktrees/<task-id>-wo-NN` on the work-order branch (default `{branch}-wo-{nn}`), prepared by the config's `worktree:` steps. The integrator merges them into the task branch (`git.branch`, e.g. `feat/{ticket}`), which becomes the PR branch.
 - Models are set per agent in the frontmatter (`opus` for architect, investigator, reproducer, reviewer, verifier; `sonnet` for the rest). Change them freely.
 
 ## Things to tune after the first test runs
 
 - Size thresholds in `skills/triage-rubric/SKILL.md` §3.
 - The vague-word list in `scripts/check_doc.py` if it rejects too much or too little.
-- Loop limits and parallel builder count in the target repo's `.tempo/config.md`.
+- Loop limits and parallel builder count in `limits:` of the repo or workspace config.
 - Whether S-lane features need QA (currently skipped).

@@ -2,7 +2,7 @@ INTEGRATION REPORT                                {{task-id}}   AMDT 0
 LANE: {{S|M|L}}          DEPENDS ON: {{report-nn.md list}}          ISSUED BY: integrator
 
 1   BRANCH
-1.1   Integration branch: {{tempo/<task-id>}}.
+1.1   Integration branch: {{task branch}}.
 1.2   Base: {{base branch and commit hash}}.
 
 2   DEFINITIONS

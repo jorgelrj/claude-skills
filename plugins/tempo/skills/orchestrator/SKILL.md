@@ -16,15 +16,22 @@ Nothing travels between agents except files in `.tempo/<task-id>/`.
 0.4 Rubric: `<orch>/../triage-rubric/SKILL.md`. Rules and lenses: `<orch>/../review-rules/SKILL.md`.
 0.5 Resolve these to absolute paths once, at the start. Pass absolute paths to every agent. Agents do not know where the plugin lives.
 0.6 Agent names. Installed as a plugin, the agents appear as `tempo:triage`, `tempo:scout`, and so on. Use whichever name the Agent tool lists.
+0.7 Config script: `<cfg>` is `uv run --quiet <orch>/../config/scripts/tempo_config.py` when `uv` is on PATH, else `python3 <orch>/../config/scripts/tempo_config.py`. The config skill (`<orch>/../config/SKILL.md`) explains the files and every subcommand.
 
 ## 1 Start of every run
 
-1.1 Confirm the working directory is a git repository. IF not, THEN stop and tell Jorge.
-1.2 Read `.tempo/config.md` if present. Use its values; otherwise use the defaults in `<orch>/../review-rules/templates/config.md`.
-1.3 IF the test command is unknown, THEN detect it from the repo (package.json scripts, pubspec.yaml, Makefile, pyproject.toml, go.mod, Cargo.toml). Record what you used in `state.md` §1.
-1.4 Ensure `.tempo/` is listed in `.git/info/exclude`. This keeps artifacts and worktrees out of the diff without touching tracked files.
-1.5 New task: the task ID is `T-` plus the next free 3-digit number in `.tempo/` (T-001, T-002 ...). Create `.tempo/<task-id>/` and `state.md` from the template.
-1.6 Record the base branch and its commit hash in `state.md` §1.3.
+1.1 Find the repository.
+  - 1.1.1 IF the working directory is inside a git repository, THEN that repository is the target.
+  - 1.1.2 IF it is not, THEN run `<cfg> repos`. IF it lists repos, THEN ask Jorge which repos the request touches, with a recommendation from the request. Run one task per chosen repo, in the listed order, each from its repo root.
+  - 1.1.3 IF there is no repository and no workspace file, THEN stop and tell Jorge. Offer `/tempo:init` to describe the workspace.
+1.2 Run `<cfg> check --repo <repo>`. IF it prints FAIL, THEN show Jorge the findings and stop. IF it warns about a legacy `config.md`, THEN tell Jorge once, with the migrate command.
+1.3 Run `<cfg> resolve --repo <repo>` once. Its `config` object is this run's config. Every later "from config" means a value from it. Do not read config files by hand.
+1.4 IF `commands.test` is null, THEN detect it from the repo (package.json scripts, pubspec.yaml, Makefile, pyproject.toml, go.mod, Cargo.toml, pom.xml, build.gradle). Record what you used in `state.md` §1. Offer once to write it into `.tempo/config.yaml`.
+1.5 Ensure `.tempo/` is listed in `.git/info/exclude` (`git rev-parse --git-path info/exclude`). This keeps artifacts, config and worktrees out of the diff without touching tracked files.
+1.6 Task ID. IF `task.id` is `ticket` and the request contains a key matching `task.ticket_pattern`, THEN the task ID is that key (`AV-5696`). Otherwise it is `T-` plus the next free 3-digit number in `.tempo/`. IF `.tempo/<task-id>/` already exists, THEN resume it with `/tempo:resume` instead of starting over. Create `.tempo/<task-id>/` and `state.md` from the template.
+1.7 Branch names. Run `<cfg> names --repo <repo> --task <task-id> --ticket <ticket or task-id>`. Record the task branch, repro branch and work-order pattern in `state.md` §1. Use these names exactly. Never invent a branch name.
+1.8 Commands. For each command an agent needs, run `<cfg> cmd <name> --repo <repo>` and pass the printed line as is. It exports the configured env (JDK, PATH) first.
+1.9 Record the base branch and its commit hash in `state.md` §1.3.
 
 ## 2 After every stage
 
@@ -54,7 +61,8 @@ Run the stages the Task Card's ROUTE lists, in this order.
 
 ### 3.4 REPRODUCE (bug, always)
 - Call `reproducer` in mode REPRODUCE with `task.md` and `hypotheses.md` (if present) and the budget from config.
-- Output: `repro.md` §1–4 and a failing test committed on branch `tempo/<task-id>/repro`.
+- Pass the repro branch name from §1.7.
+- Output: `repro.md` §1–4 and a failing test committed on the repro branch.
 - IF §3.1 is NOT REPRODUCED, THEN raise NO-REPRO.
 
 ### 3.5 ROOT CAUSE (bug)
@@ -76,22 +84,24 @@ Run the stages the Task Card's ROUTE lists, in this order.
 
 ### 3.8 BUILD (all)
 For each wave:
-1. For each order, create a worktree: `git worktree add <worktree-root>/<task-id>-wo-NN -b tempo/<task-id>/wo-NN <start>`. Wave 1 starts from the base commit (bug flow: from the repro branch). Later waves start from the integration branch.
-2. Write the worktree path and branch into the order header and `state.md` §6.
-3. Readback: call `builder` in mode READBACK for every order in the wave, in parallel, in one message. Max parallel builders comes from config.
-4. Compare each `readback-NN.md` with its order:
+1. For each order, get its branch name with `<cfg> names --task <task-id> --wo NN` and create a worktree: `git worktree add <git.worktree_root>/<task-id>-wo-NN -b <work-order branch> <start>`. Wave 1 starts from the base commit (bug flow: from the repro branch). Later waves start from the task branch.
+2. Prepare it: run the lines `<cfg> setup --worktree <path>` prints, in order. IF a line fails, THEN stop that order and raise HARD-TO-UNDO only if the fix needs a secret or a new dependency; otherwise fix the config with Jorge's yes.
+3. Write the worktree path and branch into the order header and `state.md` §6.
+4. Readback: call `builder` in mode READBACK for every order in the wave, in parallel, in one message. Max parallel builders comes from config.
+5. Compare each `readback-NN.md` with its order:
    - Files in RB §3 SHALL be a subset of WO §4.1.
    - Criteria in RB §4 SHALL equal WO §3.
    - The objective SHALL match WO §1.1 in meaning.
    - RB §5 QUESTIONS SHALL be NIL.
-5. IF any check fails, THEN call `architect` to amend the order (AMDT n+1). Do not correct the builder. Repeat the readback for that order.
-6. Build: call `builder` in mode BUILD for every accepted order, in parallel. Prefer continuing the same builder agent if the Agent tool lets you message it; otherwise start a new one with the order and the accepted readback.
-7. Each builder writes `report-NN.md` and commits on its branch.
-8. IF a report is BLOCKED by a stop condition, THEN call `architect` with the report. The architect amends the order, or raises OUT-OF-ORDER-DECISION when the answer changes the goal.
+6. IF any check fails, THEN call `architect` to amend the order (AMDT n+1). Do not correct the builder. Repeat the readback for that order.
+7. Build: call `builder` in mode BUILD for every accepted order, in parallel. Prefer continuing the same builder agent if the Agent tool lets you message it; otherwise start a new one with the order and the accepted readback.
+8. Each builder writes `report-NN.md` and commits on its branch.
+9. IF a report is BLOCKED by a stop condition, THEN call `architect` with the report. The architect amends the order, or raises OUT-OF-ORDER-DECISION when the answer changes the goal.
 
 ### 3.9 INTEGRATE (all)
 - Call `integrator` with the reports, branches and the full test and build commands.
-- It merges every WO branch into `tempo/<task-id>` and writes `integration.md`.
+- Pass the task branch and the work-order branch names from §1.7.
+- It merges every WO branch into the task branch and writes `integration.md`.
 - IF FAIL, THEN return the failing orders to BUILD with the evidence (amend the order). This counts as a review round.
 - After the last wave integrates, continue.
 
@@ -100,7 +110,7 @@ For each wave:
 - Call one `reviewer` per lens, in parallel, in one message. Pass: base and head commit, lens, depth, criteria source (`spec.md` §3 or `repro.md` §6), rules file list. Each writes `review/<lens>-rN.md`.
 - Bug flow: the correctness reviewer also runs the sibling sweep from `repro.md` §8.
 - Call `verifier` with all raw findings files. Output: `findings-rN.md`.
-- IF §7 RESULT is FAIL, THEN amend each owning order with its confirmed findings added to §5 PROCEDURE and go back to BUILD (step 3.8.3), for those orders only. Then INTEGRATE, then REVIEW again with N+1.
+- IF §7 RESULT is FAIL, THEN amend each owning order with its confirmed findings added to §5 PROCEDURE and go back to BUILD (step 3.8.4), for those orders only. Then INTEGRATE, then REVIEW again with N+1.
 - Review rounds stop at the config limit (default 3). Then raise LOOP-LIMIT.
 
 ### 3.11 QA (feature M and L, all bugs)
@@ -111,9 +121,12 @@ For each wave:
 ### 3.12 SHIP (all)
 - Write `pr.md` from the template, using: Task Card §5, Spec §1 (or Repro §5 and §7), QA §3, Findings §6, the integration diff stat.
 - Assumptions SHALL appear at the top of the PR body, before the summary list.
-- Push `tempo/<task-id>` and open a pull request against the base branch with `pr.md` as the body. Open it as a draft unless config says otherwise. Use `gh pr create` if available.
+- `pr.md` is the internal record. The PR body is written from it in `pr.language`, following the repo's PR template (`pr.body_template`, else `.github/pull_request_template.md` if present). Assumptions stay at the top.
+- PR title: `pr.title` with `{type}` and `{summary}` filled, in `pr.language`. Check the repo's CI files for a title rule and follow it.
+- Push the task branch and open a pull request against `pr.base`. Draft when `pr.draft` is true. IF `pr.tool` is `none`, THEN push nothing and give Jorge the exact commands.
 - IF pushing or `gh` fails, THEN stop, keep the branch local, and give Jorge the exact commands.
-- Remove the task's worktrees with `git worktree remove`. Keep the branches.
+- Remove the task's worktrees with `git worktree remove`.
+- IF `git.delete_merged_local_branches` is true, THEN delete the local work-order and repro branches with `git branch -d` (never `-D`, never a remote branch). Keep the task branch.
 - Raise GATE-PR: give Jorge the PR link and a 3-line summary. Jorge merges. TEMPO never merges.
 - Set `state.md` stage DONE.
 
@@ -143,6 +156,8 @@ For each wave:
 
 5.1 Give each agent only the files its stage reads (see the index in the artifact-templates skill). Do not paste conversation history into an agent prompt.
 5.2 Every agent prompt SHALL state: task ID, mode or lens, the absolute path of each input, the absolute path of each output, the template path, and the checker command.
+5.2.1 Agents that run code also get: the command lines from §1.8, the branch names from §1.7, and the commit rules (`git.commit.message`, `git.commit.language`, `git.commit.extra_args`).
+5.2.2 Every output path SHALL be the final path in `.tempo/<task-id>/`. No agent writes an artifact to a temp folder first.
 5.3 Run independent agents in parallel, in one message.
 5.4 Do not write production code yourself. Builders write code. You MAY fix a mechanical document error (§2.3).
 5.5 Do not skip a stage the route lists. To skip one, raise an escalation.
