@@ -106,6 +106,11 @@ def tracker(d, s):
         f = Path(ch["folder"]) / "state.json"
         if f.is_file():
             cs = json.loads(f.read_text(encoding="utf-8"))
+        elif (Path(ch["folder"]) / "state.md").is_file():
+            cs = adopt(ch["folder"])  # task from before 0.3.0: read its state.md, write nothing
+        else:
+            cs = None
+        if cs:
             ch.update(stage=cs["stage"], status=cs["status"], pr=cs.get("pr"), next=cs.get("next"))
         rows.append(f"| {repo} | {ch.get('stage') or 'NOT STARTED'} | {ch.get('status') or '-'} | {ch.get('pr') or '-'} | {ch.get('next') or '-'} |")
     (Path(d) / "tracker.md").write_text("\n".join(rows) + "\n", encoding="utf-8")
