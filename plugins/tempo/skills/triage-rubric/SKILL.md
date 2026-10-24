@@ -53,3 +53,17 @@ Ask the four questions in order. Only questions 1 and 2 can send the task back t
 | FEATURE, M or L | Explore, Spec, [Spec gate], Handoff, Build, Integrate, Review, QA, Ship |
 | BUG-KNOWN | Reproduce, Root cause, [Behaviour gate], Handoff (one Work Order), Build, Integrate, Review + sibling sweep, QA, Ship |
 | BUG-FEEDBACK | Investigate, Reproduce, Root cause, [Behaviour gate], Handoff, Build, Integrate, Review + sibling sweep, QA, Ship |
+| WORKSPACE (request spans repos) | Explore (one CROSS-REPO scout per repo), Plan, Plan gate, one child task per repo in plan order, Joint QA, Ship |
+
+4.1 Plan-only mode (`/tempo:plan`) runs a route up to and including Handoff (single repo) or the Plan gate (workspace), then stops. The bug route keeps Reproduce and Root cause in plan-only mode: they commit only a test, on the repro branch.
+
+## 5 Dependency types
+
+| Type | Meaning | Example |
+|---|---|---|
+| blocks-start | the target cannot compile or run its tests without the source's change | a DTO field in a shared library the service reads |
+| blocks-merge | the target can be built now against the agreed contract; its PR merges after the source's | an endpoint the client calls, with the request shape agreed in the plan |
+| blocks-validation | both can be built and merged; only the joint check waits for both | an external system's deploy |
+
+5.1 Only blocks-start orders the work. A wrong blocks-start costs days of waiting, so when unsure, pick blocks-merge and record the contract.
+5.2 Work owned by another team is an EXTERNAL BLOCKER, never a reason to wait for a start when a stub or a contract lets the slice be built.

@@ -20,7 +20,10 @@ Every artifact follows the `icao-document-standard` skill.
 
 | Artifact file in `.tempo/<task-id>/` | Template | Written by | Read by |
 |---|---|---|---|
-| `state.md` | `state.md` | orchestrator | orchestrator, `/tempo:resume` |
+| `state.md` + `state.json` | `state.md` | `tempo_state.py` only | orchestrator, `/tempo:resume` |
+| `plan.md` | `plan.md` | orchestrator (single repo), architect (workspace) | Jorge (gate), child tasks |
+| `tracker.md` | none, generated | `tempo_state.py tracker` | Jorge (workspace tasks) |
+| `prompts/<label>.md` | none | orchestrator | orchestrator after a restart |
 | `task.md` | `task.md` | triage | everyone downstream |
 | `context.md` | `context.md` | orchestrator, merged from scout reports | architect |
 | `hypotheses.md` | `hypotheses.md` | investigator | reproducer |
@@ -36,7 +39,7 @@ Every artifact follows the `icao-document-standard` skill.
 | `pr.md` | `pr-summary.md` | orchestrator | Jorge, becomes the PR body |
 | `esc-N.md` | `escalation.md` | any agent, sent by orchestrator | Jorge |
 
-`state.md` is a live ledger. It has no AMDT number and no amendment log; the orchestrator rewrites it after every stage.
+`state.md` is a live ledger. It has no AMDT number and no amendment log. `tempo_state.py` (orchestrator skill, `scripts/`) renders it from `state.json` after every change; nobody edits either by hand.
 
 ## Folder layout for one task
 

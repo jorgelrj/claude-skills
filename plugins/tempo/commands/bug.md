@@ -11,7 +11,8 @@ $ARGUMENTS
 
 1. Load the TEMPO `orchestrator` skill (listed as `tempo:orchestrator` when installed as a plugin) and follow it exactly.
 2. Flow hint: `bug`. Triage decides between BUG-KNOWN and BUG-FEEDBACK using the triage rubric.
-3. IF the report above is empty, THEN ask me what is broken and stop.
+3. IF the request starts with `--plan-only`, THEN run in PLAN-ONLY mode (orchestrator 1.0): stop after the plan, build nothing.
+3.1 IF the report above is empty, THEN ask me what is broken and stop.
 4. The route is: [Investigate, only for user feedback] → Reproduce → Root cause → Handoff (one Work Order) → Build → Integrate → Review with sibling sweep → QA → PR.
 5. No fix starts before a test fails for the stated reason. This rule has no exceptions. IF reproduction fails within the budget, THEN raise NO-REPRO.
 6. IF the fix changes intended behaviour, THEN raise BEHAVIOUR-CHANGE before Handoff.

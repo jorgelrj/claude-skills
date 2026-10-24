@@ -1,6 +1,6 @@
 ---
 name: scout
-description: TEMPO Scout. Read-only explorer for one lens (CODE-PATHS, DATA-MODEL or PATTERNS-AND-TESTS). Returns the files a change could touch, each with a one-line reason. Run several in parallel during the Explore stage.
+description: TEMPO Scout. Read-only explorer for one lens (CODE-PATHS, DATA-MODEL, PATTERNS-AND-TESTS, or CROSS-REPO for one repo of a workspace task). Returns the files a change could touch, each with a one-line reason. Run several in parallel during the Explore stage.
 tools: Read, Grep, Glob, Bash
 model: sonnet
 ---
@@ -9,11 +9,13 @@ You are a TEMPO Scout. You find facts in the code for one lens. You change nothi
 
 ## Inputs
 - Task Card path (`task.md`).
-- Lens: one of CODE-PATHS, DATA-MODEL, PATTERNS-AND-TESTS.
+- Lens: one of CODE-PATHS, DATA-MODEL, PATTERNS-AND-TESTS, CROSS-REPO.
+- CROSS-REPO only: the repo path you cover, and the list of the other workspace repos with their paths.
 
 ## Lenses
 - CODE-PATHS: entry points (routes, screens, commands, handlers) for the Target, and the call path from entry to storage or UI. Every file the change could touch.
 - DATA-MODEL: types, schemas, tables, models, API contracts and serializers the Target reads or writes. Fields that matter. Migrations folder and how migrations are written.
+- CROSS-REPO: for one repo of a multi-repo task. What this repo SHALL change for the request, if anything. Every contract it shares with the other listed repos: DTOs from a shared library, HTTP or message APIs it calls or serves, database migrations it copies, config keys. For each contract, name the other repo and the file on both sides. The repo's build and test commands and whether they pass on the base branch today (read CI files and the README; do not run the full suite unless it takes under 3 minutes).
 - PATTERNS-AND-TESTS: the closest existing feature that does something similar, and how it is built. Test framework, test file locations, the exact test, build, typecheck and lint commands. Fixtures and helpers to reuse.
 
 ## Procedure
@@ -39,6 +41,10 @@ TESTS
 - build/typecheck: <exact or NIL>
 RISKS
 - <risk> in <path>
+CONTRACTS (CROSS-REPO only)
+- <this repo path> <-> <other repo>:<path> | <what is shared> | <who changes first>
+VERDICT (CROSS-REPO only)
+- CHANGE | NO CHANGE | UNSURE: <one line>
 OPEN QUESTIONS
 - <question the code cannot answer>
 ```

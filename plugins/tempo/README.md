@@ -25,10 +25,27 @@ After editing files here, restart Claude Code (Option A) or run `/plugin marketp
 |---|---|
 | `/tempo:feature <request>` | Feature flow: Triage → Explore → Spec → Work Orders → parallel Build → Integrate → Review → QA → PR |
 | `/tempo:bug <report>` | Bug flow: [Investigate] → Reproduce (failing test) → Root cause → Fix → Integrate → Review + sibling sweep → QA → PR |
-| `/tempo:resume <task-id> [answer]` | Continue a task from its last artifact, or answer the question it is waiting on |
+| `/tempo:plan <request>` | Plan only: Triage → Explore → Spec → Work Orders (or the cross-repo plan), then stop at GATE-PLAN. Also `/tempo:feature --plan-only ...` |
+| `/tempo:resume <task-id> [build \| answer]` | Continue a task from its last artifact, answer the question it is waiting on, or `build` a planned task |
 | `/tempo:init [repo\|workspace] [notes]` | Write or update the TEMPO config for a repo or a multi-repo workspace, detected from the code |
 
 Everything for a task lives in `.tempo/<task-id>/` in the target repo. The task ID is the ticket key when the request names one (`AV-5696`), else `T-NNN`. TEMPO adds `.tempo/` to `.git/info/exclude`, so artifacts and config never show up in the diff.
+
+## Several repos (workspace tasks)
+
+Run a command from a folder that holds several repos and has `.tempo/workspace.yaml`. TEMPO then:
+
+1. Triages the request against the workspace's repo list.
+2. Sends one CROSS-REPO scout per candidate repo, then the architect writes `plan.md`: one slice per repo, typed dependencies (blocks-start, blocks-merge, blocks-validation) and external blockers.
+3. Stops at GATE-PLAN.
+4. Runs one child task per repo in plan order (`<repo>/.tempo/<task-id>/`), each ending in its own PR, and keeps `tracker.md` in the workspace task folder up to date.
+5. Runs a joint QA across the task branches with the workspace's `validation.steps`, then hands over every PR link.
+
+Only blocks-start orders the work; see `skills/triage-rubric/SKILL.md` §5.
+
+## Task state
+
+`skills/orchestrator/scripts/tempo_state.py` is the only writer of `.tempo/<task-id>/state.json` and the `state.md` rendered from it. It stamps the stage log with this machine's clock, keeps loop counters and work orders, and records agents in flight with their saved prompts, so `/tempo:resume` can restart them after a session restart. Tasks started before 0.3.0 are converted with `tempo_state.py adopt <task-dir>`.
 
 ## Config
 
@@ -59,7 +76,7 @@ Every stop comes with a recommended answer, so "yes" is always enough.
   plugin.json                 plugin manifest
   marketplace.json            local marketplace so /plugin install works
 commands/
-  feature.md  bug.md  resume.md  init.md
+  feature.md  bug.md  plan.md  resume.md  init.md
 agents/
   triage.md        classify, clarity check, size, route → task.md
   scout.md         read-only explorer, one lens per instance → merged into context.md
@@ -72,7 +89,8 @@ agents/
   verifier.md      drop, dedupe, rank, assign → findings-rN.md
   qa.md            per acceptance criterion, with evidence → qa-rN.md
 skills/
-  orchestrator/              the stage machine the commands run (gates, loops, worktrees, PR)
+  orchestrator/              the stage machine the commands run (gates, loops, worktrees, PR, workspaces)
+    scripts/tempo_state.py   the only writer of state.json / state.md; tracker for workspace tasks
   icao-document-standard/    the writing rules + scripts/check_doc.py
   artifact-templates/        one template per artifact in templates/
   triage-rubric/             clarity questions, task types, S/M/L lanes, routes

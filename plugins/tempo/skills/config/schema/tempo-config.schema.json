@@ -399,6 +399,30 @@
           "additionalProperties": {
             "$ref": "#/$defs/repoEntry"
           }
+        },
+        "validation": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "How a workspace task checks its repos together locally (JOINT-QA).",
+          "properties": {
+            "steps": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Commands run in order from the workspace root, e.g. starting the local stack."
+            },
+            "teardown": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Commands that stop what the steps started."
+            },
+            "notes": {
+              "type": "string"
+            }
+          }
         }
       }
     }

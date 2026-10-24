@@ -1,14 +1,15 @@
 ---
 description: Resume a TEMPO task from its last written artifact, optionally answering the question it is waiting on.
-argument-hint: <task-id> [your answer]
+argument-hint: <task-id> [build | your answer]
 ---
 
 Resume TEMPO task: $ARGUMENTS
 
 1. Load the TEMPO `orchestrator` skill (listed as `tempo:orchestrator` when installed as a plugin) and follow it.
-2. The first word above is the task ID, for example `AV-5696` or `T-042`. Everything after it is my answer to the open escalation, if any.
-3. IF no task ID is given, THEN list the tasks in `.tempo/` with their stage and status from each `state.md`, and ask which one to resume. Stop.
-4. Read `.tempo/<task-id>/state.md`. Trust the files over the state: confirm that the artifacts named in the stage log exist and pass the document checker.
+2. The first word above is the task ID, for example `AV-5696` or `T-042`. IF the next word is `build`, THEN I approve a PLANNED task for building (orchestrator 3.14 or 6.6). Otherwise everything after the ID is my answer to the open escalation or gate, if any.
+3. IF no task ID is given, THEN list the tasks in `.tempo/` (and the workspace's `.tempo/`, if any) with their stage and status from each `state.md`, and ask which one to resume. Stop.
+4. Read `.tempo/<task-id>/state.md`. IF there is no `state.json` next to it (a task started before TEMPO 0.3.0), THEN run `<state> adopt` on the folder first. Trust the files over the state: confirm that the artifacts named in the stage log exist and pass the document checker.
+4.1 IF §9 AGENTS IN FLIGHT is not NIL, THEN restart them as orchestrator section 7 says, without asking me.
 5. IF the state is WAITING-ON-JORGE:
    - IF an answer is given above, THEN record it in the open `esc-N.md` as AMDT 1 and continue.
    - IF no answer is given, THEN show me the open escalation's question, options and recommendation again, and stop.
