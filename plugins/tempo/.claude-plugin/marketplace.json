@@ -1,0 +1,11 @@
+{
+  "name": "tempo-local",
+  "owner": { "name": "Jorge" },
+  "plugins": [
+    {
+      "name": "tempo",
+      "source": "./",
+      "description": "TEMPO feature and bug-fix flows for Claude Code."
+    }
+  ]
+}
