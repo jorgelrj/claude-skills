@@ -51,7 +51,7 @@ Report only issues with a concrete exploit path. Skip theoretical issues.
 
 ### 3.3 SPEC AND CONVENTIONS
 - Each acceptance criterion in the Spec (or Repro report) maps to code and a test.
-- Nothing outside the Spec's scope changed. Check Spec §7 OUT OF SCOPE.
+- Nothing outside the Spec's scope changed. Check Spec §7 Out of scope.
 - The diff follows `CLAUDE.md`, `REVIEW.md` and the rule-stating project docs (1.6). Cite the rule's file and line for each finding.
 - The Work Reports' DEVIATIONS sections are justified.
 

@@ -1,39 +1,29 @@
-WORK ORDER                                        {{task-id}} / WO-{{nn}}   AMDT 0
-LANE: {{S|M|L}}          DEPENDS ON: {{NIL | WO-nn}}          ISSUED BY: architect
-WORKTREE: {{absolute path}}          BRANCH: {{work-order branch}}
+# Work Order: {{task-id}} / WO-{{nn}}
+Lane: {{S|M|L}} · Depends on: {{NIL | WO-nn}} · Worktree: {{absolute path or TBD}} · Branch: {{work-order branch or TBD}}
+Spec: {{absolute path of spec.md, repro.md or the plan slice}}. Read its Terms section and every section this order cites.
 
-1   OBJECTIVE
-1.1   {{One sentence.}}
+## 1 Objective
+{{One sentence.}}
 
-2   DEFINITIONS
-2.1   {{Term}}: {{bound meaning, copied from the Spec, not linked}}.
+## 2 Acceptance criteria
+- [AC-n] WHEN {{trigger}}, the system shall {{response}}. Test: {{test name or command}}.
 
-3   ACCEPTANCE CRITERIA
-3.1   WHEN {{trigger}}, THE SYSTEM SHALL {{response}}.  [AC-n]
+## 3 Scope
+- IN: {{every file this order may change, test files included}}
+- OUT: {{files owned by other orders, with the owner}}
 
-4   SCOPE
-4.1   IN:   {{every file this order MAY change, including test files}}.
-4.2   OUT:  {{files owned by other orders, with the owner}}.
+## 4 Steps
+1. {{One instruction per step. Cite the spec (for example "spec §4, bullet 3") instead of copying it.}}
 
-5   PROCEDURE
-5.1   {{One imperative instruction per line, 20 words or fewer}}.
+## 5 Verification
+- `{{exact command}}` passes.
 
-6   VERIFICATION
-6.1   {{exact command}}        SHALL pass.
+## 6 Stop conditions
+Stop before the first edit, or as soon as one of these holds, and write the report with Result BLOCKED:
+- Anything in this order is unclear, or two parts of it disagree.
+- A criterion conflicts with current behaviour.
+- A file outside §3 IN needs a change.
+- A decision is not covered by this order or the spec.
 
-7   STOP CONDITIONS
-7.1   IF a criterion conflicts with current behaviour, THEN stop and report.
-7.2   IF a file outside 4.1 needs a change, THEN stop and report.
-7.3   IF a decision is not covered by this order, THEN stop and report.
-
-8   KNOWN RISKS
-8.1   {{Risk and mitigation, or NIL}}
-
-9   READBACK
-9.1   Write readback-{{nn}}.md before step 5.1, using the readback template.
-
-10  REPORT
-10.1  Write report-{{nn}}.md using the work report template.
-
-AMENDMENT LOG
-AMDT 0   {{YYYY-MM-DD}}   Issued.
+## 7 Known risks
+- {{Risk and mitigation, or NIL}}

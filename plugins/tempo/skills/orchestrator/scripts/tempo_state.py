@@ -2,7 +2,7 @@
 """TEMPO task state: the only writer of .tempo/<task-id>/state.json and state.md.
 
 state.json is the source of truth. state.md is rendered from it after every
-change, in the ICAO layout of the state template, for Jorge and /tempo:resume.
+change, in the layout of the state template, for Jorge and /tempo:resume.
 Times come from this machine's clock, never from the caller.
 
 Usage: tempo_state.py <command> <task-dir> [args]
@@ -35,7 +35,7 @@ STAGES = ["TRIAGE", "EXPLORE", "INVESTIGATE", "REPRODUCE", "ROOT-CAUSE", "SPEC",
           "PLANNED", "BUILD", "INTEGRATE", "REVIEW", "QA", "SHIP", "REPOS", "JOINT-QA", "DONE"]
 STATUSES = ["RUNNING", "WAITING-ON-JORGE", "FAILED", "DONE"]
 RESULTS = ["PASS", "FAIL", "BLOCKED"]
-WO_STATUSES = ["ISSUED", "READBACK OK", "BUILDING", "DONE", "BLOCKED"]
+WO_STATUSES = ["ISSUED", "BUILDING", "DONE", "BLOCKED"]
 
 
 def now():
@@ -55,49 +55,37 @@ def save(d, s):
     (d / "state.md").write_text(render(s), encoding="utf-8")
 
 
-def head(left, right, width=50):
-    return left.ljust(width) + right
-
-
 def render(s):
-    L = []
-    L.append(head("TASK STATE", s["task"]))
-    L.append(f"FLOW: {s['flow']}          LANE: {s.get('lane') or 'TBD'}          OWNER: orchestrator")
-    L.append(f"MODE: {s.get('mode', 'FULL')}")
-    L.append("")
+    L = [f"# Task State: {s['task']}",
+         f"Flow: {s['flow']} · Lane: {s.get('lane') or 'TBD'} · Mode: {s.get('mode', 'FULL')} · Owner: orchestrator",
+         "Rendered by tempo_state.py from state.json. Do not edit.", ""]
 
     def section(n, title, items):
-        sep = "   " if n < 10 else "  "
-        L.append(f"{n}{sep}{title}")
-        if not items:
-            items = ["NIL"]
-        for i, text in enumerate(items, 1):
-            num = f"{n}.{i}"
-            L.append(f"{num}{' ' * max(2, 6 - len(num))}{text}")
+        L.append(f"## {n} {title}")
+        L.extend(f"- {text}" for text in (items or ["NIL"]))
         L.append("")
 
-    section(1, "TASK", [
-        f"{s['title'].rstrip('.')}.",
-        f"Started: {s['started']}.",
-        f"Base branch: {s['base_branch']} at {s['base_commit']}.",
-        f"Task branch: {s.get('task_branch') or 'NIL'}.",
-        f"Parent: {s.get('parent') or 'NIL'}.",
-    ] + ([f"Pull request: {s['pr']}."] if s.get("pr") else []))
-    section(2, "DEFINITIONS", [])
-    section(3, "STAGE", [f"Current: {s['stage']}.", f"Status: {s['status']}."])
-    section(4, "STAGE LOG", [f"{t} | {st} | {a} | {r}" for t, st, a, r in s["log"]])
+    section(1, "Task", [
+        s['title'].rstrip('.'),
+        f"Started: {s['started']}",
+        f"Base branch: {s['base_branch']} at {s['base_commit']}",
+        f"Task branch: {s.get('task_branch') or 'NIL'}",
+        f"Parent: {s.get('parent') or 'NIL'}",
+    ] + ([f"Pull request: {s['pr']}"] if s.get("pr") else []))
+    section(2, "Stage", [f"Current: {s['stage']}", f"Status: {s['status']}"])
+    section(3, "Stage log", [f"{t} | {st} | {a} | {r}" for t, st, a, r in s["log"]])
     c = s["counters"]
-    section(5, "LOOP COUNTERS", [f"Review rounds: {c['review']} of {c['review_limit']}. Extensions: {c.get('review_extensions', 1)}.",
-                                 f"QA rounds: {c['qa']} of {c['qa_limit']}.",
-                                 f"Document re-issues: {c['reissue']}."])
-    section(6, "WORK ORDERS", [f"{k} | {v.get('worktree') or 'TBD'} | {v.get('branch') or 'TBD'} | {v.get('status') or 'ISSUED'}"
+    section(4, "Loop counters", [f"Review rounds: {c['review']} of {c['review_limit']}. Extensions: {c.get('review_extensions', 1)}",
+                                 f"QA rounds: {c['qa']} of {c['qa_limit']}",
+                                 f"Document re-issues: {c['reissue']}"])
+    section(5, "Work orders", [f"{k} | {v.get('worktree') or 'TBD'} | {v.get('branch') or 'TBD'} | {v.get('status') or 'ISSUED'}"
                                for k, v in sorted(s["work_orders"].items())])
-    section(7, "WAITING ON JORGE", [s["waiting"]] if s.get("waiting") else [])
-    section(8, "NEXT ACTION", [s["next"].rstrip(".") + "."] if s.get("next") else [])
-    section(9, "AGENTS IN FLIGHT", [f"{k} | {v['label']} | {v['output']} | {v.get('prompt') or 'NIL'} | started {v['started']}"
+    section(6, "Waiting on Jorge", [s["waiting"]] if s.get("waiting") else [])
+    section(7, "Next action", [s["next"]] if s.get("next") else [])
+    section(8, "Agents in flight", [f"{k} | {v['label']} | {v['output']} | {v.get('prompt') or 'NIL'} | started {v['started']}"
                                     for k, v in s["agents"].items()])
-    section(10, "CHILD TASKS", [f"{k} | {v['folder']} | {v.get('stage') or 'TBD'} | {v.get('status') or 'TBD'} | {v.get('pr') or 'NIL'}"
-                                for k, v in s["children"].items()])
+    section(9, "Child tasks", [f"{k} | {v['folder']} | {v.get('stage') or 'TBD'} | {v.get('status') or 'TBD'} | {v.get('pr') or 'NIL'}"
+                               for k, v in s["children"].items()])
     return "\n".join(L).rstrip() + "\n"
 
 

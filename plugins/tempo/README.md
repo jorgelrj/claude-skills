@@ -1,6 +1,6 @@
 # TEMPO
 
-Task Execution & Multi-agent Pipeline Orchestrator. A Claude Code plugin that takes a feature request or a bug report to an open pull request through a fixed set of stages, each run by an agent with a fresh context. Agents hand work to each other only through documents written in an aviation-style (ICAO) standard.
+Task Execution & Multi-agent Pipeline Orchestrator. A Claude Code plugin that takes a feature request or a bug report to an open pull request through a fixed set of stages, each run by an agent with a fresh context. Agents hand work to each other only through structured markdown documents: fixed numbered sections per document type, tagged criteria and findings, and exact paths and commands.
 
 Architecture (draft 2): https://claude.ai/artifact/AuXx9nGXWqDxLeG72K1abT
 
@@ -106,7 +106,7 @@ agents/
   investigator.md  user feedback → hypotheses.md
   reproducer.md    failing test + root cause → repro.md
   architect.md     spec.md, then wo-NN.md Work Orders, and amendments
-  builder.md       one Work Order: readback, then test-first build → report-NN.md
+  builder.md       one Work Order: stop-and-ask check, then test-first build → report-NN.md
   integrator.md    merge WO branches, full suite → integration.md
   reviewer.md      one lens: correctness | security | spec | spec-precheck → review/<lens>-rN.md
   verifier.md      drop, dedupe, rank, assign → findings-rN.md
@@ -114,7 +114,7 @@ agents/
 skills/
   orchestrator/              the stage machine the commands run (gates, loops, worktrees, PR, workspaces)
     scripts/tempo_state.py   the only writer of state.json / state.md; tracker for workspace tasks
-  icao-document-standard/    the writing rules + scripts/check_doc.py
+  document-standard/         the document shape + scripts/check_doc.py (structure check)
   artifact-templates/        one template per artifact in templates/
   triage-rubric/             clarity questions, task types, S/M/L lanes, routes
   review-rules/              rules files, review depth, the three lenses
@@ -125,10 +125,14 @@ skills/
 ## Document checker
 
 ```bash
-python3 skills/icao-document-standard/scripts/check_doc.py .tempo/T-001/*.md
+python3 skills/document-standard/scripts/check_doc.py .tempo/T-001/*.md
 ```
 
-It reads each document type's required sections from its template, so editing a template changes the check. Exit 0 is PASS, exit 1 lists findings as `file:line: RULE: message`.
+It checks structure only: a known title line, every template section present and in order, no empty section, no leftover placeholder, no AC tag defined twice. It reads each document type's sections from its template, so editing a template changes the check. Exit 0 is PASS, exit 1 lists findings as `file:line: RULE: message`. Documents in the pre-0.6.0 ICAO layout are reported as LEGACY and pass, so older tasks can finish.
+
+### Why not ICAO any more (0.6.0)
+
+Up to 0.5.0 every artifact followed an aviation-style (ICAO) standard: numbered paragraphs, a DEFINITIONS section in every document, AMDT headers and amendment logs, SHALL/SHOULD capitals, a vague-word lint and a separate builder readback pass. Measured on the xipp runs of 24 to 26 Oct 2026 (20 task folders), definitions, numbering and amendment logs were about 24% of all handoff text, readbacks found a real issue in 4 of 34 cases (all plain builder questions), and none of the 41 review findings traced back to wording. 0.6.0 keeps the parts that did work (fixed sections, AC/F tags, concrete paths and commands, PASS/FAIL lines, the spec state model) and drops the rest. The builder now stops before its first edit when the order is unclear, and the orchestrator checks scope from the diff. Evaluation: https://claude.ai/artifact/R9rqkre5FagHwuEvCyVGFE
 
 ## How it runs inside Claude Code
 
@@ -139,7 +143,7 @@ It reads each document type's required sections from its template, so editing a 
 ## How review converges
 
 - Explore reads how called services behave on repeats, timeouts and failures (scout lens CONSUMED-BEHAVIOUR), not just their DTOs.
-- For retries, callbacks, scheduled jobs and idempotency keys, the spec has a §8 STATE MODEL: every state and event pair with its result. The spec pre-check fails a missing pair.
+- For retries, callbacks, scheduled jobs and idempotency keys, the spec has a §8 State model: every state and event pair with its result. The spec pre-check fails a missing pair.
 - Every fix starts with an interaction check in the spec: each criterion that reads the same state is re-checked and gets a regression test.
 - The verifier tags findings INTRODUCED BY the last fix. Two such rounds in a row in one area raise FIX-CHAIN, which recommends re-specifying that area, not another patch.
 - A small fix (`limits.narrow_fix_lines`) gets a NARROW round: correctness plus the lenses that raised findings, on the fix diff only.
@@ -148,7 +152,6 @@ It reads each document type's required sections from its template, so editing a 
 ## Things to tune after the first test runs
 
 - Size thresholds in `skills/triage-rubric/SKILL.md` §3.
-- The vague-word list in `scripts/check_doc.py` if it rejects too much or too little.
 - Loop limits, review extensions, the narrow-round size and parallel builder count in `limits:` of the repo or workspace config.
 - Whether S-lane features need QA (currently skipped).
-- Whether the ICAO document standard pays for itself, or plain markdown files with the same sections would do. The numbered-line format, the checker and the amendment logs cost architect and reviewer time on every task; measure a few runs before deciding.
+- Whether dropping the readback pass (0.6.0) lets more scope violations or misreadings through. Watch the orchestrator's scope check and BLOCKED reports in the next runs.

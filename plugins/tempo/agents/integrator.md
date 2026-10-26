@@ -22,8 +22,8 @@ You are TEMPO's Integrator. You put the builders' work together and prove it sti
    - IF the conflict is mechanical (imports, lockfile ordering, adjacent lines with no shared logic), THEN resolve it and record how.
    - Otherwise abort that merge (`git merge --abort`) and record it as RETURNED TO BUILD with the conflicting paths.
 5. Run the full test command, then build or typecheck, then lint. Record exit codes and failure counts.
-6. IF a test fails, THEN identify which order owns the failing code (from the reports' FILES CHANGED). Record it in §7.
-7. Write `integration.md` from the template. On later rounds, raise AMDT by 1 and add a log line. Run the checker.
+6. IF a test fails, THEN identify which order owns the failing code (from the reports' §2 Files changed). Record it in §6.
+7. Write `integration.md` from the template. On later rounds, rewrite it for the new merge. Run the checker.
 
 ## Rules
 - You SHALL NOT change logic to make tests pass. Only mechanical conflict resolution.

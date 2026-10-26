@@ -12,7 +12,7 @@ Nothing travels between agents except files in `.tempo/<task-id>/`.
 
 0.1 This skill's directory is `<orch>`. The plugin root is `<orch>/../..`.
 0.2 Templates: `<orch>/../artifact-templates/templates/`.
-0.3 Document checker: `python3 <orch>/../icao-document-standard/scripts/check_doc.py <files>`.
+0.3 Document checker: `python3 <orch>/../document-standard/scripts/check_doc.py <files>`. It checks structure only and runs in well under a second.
 0.4 Rubric: `<orch>/../triage-rubric/SKILL.md`. Rules and lenses: `<orch>/../review-rules/SKILL.md`.
 0.5 Resolve these to absolute paths once, at the start. Pass absolute paths to every agent. Agents do not know where the plugin lives.
 0.6 Agent names. Installed as a plugin, the agents appear as `tempo:triage`, `tempo:scout`, and so on. Use whichever name the Agent tool lists.
@@ -41,9 +41,8 @@ Nothing travels between agents except files in `.tempo/<task-id>/`.
 ## 2 After every stage
 
 2.1 Run the checker on the artifact the stage wrote.
-2.2 IF it FAILS, THEN send the findings back to the same agent and ask for a re-issue as AMDT n+1. Allow 2 returns.
-2.3 After 2 returns, fix the remaining mechanical findings yourself, add an amendment log line saying so, and continue.
-2.4 Read the artifact for the rules the checker cannot see: one meaning per term, bound references, imperative procedures.
+2.2 IF it FAILS, THEN fix the structure yourself (add a missing heading with NIL, remove a leftover placeholder) and continue. Send it back to the agent only when a section the next stage needs is missing its content. Allow 1 return.
+2.3 Do not re-read artifacts for wording. Read only what the next step needs from them.
 2.5 Update the state with `<state>` only: `log <dir> <STAGE> <artifact> <PASS|FAIL|BLOCKED>`, then `set <dir> --stage <next stage> --next "<exact next step>"`. Use `bump` for loop counters, `wo` for Work Orders, `wait` for escalations, `set --lane` after triage. Never edit `state.md` or `state.json` by hand; never use `sed` on them.
 2.6 Progress to Jorge: one line per milestone, not per stage. The milestones are: route chosen (with the lane's time estimate), spec ready, build done, review done, PR open. Report a failure, a re-size or an escalation when it happens. Do not paste the artifact.
 2.7 Agents in flight. Before you start an agent, write its full prompt to `.tempo/<task-id>/prompts/<label>.md`. Right after it starts, run `<state> agent <dir> start <agent id> --label "<label>" --output <its output path> --prompt <prompt file>`. When it replies, run `<state> agent <dir> done <agent id>`. Section 7 uses this list after a restart.
@@ -61,7 +60,7 @@ Run the stages the Task Card's ROUTE lists, in this order.
 - L lane: call 3 `scout` agents in parallel, in one message, with lenses `CODE-PATHS`, `DATA-MODEL`, `PATTERNS-AND-TESTS`. M lane: call `CODE-PATHS` and `PATTERNS-AND-TESTS` only. Pass `task.md` and `docs.txt`.
 - S lane: skip.
 - IF the change calls another service or library whose behaviour decides the result (payments, webhooks, queues, external APIs), or ports existing code, THEN also call a fourth `scout` with lens `CONSUMED-BEHAVIOUR`, in M and L lanes. Pass the services and code to port, with their paths, from `task.md` and the workspace config.
-- Merge their replies into `context.md` from the template. Remove duplicates. Keep the reason for each file. BEHAVIOUR lines go to §9 CONSUMED BEHAVIOUR.
+- Merge their replies into `context.md` from the template. Remove duplicates. Keep the reason for each file. BEHAVIOUR lines go to §8 Consumed behaviour.
 - Re-size (triage-rubric §3.5), unless Jorge set the lane. Count the production files `context.md` marks CHANGE. IF the lane changes, THEN run `<state> set <dir> --lane <new>` and tell Jorge in one line. A task that drops to S skips SPEC and goes to HANDOFF with `task.md` and `context.md`.
 
 ### 3.3 INVESTIGATE (bug, BUG-FEEDBACK only)
@@ -70,12 +69,12 @@ Run the stages the Task Card's ROUTE lists, in this order.
 ### 3.4 REPRODUCE (bug, always)
 - Call `reproducer` in mode REPRODUCE with `task.md` and `hypotheses.md` (if present) and the budget from config.
 - Pass the repro branch name from §1.7.
-- Output: `repro.md` §1–4 and a failing test committed on the repro branch.
-- IF §3.1 is NOT REPRODUCED, THEN raise NO-REPRO.
+- Output: `repro.md` §1–3 and a failing test committed on the repro branch.
+- IF §2 Result is NOT REPRODUCED, THEN raise NO-REPRO.
 
 ### 3.5 ROOT CAUSE (bug)
-- Call `reproducer` in mode ROOT-CAUSE. It completes `repro.md` §5–9 as AMDT n+1.
-- IF §7 BEHAVIOUR CHANGE is not NIL, THEN raise BEHAVIOUR-CHANGE.
+- Call `reproducer` in mode ROOT-CAUSE. It completes `repro.md` §4–8.
+- IF §6 Behaviour change is not NIL, THEN raise BEHAVIOUR-CHANGE.
 
 ### 3.6 SPEC (feature, M and L)
 - Call `architect` in mode SPEC with `task.md`, `context.md` and `docs.txt`. Output: `spec.md`. M lane: pass `model: sonnet` on the Agent call.
@@ -88,9 +87,9 @@ Run the stages the Task Card's ROUTE lists, in this order.
 
 ### 3.7 HANDOFF (all)
 - Call `architect` in mode HANDOFF with `spec.md` (feature) or `repro.md` (bug), or `task.md` and `context.md` when present (feature S lane). Child task of a workspace (section 6): the parent `plan.md` slice and the parent `context.md` block for this repo. S and M lanes: pass `model: sonnet` on the Agent call.
-- Output: `wo-01.md` ... One order per builder. File scopes (§4.1) SHALL NOT overlap.
-- Bug flow: exactly one Work Order. Its criteria are `repro.md` §6. It forbids edits to the reproduction test.
-- Check scope overlap yourself: list every §4.1 path of every order. IF a path appears twice, THEN return to `architect`.
+- Output: `wo-01.md` ... One order per builder. File scopes (§3 IN) SHALL NOT overlap.
+- Bug flow: exactly one Work Order. Its criteria are `repro.md` §5. It forbids edits to the reproduction test.
+- Check scope overlap yourself: list every §3 IN path of every order. IF a path appears twice, THEN return to `architect`.
 - Group orders into waves by DEPENDS ON. Wave 1 has no dependencies.
 
 ### 3.8 BUILD (all)
@@ -98,17 +97,10 @@ For each wave:
 1. For each order, get its branch name with `<cfg> names --task <task-id> --wo NN` and create a worktree: `git worktree add <git.worktree_root>/<task-id>-wo-NN -b <work-order branch> <start>`. Wave 1 starts from the base commit (bug flow: from the repro branch). Later waves start from the task branch.
 2. Prepare it: run the lines `<cfg> setup --worktree <path>` prints, in order. IF a line fails, THEN stop that order and raise HARD-TO-UNDO only if the fix needs a secret or a new dependency; otherwise fix the config with Jorge's yes.
 3. Write the worktree path and branch into the order header, and run `<state> wo <dir> WO-NN --worktree <path> --branch <branch> --status ISSUED`.
-4. Readback: call `builder` in mode READBACK for every order in the wave, in parallel, in one message. Max parallel builders comes from config.
-   - Skip the READBACK when the lane is S or M and the wave has one order. Go to step 7. After the build, check scope yourself: every path in `git diff --name-only <start>..<branch>` SHALL be in the order's §4.1. IF a path is not, THEN treat it as a failed readback check (step 6) and rebuild.
-5. Compare each `readback-NN.md` with its order:
-   - Files in RB §3 SHALL be a subset of WO §4.1.
-   - Criteria in RB §4 SHALL equal WO §3.
-   - The objective SHALL match WO §1.1 in meaning.
-   - RB §5 QUESTIONS SHALL be NIL.
-6. IF any check fails, THEN call `architect` to amend the order (AMDT n+1). Do not correct the builder. Repeat the readback for that order.
-7. Build: call `builder` in mode BUILD for every accepted order, in parallel. Prefer continuing the same builder agent if the Agent tool lets you message it; otherwise start a new one with the order and the accepted readback.
-8. Each builder writes `report-NN.md` and commits on its branch.
-9. IF a report is BLOCKED by a stop condition, THEN call `architect` with the report. The architect amends the order, or raises OUT-OF-ORDER-DECISION when the answer changes the goal.
+4. Build: call `builder` in mode BUILD for every order in the wave, in parallel, in one message. Max parallel builders comes from config. There is no separate readback: the builder reads the order first and stops before its first edit if anything is unclear (WO §6).
+5. Each builder writes `report-NN.md` and commits on its branch.
+6. Scope check, for every order: every path in `git diff --name-only <start>..<branch>` SHALL be in the order's §3 IN. IF a path is not, THEN call `architect` to amend the order and rebuild it.
+7. IF a report is BLOCKED (a question in §6, or a stop condition), THEN call `architect` with the report. The architect amends the order, or raises OUT-OF-ORDER-DECISION when the answer changes the goal. Then rebuild that order; prefer continuing the same builder agent if the Agent tool lets you message it.
 
 ### 3.9 INTEGRATE (all)
 - Call `integrator` with the reports, branches and the full test and build commands.
@@ -127,18 +119,18 @@ For each wave:
    Otherwise it is FULL. Review-rules §2.1 says which lenses and diff a NARROW round uses.
 4. Review:
    - Depth comes from the lane (triage-rubric §3.3). Lenses come from review-rules §2.
-   - The previous round head is the head hash in `findings-r<N-1>.md` §1.3. Round 1 has none.
-   - Call one `reviewer` per lens, in parallel, in one message. Pass: base and head commit, the previous round head, kind, lens, depth, criteria source (`spec.md` §3, `repro.md` §6, the plan slice for a child task, or `task.md` for an S lane), rules file list, `docs.txt`. Each writes `review/<lens>-rN.md`. S and M lanes: pass `model: sonnet` to the correctness and spec reviewers when the diff has 150 changed lines or fewer (`git diff --shortstat`).
-   - Bug flow: the correctness reviewer also runs the sibling sweep from `repro.md` §8.
-   - Verifier. IF every reviewer reports 0 candidates, THEN skip the verifier: write `findings-rN.md` yourself from the template with RESULT PASS and each lens's §4 CHECKED AND CLEAN. IF every candidate is LOW, THEN skip the verifier too and copy them to §6 LEFT OPEN.
+   - The previous round head is the head hash in `findings-r<N-1>.md` §1 Diff. Round 1 has none.
+   - Call one `reviewer` per lens, in parallel, in one message. Pass: base and head commit, the previous round head, kind, lens, depth, criteria source (`spec.md` §3, `repro.md` §5, the plan slice for a child task, or `task.md` for an S lane), rules file list, `docs.txt`. Each writes `review/<lens>-rN.md`. S and M lanes: pass `model: sonnet` to the correctness and spec reviewers when the diff has 150 changed lines or fewer (`git diff --shortstat`).
+   - Bug flow: the correctness reviewer also runs the sibling sweep from `repro.md` §7.
+   - Verifier. IF every reviewer reports 0 candidates, THEN skip the verifier: write `findings-rN.md` yourself from the template with Result PASS and each lens's §3 Checked and clean. IF every candidate is LOW, THEN skip the verifier too and copy them to §5 Left open.
    - Otherwise call `verifier` with all raw findings files, the previous findings file and the previous round head. Output: `findings-rN.md`. Pass `model: sonnet` when there are 3 candidates or fewer and none is HIGH.
 5. On FAIL, in this order:
-   - 5.1 Fix chain. IF this round has an INTRODUCED finding and round N-1 had an INTRODUCED finding in the same area (findings §3 Area), THEN raise FIX-CHAIN. Do not patch again.
-   - 5.2 Small fix. IF every confirmed finding is MEDIUM or LOW, each names a file already in its owner's §4.1, and none changes a criterion, THEN skip the architect: call `builder` in mode FIX with its order and `findings-rN.md`. Prefer continuing the same builder agent. Then INTEGRATE, then REVIEW again.
+   - 5.1 Fix chain. IF this round has an INTRODUCED finding and round N-1 had an INTRODUCED finding in the same area (findings §2 Area), THEN raise FIX-CHAIN. Do not patch again.
+   - 5.2 Small fix. IF every confirmed finding is MEDIUM or LOW, each names a file already in its owner's §3 IN, and none changes a criterion, THEN skip the architect: call `builder` in mode FIX with its order and `findings-rN.md`. Prefer continuing the same builder agent. Then INTEGRATE, then REVIEW again.
    - 5.3 Otherwise call `architect` in AMEND mode on `spec.md` (feature) with the findings, so it runs the interaction check, then on each owning order.
-   - 5.4 Go back to BUILD for those orders only. Skip the READBACK when the amended order adds no file to §4.1 and changes no criterion text; the builder builds from the amended order. Then INTEGRATE, then REVIEW again.
+   - 5.4 Go back to BUILD for those orders only; the builder builds from the amended order. Then INTEGRATE, then REVIEW again.
 6. Hard stop. When `bump` exits 2, or Jorge chose to ship at LOOP-LIMIT or FIX-CHAIN:
-   - 6.1 Record each open confirmed finding as a known risk: one line in `spec.md` §1 (AMDT n+1), and one line in `pr.md` §6 with its follow-up.
+   - 6.1 Record each open confirmed finding as a known risk: one line in `spec.md` §1 (with a Changes line), and one line in `pr.md` §5 with its follow-up.
    - 6.2 Continue to QA. No escalation and no gate offers another fix round, GATE-PR included.
    - 6.3 Only Jorge's own words naming a higher limit (`/tempo:resume <task-id> review-limit <N>`) reopen review.
 
@@ -148,7 +140,7 @@ For each wave:
 - S feature lane: skip QA. The builder's verification and the quick review stand in for it.
 
 ### 3.12 SHIP (all)
-- Write `pr.md` from the template, using: Task Card §5, Spec §1 (or Repro §5 and §7, or the plan slice and plan §8 for a child task without a Spec), QA §3 (NIL when QA did not run), Findings §6, the integration diff stat.
+- Write `pr.md` from the template, using: Task Card §5, Spec §1 (or Repro §4 and §6, or the plan slice and plan §8 for a child task without a Spec), QA §2 (NIL when QA did not run), Findings §5, the integration diff stat.
 - Assumptions SHALL appear at the top of the PR body, before the summary list.
 - `pr.md` is the internal record. The PR body is written from it in `pr.language`, following the repo's PR template (`pr.body_template`, else `.github/pull_request_template.md` if present). Assumptions stay at the top.
 - PR title: `pr.title` with `{type}` and `{summary}` filled, in `pr.language`. Check the repo's CI files for a title rule and follow it.
@@ -162,12 +154,12 @@ For each wave:
 ### 3.13 PLAN-ONLY stop (single repo)
 - In PLAN-ONLY mode, run the route up to and including HANDOFF, then stop. Do not create work-order worktrees or branches, and do not BUILD.
 - The bug route keeps REPRODUCE and ROOT-CAUSE: they commit only a test, on the repro branch.
-- Write `plan.md` from the template, SCOPE: REPO. One slice per Work Order. Each Work Order's DEPENDS ON becomes a blocks-start edge. Open decisions come from Spec §1 (or Repro §7). Check it.
+- Write `plan.md` from the template, SCOPE: REPO. One slice per Work Order. Each Work Order's DEPENDS ON becomes a blocks-start edge. Open decisions come from Spec §1 (or Repro §6). Check it.
 - `<state> log <dir> HANDOFF plan.md PASS`, then `<state> set <dir> --stage PLANNED --next "Run BUILD wave 1 (resume with build)"`, then raise GATE-PLAN.
 
 ### 3.14 Resume from PLANNED
 - `/tempo:resume <task-id> build` starts here.
-- Fetch the base branch. IF its head differs from the base commit in `state.md` §1.3, THEN call `reviewer` with lens SPEC-PRECHECK on `spec.md` (or `repro.md`) against the new head. IF it has candidate findings, THEN call `architect` in AMEND mode, then HANDOFF again. Record the new base with `<state> set <dir> --base-commit <hash>`.
+- Fetch the base branch. IF its head differs from the base commit in `state.md` §1 Base branch, THEN call `reviewer` with lens SPEC-PRECHECK on `spec.md` (or `repro.md`) against the new head. IF it has candidate findings, THEN call `architect` in AMEND mode, then HANDOFF again. Record the new base with `<state> set <dir> --base-commit <hash>`.
 - `<state> set <dir> --mode FULL --stage BUILD`, then continue at 3.8.
 
 ## 4 Gates and escalations
@@ -194,7 +186,7 @@ For each wave:
 2. Run `<state> wait <dir> esc-N.md`.
 3. Send Jorge one message: the question, the options, the recommendation, and "Reply yes to accept, or /tempo:resume <task-id> <answer> later."
 4. End your turn. Do not continue other stages of this task while waiting, except read-only work.
-4.3 On Jorge's answer, record it in `esc-N.md` as AMDT 1, run `<state> wait <dir> --clear` and continue from §8 NEXT ACTION.
+4.3 On Jorge's answer, record it in `esc-N.md` §6 Answer, run `<state> wait <dir> --clear` and continue from `state.md` §7 Next action.
 4.4 GATE-PLAN needs no `esc-N.md`: `plan.md` is the question. Run `<state> wait <dir> plan.md`. IF Jorge answers open decisions, THEN call `architect` in AMEND mode on `plan.md` (and `spec.md`) first.
 
 ## 5 Rules for the orchestrator
@@ -204,8 +196,8 @@ For each wave:
 5.2.1 Agents that run code also get: the command lines from §1.8, the branch names from §1.7, and the commit rules (`git.commit.message`, `git.commit.language`, `git.commit.extra_args`).
 5.2.2 Every output path SHALL be the final path in `.tempo/<task-id>/`. No agent writes an artifact to a temp folder first.
 5.3 Run independent agents in parallel, in one message.
-5.4 Do not write production code yourself. Builders write code. You MAY fix a mechanical document error (§2.3).
-5.5 Do not skip a stage the route lists, except the skips this skill names (lane, re-size, single-order readback, verifier with no candidates). To skip any other, raise an escalation.
+5.4 Do not write production code yourself. Builders write code. You MAY fix a document's structure (§2.2).
+5.5 Do not skip a stage the route lists, except the skips this skill names (lane, re-size, verifier with no candidates). To skip any other, raise an escalation.
 5.6 Never merge the PR. Never push to the base branch. Never force-push.
 5.7 Keep Jorge's messages short: one line per milestone (2.6), one message per gate.
 5.8 Models. The frontmatter model is the default for L. Pass the `model` override this skill names for S and M stages. Never override a model upward.
@@ -215,7 +207,7 @@ For each wave:
 6.1 A workspace task starts when the working directory is a workspace root (1.1.2). Its folder is `<workspace>/.tempo/<task-id>/`. Run 1.0, 1.2 and 1.3 with `--repo <workspace>`, and 1.6 for the ID.
 6.2 `<state> init <workspace>/.tempo/<task-id> --task <task-id> --flow WORKSPACE --mode <mode> --title "<request>" --base-branch <defaults.git.base_branch> --base-commit NIL --qa-limit <limits.qa_rounds>`.
 6.3 TRIAGE: call `triage` with `Scope: WORKSPACE` and the output of `<cfg> repos`. Raise GATE-CLARIFY as in 3.1.
-6.4 EXPLORE: run `<cfg> docs --repo <path>` for each repo the Task Card names and save the lists under `<workspace>/.tempo/<task-id>/docs/<repo>.txt`. Call one `scout` with lens CROSS-REPO per repo, with its docs list, in parallel, at most `limits.max_parallel_builders` at a time. Merge their replies into `context.md`, one block of §3 lines per repo, copy every CONTRACTS line into §4 and every BEHAVIOUR line into §9. The architect copies the §9 lines each slice consumes into the slice, so the child's scouts and spec start from them.
+6.4 EXPLORE: run `<cfg> docs --repo <path>` for each repo the Task Card names and save the lists under `<workspace>/.tempo/<task-id>/docs/<repo>.txt`. Call one `scout` with lens CROSS-REPO per repo, with its docs list, in parallel, at most `limits.max_parallel_builders` at a time. Merge their replies into `context.md`, one block of §2 lines per repo, copy every CONTRACTS line into §3 and every BEHAVIOUR line into §8. The architect copies the §8 lines each slice consumes into the slice, so the child's scouts and spec start from them.
 6.5 PLAN: call `architect` in mode PLAN. Output: `plan.md`. Check it. Each slice SHALL carry its criteria text, production files, test files, pattern and test command (template §3), because the child builds from it. Then raise GATE-PLAN, always. In PLAN-ONLY mode, `<state> set <dir> --stage PLANNED` first and stop at the gate.
 6.6 REPOS: for each slice, in §6 ORDER:
   - 6.6.1 Register it: `<state> child <dir> <repo> --folder <repo>/.tempo/<task-id>`.
@@ -234,7 +226,7 @@ For each wave:
 
 ## 7 After a restart
 
-7.1 A restart ends background agents. On resume, and whenever a notification says agents did not finish before the previous session ended, read `state.md` §9 AGENTS IN FLIGHT.
+7.1 A restart ends background agents. On resume, and whenever a notification says agents did not finish before the previous session ended, read `state.md` §8 Agents in flight.
 7.2 For each agent listed: send it a message by its agent ID: "The session restarted. Continue from where you stopped and finish with the reply your prompt asks for. Write <output path>."
 7.3 IF the agent cannot be reached, THEN start a new agent with the saved prompt file, and replace the entry with `<state> agent ... start`.
 7.4 Do this without asking Jorge. Tell Jorge in one line which agents you restarted.

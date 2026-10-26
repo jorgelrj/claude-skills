@@ -1,35 +1,30 @@
-CONTEXT MAP                                       {{task-id}}   AMDT 0
-LANE: {{S|M|L}}          DEPENDS ON: task.md          ISSUED BY: orchestrator (from scouts)
+# Context Map: {{task-id}}
+Lane: {{S|M|L}} · Issued by: orchestrator, from the scout reports
 
-1   OBJECTIVE
-1.1   {{One sentence copied from Task Card 4.2.}}
+## 1 Objective
+{{One sentence, copied from the Task Card Clarity Outcome.}}
 
-2   DEFINITIONS
-2.1   {{Term}}: {{bound meaning}}.
+## 2 Files
+- `{{path}}` | {{CHANGE | READ | TEST}} | {{why it matters}}
 
-3   FILES
-3.1   {{path}} | {{CHANGE | READ | TEST}} | {{why it matters, one line}}
+## 3 Data model
+- {{entity / table / type}} in `{{path}}`: {{fields that matter}}
 
-4   DATA MODEL
-4.1   {{entity / table / type}} in {{path}}: {{fields that matter}}.
+## 4 Patterns to follow
+- {{Existing pattern}} in `{{path:line}}`. Use it for {{what}}.
 
-5   PATTERNS TO FOLLOW
-5.1   {{Existing pattern}} in {{path:line}}. Use it for {{what}}.
+## 5 Tests
+- Test command: `{{exact command}}`
+- Existing tests for this area: {{paths}}
+- Build or typecheck command: `{{exact command}}` or NIL
 
-6   TESTS
-6.1   Test command: {{exact command}}.
-6.2   Existing tests for this area: {{paths}}.
-6.3   Build or typecheck command: {{exact command or NIL}}.
+## 6 Risks
+- {{Risk, with the file it lives in}}
 
-7   RISKS
-7.1   {{Risk, with the file it lives in}}.
+## 7 Open questions
+- {{Question the scouts could not answer from the code}}
 
-8   OPEN QUESTIONS
-8.1   {{Question the scouts could not answer from the code}}.
-
-9   CONSUMED BEHAVIOUR
-9.1   {{service, library or ported code}} | {{event: repeat, replay, timeout, decline, failure code, callback order}} | {{what it does}} | {{path:line}}.
-9.2   Why {{non-obvious line in ported code}}: {{reason from code, commit or test}} | {{path:line}}. NIL when the task calls nothing and ports nothing.
-
-AMENDMENT LOG
-AMDT 0   {{YYYY-MM-DD}}   Issued.
+## 8 Consumed behaviour
+NIL when the task calls nothing and ports nothing. Otherwise:
+- {{service, library or ported code}} | {{event: repeat, replay, timeout, decline, failure code, callback order}} | {{what it does}} | `{{path:line}}`
+- Why {{non-obvious line in ported code}}: {{reason from code, commit or test}} | `{{path:line}}`

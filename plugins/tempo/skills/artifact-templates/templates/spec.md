@@ -1,34 +1,32 @@
-SPEC                                              {{task-id}}   AMDT 0
-LANE: {{M|L}}          DEPENDS ON: task.md, context.md          ISSUED BY: architect
+# Spec: {{task-id}}
+Lane: {{M|L}} · Inputs: task.md, context.md · Issued by: architect
 
-1   ASSUMPTIONS AND OPEN DECISIONS
-1.1   Assumption: {{copied from Task Card 5, plus any the architect added}}.
-1.2   Open decision D-1: {{question}}. Options: (a) {{option}} (b) {{option}}. Recommended: {{a}}, because {{reason}}.
+## 1 Assumptions and open decisions
+- Assumption: {{copied from the Task Card, plus any the architect added}}
+- D-1: {{question}} Options: (a) {{option}} (b) {{option}}. Recommended: {{a}}, because {{reason}}.
 
-2   DEFINITIONS
-2.1   {{Term}}: {{bound meaning}}.
+## 2 Terms
+The task's only glossary. Work Orders and reviewers cite it by term name.
+- {{Term}}: {{bound to a file, symbol, field, screen or value}}
 
-3   REQUIREMENTS
-3.1   WHEN {{trigger}}, THE SYSTEM SHALL {{response}}.  [AC-1]
+## 3 Acceptance criteria
+- [AC-1] WHEN {{trigger}}, the system shall {{response}}. Test: {{test name or command}}.
 
-4   DESIGN
-4.1   {{One design decision per line, with the file it lands in}}.
+## 4 Design
+- {{One design decision per bullet, with the file it lands in}}
 
-5   TASKS
-5.1   TASK-1: {{what}}. Files: {{paths}}. Criteria: {{AC tags}}. Depends on: {{NIL | TASK-n}}.
+## 5 Tasks
+- TASK-1: {{what}}. Files: {{paths}}. Criteria: {{AC tags}}. Depends on: {{NIL | TASK-n}}.
 
-6   RULES CHECK
-6.1   Rules files read: {{CLAUDE.md, REVIEW.md, other paths, or NIL}}.
-6.2   Result: {{PASS | FAIL}}.
-6.3   {{Each conflict between the spec and a rule, with the rule's file and line}}.
+## 6 Rules check
+- Rules files read: {{CLAUDE.md, REVIEW.md, other paths, or NIL}}
+- Result: {{PASS | FAIL}}
+- {{Each conflict between the spec and a rule, with the rule's file and line}}
 
-7   OUT OF SCOPE
-7.1   {{What this task SHALL NOT change}}.
+## 7 Out of scope
+- {{What this task does not change}}
 
-8   STATE MODEL
-8.1   Entity: {{entity}} in {{path}}. States: {{list}}. Events: {{list, from Context Map 9}}.
-8.2   {{state}} + {{event}} -> {{resulting state and reply}}. {{AC-n | OUT OF SCOPE: reason}}.
-8.3   NIL when no criterion covers retries, repeated requests, callbacks, scheduled jobs or idempotency keys.
-
-AMENDMENT LOG
-AMDT 0   {{YYYY-MM-DD}}   Issued.
+## 8 State model
+NIL when no criterion covers retries, repeated requests, callbacks, scheduled jobs or idempotency keys. Otherwise:
+- Entity: {{entity}} in `{{path}}`. States: {{list}}. Events: {{list, from Context Map §8}}.
+- {{state}} + {{event}} -> {{resulting state and reply}}. {{AC-n | OUT OF SCOPE: reason}}

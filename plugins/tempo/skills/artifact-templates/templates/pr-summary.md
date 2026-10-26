@@ -1,30 +1,24 @@
-PR SUMMARY                                        {{task-id}}   AMDT 0
-LANE: {{S|M|L}}          DEPENDS ON: all task artifacts          ISSUED BY: orchestrator
+# PR Summary: {{task-id}}
+Issued by: orchestrator
 
-1   SUMMARY
-1.1   {{What this PR does, one line}}.
-1.2   Type: {{FEATURE | BUG-KNOWN | BUG-FEEDBACK}}.
+## 1 Summary
+- {{What this PR does, one line}}
+- Type: {{FEATURE | BUG-KNOWN | BUG-FEEDBACK}}
 
-2   DEFINITIONS
-2.1   {{Terms copied from the Spec or Repro report, or NIL}}
+## 2 Assumptions
+- {{Every assumption from the Task Card §5 and Spec §1, or NIL}}
 
-3   ASSUMPTIONS
-3.1   {{Every assumption from Task Card 5 and Spec 1, or NIL}}
+## 3 Acceptance criteria and QA
+- {{AC tag}}: {{criterion}}. QA: {{PASS}}. Evidence: {{evidence}}
 
-4   ACCEPTANCE CRITERIA AND QA
-4.1   {{AC tag}}: {{criterion}}. QA: {{PASS}}. Evidence: {{evidence}}.
+## 4 Changes
+- `{{path}}`: {{what changed}}
 
-5   CHANGES
-5.1   {{path}}: {{what changed}}.
+## 5 Findings left open
+- {{F-n, severity, reason; known risks after the review hard stop with their follow-up}}, or NIL
 
-6   FINDINGS LEFT OPEN
-6.1   {{F-n, severity, reason; known risks after the review hard stop with their follow-up}}, or NIL.
+## 6 How to verify
+- {{exact command or manual step}}
 
-7   HOW TO VERIFY
-7.1   {{exact command or manual step}}.
-
-8   ARTIFACTS
-8.1   .tempo/{{task-id}}/
-
-AMENDMENT LOG
-AMDT 0   {{YYYY-MM-DD}}   Issued.
+## 7 Artifacts
+- .tempo/{{task-id}}/
