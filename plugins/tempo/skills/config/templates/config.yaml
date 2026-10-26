@@ -38,6 +38,11 @@ worktree:                       # a new worktree has only tracked files
   setup: []                     # commands run inside the new worktree, in order
   env: {}
 
+docs:                           # the project's own docs; agents read them before searching the code
+  paths: []                     # folders, globs (docs/**/*.md) or regexes (re:^svc/[^/]+/docs/), relative to the repo root
+  exclude: []                   # globs or re: regexes to drop
+  rules: true                   # conventions, ADRs and design-system docs count as review rules
+
 limits:
   max_parallel_builders: 3
   review_rounds: 3

@@ -32,7 +32,8 @@ After editing files here, restart Claude Code (Option A) or run `/plugin marketp
 
 | Command | What it does |
 |---|---|
-| `/tempo:feature <request>` | Feature flow: Triage → Explore → Spec → Work Orders → parallel Build → Integrate → Review → QA → PR |
+| `/tempo:feature <request>` | Feature flow: Triage → Explore → Spec → Work Orders → parallel Build → Integrate → Review → QA → PR. The lane (S, M, L) decides which stages run |
+| `/tempo:feature --quick <request>` | Lane S: one Work Order from the Task Card → Build → correctness review → draft PR. `--lane S\|M\|L` sets any lane; `/tempo:bug` takes the same flags |
 | `/tempo:bug <report>` | Bug flow: [Investigate] → Reproduce (failing test) → Root cause → Fix → Integrate → Review + sibling sweep → QA → PR |
 | `/tempo:plan <request>` | Plan only: Triage → Explore → Spec → Work Orders (or the cross-repo plan), then stop at GATE-PLAN. Also `/tempo:feature --plan-only ...` |
 | `/tempo:resume <task-id> [build \| answer]` | Continue a task from its last artifact, answer the question it is waiting on, or `build` a planned task |
@@ -47,7 +48,7 @@ Run a command from a folder that holds several repos and has `.tempo/workspace.y
 1. Triages the request against the workspace's repo list.
 2. Sends one CROSS-REPO scout per candidate repo, then the architect writes `plan.md`: one slice per repo, typed dependencies (blocks-start, blocks-merge, blocks-validation) and external blockers.
 3. Stops at GATE-PLAN.
-4. Runs one child task per repo in plan order (`<repo>/.tempo/<task-id>/`), each ending in its own PR, and keeps `tracker.md` in the workspace task folder up to date.
+4. Runs one child task per repo (`<repo>/.tempo/<task-id>/`), each ending in its own PR, and keeps `tracker.md` in the workspace task folder up to date. Children start together unless a blocks-start edge orders them. An S or M slice goes straight to Work Orders from the plan slice; only an L slice, or one with an open decision, runs its own triage, explore and spec.
 5. Runs a joint QA across the task branches with the workspace's `validation.steps`, then hands over every PR link.
 
 Only blocks-start orders the work; see `skills/triage-rubric/SKILL.md` §5.
@@ -55,6 +56,20 @@ Only blocks-start orders the work; see `skills/triage-rubric/SKILL.md` §5.
 ## Task state
 
 `skills/orchestrator/scripts/tempo_state.py` is the only writer of `.tempo/<task-id>/state.json` and the `state.md` rendered from it. It stamps the stage log with this machine's clock, keeps loop counters and work orders, and records agents in flight with their saved prompts, so `/tempo:resume` can restart them after a session restart. Tasks started before 0.3.0 are converted with `tempo_state.py adopt <task-dir>`.
+
+## Lanes
+
+| Lane | Production files | Stages | Rough time |
+|---|---|---|---|
+| S | 1–3 | Work Order from the Task Card → Build → correctness review → PR | ~10 min |
+| M | 4–8, one area | 2 scouts → spec (+ Work Orders in one architect call) → Build → correctness + spec review → QA → PR | ~25 min |
+| L | more than 8, new design, schema or dependency | 3 scouts → spec → pre-check → spec gate → parallel Build → 3-lens review → QA → PR | 60+ min |
+
+Triage sizes from the request; Explore re-sizes from the files it actually found. In S and M the architect runs on Sonnet, and so do reviewers on diffs of 150 lines or fewer and the verifier on 3 candidates or fewer; L keeps Opus. The spec pre-check runs in L, and in M only when the spec has a state model. The verifier is skipped when reviewers found nothing (or only LOW items). A small MEDIUM/LOW fix goes straight back to the builder (mode FIX) without re-amending the spec.
+
+## Project docs
+
+`docs:` in the config tells TEMPO where the project's own documentation lives: folders, files, globs or `re:` regexes, at the workspace level and per repo. `tempo_config.py docs` lists the files. Scouts read the index and the docs for their lens before searching, the architect follows the ADRs and conventions, reviewers treat rule-stating docs as rules (with `docs.rules: true`), and QA reads the QA harness or runbook. See `skills/config/SKILL.md` §2.6.
 
 ## Config
 
@@ -119,7 +134,7 @@ It reads each document type's required sections from its template, so editing a 
 
 - The main session is the orchestrator. Subagents cannot start other subagents, so the orchestrator starts every agent, including the parallel scouts, builders and reviewers.
 - Each builder gets its own git worktree at `.tempo/worktrees/<task-id>-wo-NN` on the work-order branch (default `{branch}-wo-{nn}`), prepared by the config's `worktree:` steps. The integrator merges them into the task branch (`git.branch`, e.g. `feat/{ticket}`), which becomes the PR branch.
-- Models are set per agent in the frontmatter (`opus` for architect, investigator, reproducer, reviewer, verifier; `sonnet` for the rest). Change them freely.
+- Models are set per agent in the frontmatter (`opus` for architect, investigator, reproducer, reviewer, verifier; `sonnet` for the rest). That is the L-lane default; the orchestrator passes `sonnet` for S and M stages (orchestrator §5.8).
 
 ## How review converges
 
@@ -136,3 +151,4 @@ It reads each document type's required sections from its template, so editing a 
 - The vague-word list in `scripts/check_doc.py` if it rejects too much or too little.
 - Loop limits, review extensions, the narrow-round size and parallel builder count in `limits:` of the repo or workspace config.
 - Whether S-lane features need QA (currently skipped).
+- Whether the ICAO document standard pays for itself, or plain markdown files with the same sections would do. The numbered-line format, the checker and the amendment logs cost architect and reviewer time on every task; measure a few runs before deciding.

@@ -35,25 +35,34 @@ Ask the four questions in order. Only questions 1 and 2 can send the task back t
 
 ## 3 Size and lane
 
+Count production files only. Test files, fixtures and docs do not count toward the size.
+
 | Size | Rule (all conditions) | Lane |
 |---|---|---|
-| S | 1 to 2 files; no new design; no data or schema change; no new dependency. | Work Order, Build, quick review (correctness lens only), PR. |
-| M | 3 to 8 files in one area; goal is clear; no schema change on real data. | Explore, light spec, Build, standard review (all lenses), QA, PR. Spec gate only if the spec lists open decisions. |
-| L | More than 8 files, OR a new design, OR a data or schema change, OR a new dependency, OR work across more than one area. | Full spec, Jorge approves spec, parallel builders, deep review, QA, PR. |
+| S | 1 to 3 production files; no new design; no schema change on real data; no new dependency. | Work Order from the Task Card, Build, quick review (correctness lens only), PR. |
+| M | 4 to 8 production files in one area; goal is clear; no schema change on real data. | Explore (2 scouts), light spec, Build, standard review (correctness and spec lenses), QA, PR. Spec gate only if the spec lists open decisions. |
+| L | More than 8 production files, OR a new screen or flow design, OR a schema change on real data, OR a new dependency. | Full spec, Jorge approves spec, parallel builders, deep review, QA, PR. |
 
-3.1 IF unsure between two sizes, THEN pick the larger one.
-3.2 The bug flow uses the same sizes. A bug is S when the root cause is likely in one file. The Reproduce step is never skipped, in any size.
-3.3 Review depth follows the lane: S = QUICK, M = STANDARD, L = DEEP.
+3.1 Size on what the request changes, not on how far the code around it reaches. Adding a field that passes through existing layers is S when each layer has 3 production files or fewer to touch.
+3.2 IF unsure between two sizes, THEN pick the smaller one and record the reason in §5 ASSUMPTIONS. Explore re-sizes the task (3.5), so a wrong guess costs one stage, not the whole route.
+3.3 The bug flow uses the same sizes. A bug is S when the root cause is likely in one file. The Reproduce step is never skipped, in any size.
+3.4 Review depth follows the lane: S = QUICK, M = STANDARD, L = DEEP.
+3.5 Re-size after Explore. IF the Context Map marks 3 production files or fewer as CHANGE, with no schema, design or dependency change, THEN the lane drops to S. IF it marks more than 8, or a schema or design change, THEN it rises to L. The orchestrator records the change with `set --lane`.
+3.6 Lane override. IF Jorge's request carries `--lane S|M|L` or `--quick`, THEN that lane wins over 3.1 to 3.5. `--quick` is lane S. Record the override in §3.3.
+3.7 A workspace task is not sized by its repo count. Each slice is sized on its own repo's change. "Work across several repos" is never by itself a reason for L.
+3.8 Time estimate. Record in §3.3 the expected wall-clock time of the chosen lane: S about 10 minutes, M about 25 minutes, L 60 minutes or more. Add 10 minutes per review fix round.
 
 ## 4 Routes
 
 | Type | Route |
 |---|---|
-| FEATURE, S | Handoff (one Work Order from the Task Card), Build, Integrate, Review (QUICK), QA, Ship |
+| FEATURE, S | Handoff (one Work Order from the Task Card), Build, Integrate, Review (QUICK), Ship |
 | FEATURE, M or L | Explore, Spec, [Spec gate], Handoff, Build, Integrate, Review, QA, Ship |
 | BUG-KNOWN | Reproduce, Root cause, [Behaviour gate], Handoff (one Work Order), Build, Integrate, Review + sibling sweep, QA, Ship |
 | BUG-FEEDBACK | Investigate, Reproduce, Root cause, [Behaviour gate], Handoff, Build, Integrate, Review + sibling sweep, QA, Ship |
-| WORKSPACE (request spans repos) | Explore (one CROSS-REPO scout per repo), Plan, Plan gate, one child task per repo in plan order, Joint QA, Ship |
+| WORKSPACE (request spans repos) | Explore (one CROSS-REPO scout per repo), Plan, Plan gate, one child task per repo (children whose dependencies allow it run in parallel), Joint QA, Ship |
+| CHILD of a workspace task, slice S or M | Handoff (Work Orders from the plan slice and the parent Context Map), Build, Integrate, Review, [QA for M], Ship |
+| CHILD of a workspace task, slice L or with an open decision | the FEATURE or BUG route for its size |
 
 4.1 Plan-only mode (`/tempo:plan`) runs a route up to and including Handoff (single repo) or the Plan gate (workspace), then stops. The bug route keeps Reproduce and Root cause in plan-only mode: they commit only a test, on the repro branch.
 

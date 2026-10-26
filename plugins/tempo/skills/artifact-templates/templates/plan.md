@@ -11,7 +11,12 @@ SCOPE: {{REPO | WORKSPACE}}          DEPENDS ON: {{task.md, spec.md or NIL}}    
 2.4   blocks-validation: both slices MAY be built and merged; the joint check SHALL wait for both.
 
 3   SLICES
-3.1   {{S-1}} | {{repo or WO-nn}} | {{objective, one line}} | size {{S|M|L}} | criteria {{AC tags or count}}
+3.1   {{S-1}} | {{repo or WO-nn}} | {{objective, one line}} | size {{S|M|L}} | criteria {{AC tags}}
+3.1.1   [{{AC-1}}] {{criterion in EARS form}}
+3.1.2   Files: {{production files the slice changes}}
+3.1.3   Test files: {{test files the slice adds or changes}}
+3.1.4   Pattern: {{closest existing file or commit to follow}}
+3.1.5   Test command: {{exact command or config command name}}
 
 4   DEPENDENCIES
 4.1   {{S-1}} blocks-start {{S-2}} | {{reason: the contract, file or migration that links them}}

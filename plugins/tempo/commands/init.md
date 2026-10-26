@@ -21,6 +21,7 @@ Set up TEMPO config here: $ARGUMENTS
    - 5.5 Commit and PR conventions: the last 30 commit subjects, `.github/pull_request_template.md`, and title rules in `.github/workflows/*`, commitlint or danger config. Record the language they are written in.
    - 5.6 Hooks that block commits on this machine (a pre-commit hook that fails) → `git.commit.extra_args: [--no-verify]` only with my yes.
    - 5.7 Worktree needs: gitignored files the build or tests read (`.env*`, local config, keys) → `worktree.copy`; large dependency folders → `worktree.link` or a `worktree.setup` install step.
+   - 5.7.1 Docs: folders and files holding the project's documentation (`docs/`, `master-docs/`, `doc/`, `adr/`, `AGENTS.md`, `CONTRIBUTING.md`, folders with an `index.md`). Write them as `docs.paths`; exclude old plans and generated output. In a workspace, docs at the workspace root go in the top-level `docs:`, each repo's own docs in its entry. Check with `<cfg> docs --repo <path>`.
    - 5.8 Workspace only: one `repos:` entry per repo with its path; shared settings in `defaults:`; repeated env and commands in `toolchains:`; `depends_on` from build dependencies between the repos (shared libraries, migrations).
 6. Write the file from the skill's template (`templates/config.yaml` or `templates/workspace.yaml`). Replace `{{schema-path}}` with the absolute path of the schema. Keep the comments. Delete keys that equal the defaults, except `commands` and `git`.
 7. Make sure `.tempo/` is in `.git/info/exclude` of every repo in scope.

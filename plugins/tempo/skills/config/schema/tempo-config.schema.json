@@ -273,6 +273,9 @@
         },
         "task": {
           "$ref": "#/$defs/task"
+        },
+        "docs": {
+          "$ref": "#/$defs/docs"
         }
       }
     },
@@ -339,6 +342,9 @@
         },
         "task": {
           "$ref": "#/$defs/task"
+        },
+        "docs": {
+          "$ref": "#/$defs/docs"
         }
       }
     },
@@ -435,6 +441,45 @@
               "type": "string"
             }
           }
+        },
+        "docs": {
+          "$ref": "#/$defs/docs",
+          "description": "Docs shared by every repo of the workspace, relative to the workspace root."
+        }
+      }
+    },
+    "docs": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Where the project's own documentation lives. Agents read it before searching the code. Paths are relative to the file's root: the workspace root in a workspace file's top-level docs, the repo root in a repo entry or a repo's config.yaml.",
+      "properties": {
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Each entry is a folder (every doc file under it), a glob (`docs/**/*.md`, `**/ADR-*.md`), or a regex over the root-relative path prefixed with `re:` (`re:^services/[^/]+/docs/.*\\\\.md$`)."
+        },
+        "exclude": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Globs or `re:` regexes removed from the matches."
+        },
+        "index": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "File names treated as index files and listed first. Default: index.md, README.md."
+        },
+        "rules": {
+          "type": "boolean",
+          "description": "true (default): docs that state conventions, ADRs or a design system count as rules for the spec lens and the spec pre-check."
         }
       }
     }

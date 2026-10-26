@@ -22,6 +22,7 @@ Commands:
   cmd     NAME [--var k=v ...]           print one command as a shell line, env exported first
   setup   --worktree PATH                print the shell steps that prepare a new worktree
   repos                                  list workspace repos in dependency order
+  docs    [--format list|json]           list the project's doc files (config docs:), index files first
   migrate FILE                           convert a legacy .tempo/config.md to YAML on stdout
 Common option: --repo PATH (default: current directory).
 Exit codes: 0 ok, 1 invalid config or usage error, 2 missing dependency.
@@ -60,6 +61,9 @@ DEFAULTS_PATH = CONFIG_DIR / "defaults.yaml"
 REPO_FILE = Path(".tempo/config.yaml")
 LEGACY_FILE = Path(".tempo/config.md")
 WORKSPACE_FILE = Path(".tempo/workspace.yaml")
+DOC_SUFFIXES = {".md", ".mdx", ".markdown", ".rst", ".txt", ".adoc"}
+DOC_SKIP_DIRS = {".git", ".tempo", "node_modules", "build", "dist", "target", ".dart_tool", ".idea", ".gradle", ".venv", "venv", "__pycache__"}
+DEFAULT_INDEX = ["index.md", "README.md"]
 INTERP = re.compile(r"\$\{(env:[A-Za-z_][A-Za-z0-9_]*|workspace|repo)\}")
 
 
@@ -251,6 +255,7 @@ def resolve(repo_arg):
     defaults.pop("version", None)
     layers_before_tc = [defaults]
     layers_after_tc = []
+    doc_layers = []  # (root, docs block); paths in a block are relative to its root
     ws = None
     if ws_root:
         wpath = ws_root / WORKSPACE_FILE
@@ -258,11 +263,15 @@ def resolve(repo_arg):
         errors += validate(ws, wpath)
         info["files"].append(str(wpath))
         layers_before_tc.append(ws.get("defaults") or {})
+        if ws.get("docs"):
+            doc_layers.append((ws_root, ws["docs"]))
         if repo:
             for name, entry in (ws.get("repos") or {}).items():
                 if (ws_root / entry.get("path", "")).resolve() == repo:
                     info["repo_name"] = name
-                    e = {k: v for k, v in entry.items() if k not in ("path", "depends_on", "description")}
+                    e = {k: v for k, v in entry.items() if k not in ("path", "depends_on", "description", "docs")}
+                    if entry.get("docs"):
+                        doc_layers.append((repo, entry["docs"]))
                     layers_after_tc.append(e)
                     info["depends_on"] = entry.get("depends_on", []) or []
                     break
@@ -275,6 +284,8 @@ def resolve(repo_arg):
             rc = load_yaml(rpath)
             errors += validate(rc, rpath)
             rc.pop("version", None)
+            if rc.get("docs"):
+                doc_layers.append((repo, rc.pop("docs")))
             layers_after_tc.append(rc)
             info["files"].append(str(rpath))
             if lpath.is_file():
@@ -306,6 +317,7 @@ def resolve(repo_arg):
             except ConfigError as e:
                 errors.append(str(e))
     merged.setdefault("pr", {}).setdefault("base", merged.get("git", {}).get("base_branch"))
+    merged["docs"] = merge_docs(doc_layers)
     ctx = {"workspace": info["workspace"], "repo": info["repo"]}
     merged = interpolate(merged, ctx, "", errors)
     if ws and not repo:
@@ -315,6 +327,71 @@ def resolve(repo_arg):
     if errors:
         raise ConfigError("\n".join(errors))
     return merged, info
+
+
+# ---------- project docs ----------
+
+def merge_docs(layers):
+    """Combine docs blocks. Paths add up; index and rules come from the last block that sets them."""
+    out = {"sources": [], "index": list(DEFAULT_INDEX), "rules": True}
+    for root, block in layers:
+        out["sources"].append({"root": str(root), "paths": list(block.get("paths") or []),
+                               "exclude": list(block.get("exclude") or [])})
+        if block.get("index"):
+            out["index"] = list(block["index"])
+        if "rules" in block:
+            out["rules"] = bool(block["rules"])
+    return out
+
+
+def _walk_docs(base):
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = sorted(d for d in dirnames if d not in DOC_SKIP_DIRS)
+        for f in sorted(filenames):
+            if Path(f).suffix.lower() in DOC_SUFFIXES:
+                yield Path(dirpath) / f
+
+
+def _matches(rel, pattern):
+    if pattern.startswith("re:"):
+        return re.search(pattern[3:], rel) is not None
+    return Path(rel).match(pattern) or fnmatch_path(rel, pattern)
+
+
+def fnmatch_path(rel, pattern):
+    import fnmatch
+    return fnmatch.fnmatch(rel, pattern) or fnmatch.fnmatch(rel, pattern.rstrip("/") + "/*")
+
+
+def expand_docs(docs):
+    """Return doc files as absolute paths, index files first, without duplicates."""
+    found = []
+    for src in docs.get("sources", []):
+        root = Path(src["root"])
+        hits = []
+        for pat in src["paths"]:
+            if pat.startswith("re:"):
+                hits += [f for f in _walk_docs(root) if re.search(pat[3:], f.relative_to(root).as_posix())]
+            elif any(ch in pat for ch in "*?["):
+                hits += [f for f in sorted(root.glob(pat)) if f.is_file()]
+            else:
+                target = (root / pat)
+                if target.is_dir():
+                    hits += list(_walk_docs(target))
+                elif target.is_file():
+                    hits.append(target)
+        for f in hits:
+            rel = f.relative_to(root).as_posix() if f.is_relative_to(root) else str(f)
+            if any(_matches(rel, x) for x in src["exclude"]):
+                continue
+            found.append(f.resolve())
+    seen, unique = set(), []
+    for f in found:
+        if f not in seen:
+            seen.add(f); unique.append(f)
+    index = [n.lower() for n in docs.get("index", DEFAULT_INDEX)]
+    first = [f for f in unique if f.name.lower() in index]
+    return first + [f for f in unique if f.name.lower() not in index]
 
 
 # ---------- rendering ----------
@@ -412,6 +489,7 @@ def main(argv=None):
     m = add("cmd"); m.add_argument("name"); m.add_argument("--var", action="append", default=[])
     s = add("setup"); s.add_argument("--worktree", required=True)
     add("repos")
+    dc = add("docs"); dc.add_argument("--format", choices=["list", "json"], default="list")
     g = add("migrate"); g.add_argument("file")
     a = p.parse_args(argv)
 
@@ -489,6 +567,18 @@ def main(argv=None):
             for cmd in w.get("setup", []):
                 steps.append(f"(cd {shlex.quote(str(wt))} && {env_prefix(env)}{cmd})")
             print("\n".join(steps) if steps else "# no worktree setup configured"); return 0
+
+        if a.cmd == "docs":
+            files = expand_docs(cfg.get("docs") or {})
+            for src in (cfg.get("docs") or {}).get("sources", []):
+                for pat in src["paths"]:
+                    if not pat.startswith("re:") and not any(ch in pat for ch in "*?[") and not (Path(src["root"]) / pat).exists():
+                        sys.stderr.write(f"WARN: docs path not found: {Path(src['root']) / pat}\n")
+            if a.format == "json":
+                print(json.dumps({"rules": cfg["docs"]["rules"], "files": [str(f) for f in files]}, indent=2, ensure_ascii=False))
+            else:
+                print("\n".join(str(f) for f in files))
+            return 0
 
         if a.cmd == "repos":
             if not info.get("workspace"):

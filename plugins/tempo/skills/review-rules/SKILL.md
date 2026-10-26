@@ -9,19 +9,22 @@ description: How TEMPO finds and applies a project's rules files (CLAUDE.md, REV
 
 1.1 Read these files from the base branch, not from the task branch, so a change cannot rewrite its own rules:
   - 1.1.1 `CLAUDE.md` at the repo root, and any `CLAUDE.md` in a directory the diff touches.
-  - 1.1.2 `REVIEW.md` at the repo root.
+  - 1.1.2 `REVIEW.md` and `AGENTS.md` at the repo root.
 1.2 Read a file from the base branch with `git show <base>:<path>`.
 1.3 IF a file is absent, THEN record it as NIL. Do not invent rules.
 1.4 A starter `REVIEW.md` is in `templates/` next to this file. `/tempo:init` offers to copy it when absent. Copying it needs Jorge's yes.
 1.5 TEMPO settings (commands, branches, limits) are not rules. They live in the config files; see the `config` skill.
+1.6 Project docs. The config's `docs:` lists the project's own documentation (`tempo_config.py docs` prints the files). IF `docs.rules` is true (the default), THEN docs that state conventions, architecture decisions (ADRs), contributing rules or a design system count as rules files for the SPEC lens and SPEC-PRECHECK. Cite the doc's path and line. Descriptive docs (guides, business context) are context, not rules: use them to understand the code, never as the basis of a finding.
 
 ## 2 Review depth
 
 | Depth | Lane | Lenses | Reviewer budget |
 |---|---|---|---|
 | QUICK | S | correctness | read the diff and the files it touches |
-| STANDARD | M | correctness, security, spec | diff, touched files, direct callers |
+| STANDARD | M | correctness, spec; security only when 2.2 applies | diff, touched files, direct callers |
 | DEEP | L | correctness, security, spec | diff, touched files, callers, tests, data flow from input to storage |
+
+2.2 Security lens in M. Add it when the diff touches an entry point's authentication or authorization, parses external input into a query, command, path or template, handles secrets or tokens, moves money, or adds a dependency.
 
 2.1 Round kind. Round 1 and every round after a FIX-CHAIN re-spec are FULL: the lenses above review `<base>...<head>`. A fix round is NARROW when the orchestrator says so (orchestrator 3.10). In a NARROW round:
   - 2.1.1 The lenses are CORRECTNESS plus each lens that raised a confirmed finding in the last round.
@@ -49,7 +52,7 @@ Report only issues with a concrete exploit path. Skip theoretical issues.
 ### 3.3 SPEC AND CONVENTIONS
 - Each acceptance criterion in the Spec (or Repro report) maps to code and a test.
 - Nothing outside the Spec's scope changed. Check Spec §7 OUT OF SCOPE.
-- The diff follows `CLAUDE.md` and `REVIEW.md`. Cite the rule's file and line for each finding.
+- The diff follows `CLAUDE.md`, `REVIEW.md` and the rule-stating project docs (1.6). Cite the rule's file and line for each finding.
 - The Work Reports' DEVIATIONS sections are justified.
 
 ## 4 Rules for every reviewer

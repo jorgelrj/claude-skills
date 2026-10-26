@@ -21,7 +21,10 @@ toolchains:                     # named env + commands, shared by repos
     worktree:
       setup: [npm ci]
 
-repos:                          # path is relative to this workspace folder
+docs:                           # docs shared by every repo, relative to this workspace folder
+  paths: []                     # e.g. [docs], [master-docs], ["re:^shared/.*\\.md$"]
+
+repos:                          # path is relative to this workspace folder; a repo entry may add its own docs:
   api:
     path: services/api
     toolchain: node20
