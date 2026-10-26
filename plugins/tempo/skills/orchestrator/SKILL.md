@@ -34,7 +34,7 @@ Nothing travels between agents except files in `.tempo/<task-id>/`.
 1.6 Task ID. IF `task.id` is `ticket` and the request contains a key matching `task.ticket_pattern`, THEN the task ID is that key (`AV-5696`). Otherwise it is `T-` plus the next free 3-digit number in `.tempo/`. IF `.tempo/<task-id>/` already exists, THEN resume it as `/tempo:resume` does instead of starting over.
 1.7 Branch names. Run `<cfg> names --repo <repo> --task <task-id> --ticket <ticket or task-id>`. Use these names exactly. Never invent a branch name.
 1.8 Commands. For each command an agent needs, run `<cfg> cmd <name> --repo <repo>` and pass the printed line as is. It exports the configured env (JDK, PATH) first.
-1.9 Create the state: `<state> init .tempo/<task-id> --task <task-id> --flow <FEATURE|BUG> --mode <mode> --title "<request, one line>" --base-branch <git.base_branch> --base-commit <hash of its head> --task-branch <task branch> --review-limit <limits.review_rounds> --qa-limit <limits.qa_rounds>`. Add `--parent <workspace task folder>` for a child task (section 6).
+1.9 Create the state: `<state> init .tempo/<task-id> --task <task-id> --flow <FEATURE|BUG> --mode <mode> --title "<request, one line>" --base-branch <git.base_branch> --base-commit <hash of its head> --task-branch <task branch> --review-limit <limits.review_rounds> --review-extensions <limits.review_extensions> --qa-limit <limits.qa_rounds>`. Add `--parent <workspace task folder>` for a child task (section 6).
 
 ## 2 After every stage
 
@@ -58,7 +58,8 @@ Run the stages the Task Card's ROUTE lists, in this order.
 ### 3.2 EXPLORE (feature, M and L)
 - Call 3 `scout` agents in parallel, in one message, with lenses `CODE-PATHS`, `DATA-MODEL`, `PATTERNS-AND-TESTS`. Pass `task.md`.
 - S lane: skip. M lane: MAY run `CODE-PATHS` and `PATTERNS-AND-TESTS` only.
-- Merge their replies into `context.md` from the template. Remove duplicates. Keep the reason for each file.
+- IF the change calls another service or library whose behaviour decides the result (payments, webhooks, queues, external APIs), or ports existing code, THEN also call a fourth `scout` with lens `CONSUMED-BEHAVIOUR`, in M and L lanes. Pass the services and code to port, with their paths, from `task.md` and the workspace config.
+- Merge their replies into `context.md` from the template. Remove duplicates. Keep the reason for each file. BEHAVIOUR lines go to §9 CONSUMED BEHAVIOUR.
 
 ### 3.3 INVESTIGATE (bug, BUG-FEEDBACK only)
 - Call `investigator` with `task.md`. Output: `hypotheses.md`.
@@ -106,16 +107,31 @@ For each wave:
 - Call `integrator` with the reports, branches and the full test and build commands.
 - Pass the task branch and the work-order branch names from §1.7.
 - It merges every WO branch into the task branch and writes `integration.md`.
-- IF FAIL, THEN return the failing orders to BUILD with the evidence (amend the order). This counts as a review round.
+- IF FAIL, THEN return the failing orders to BUILD with the evidence (amend the order). This counts as a review round: run `<state> bump <dir> review` and follow 3.10.2. The REVIEW that follows the repaired integration does not bump again.
 - After the last wave integrates, continue.
 
 ### 3.10 REVIEW (all)
-- Depth comes from the lane (triage-rubric §3.3). Lenses come from review-rules §2.
-- Call one `reviewer` per lens, in parallel, in one message. Pass: base and head commit, lens, depth, criteria source (`spec.md` §3 or `repro.md` §6), rules file list. Each writes `review/<lens>-rN.md`.
-- Bug flow: the correctness reviewer also runs the sibling sweep from `repro.md` §8.
-- Call `verifier` with all raw findings files. Output: `findings-rN.md`.
-- IF §7 RESULT is FAIL, THEN amend each owning order with its confirmed findings added to §5 PROCEDURE and go back to BUILD (step 3.8.4), for those orders only. Then INTEGRATE, then REVIEW again with N+1.
-- Review rounds stop at the config limit (default 3). Then raise LOOP-LIMIT.
+1. Round number. Run `<state> bump <dir> review` before the reviewers start. The new count is N. Every review round counts, extensions and fixes after GATE-PR included.
+2. Limits. IF `bump` exits 1, THEN raise LOOP-LIMIT before reviewing. IF it exits 2, THEN follow 3.10.6. Do not review.
+3. Round kind. Round 1 is FULL. A later round is NARROW when all hold:
+   - 3.1 The fix diff, `git diff --shortstat <previous round head>..<head>`, changes `limits.narrow_fix_lines` lines or fewer.
+   - 3.2 The amendment changed no criterion Jorge approved.
+   - 3.3 The round does not follow a FIX-CHAIN re-spec.
+   Otherwise it is FULL. Review-rules §2.1 says which lenses and diff a NARROW round uses.
+4. Review:
+   - Depth comes from the lane (triage-rubric §3.3). Lenses come from review-rules §2.
+   - The previous round head is the head hash in `findings-r<N-1>.md` §1.3. Round 1 has none.
+   - Call one `reviewer` per lens, in parallel, in one message. Pass: base and head commit, the previous round head, kind, lens, depth, criteria source (`spec.md` §3 or `repro.md` §6), rules file list. Each writes `review/<lens>-rN.md`.
+   - Bug flow: the correctness reviewer also runs the sibling sweep from `repro.md` §8.
+   - Call `verifier` with all raw findings files, the previous findings file and the previous round head. Output: `findings-rN.md`.
+5. On FAIL, in this order:
+   - 5.1 Fix chain. IF this round has an INTRODUCED finding and round N-1 had an INTRODUCED finding in the same area (findings §3 Area), THEN raise FIX-CHAIN. Do not patch again.
+   - 5.2 Otherwise call `architect` in AMEND mode on `spec.md` (feature) with the findings, so it runs the interaction check, then on each owning order.
+   - 5.3 Go back to BUILD for those orders only. Skip the READBACK when the amended order adds no file to §4.1 and changes no criterion text; the builder builds from the amended order. Then INTEGRATE, then REVIEW again.
+6. Hard stop. When `bump` exits 2, or Jorge chose to ship at LOOP-LIMIT or FIX-CHAIN:
+   - 6.1 Record each open confirmed finding as a known risk: one line in `spec.md` §1 (AMDT n+1), and one line in `pr.md` §6 with its follow-up.
+   - 6.2 Continue to QA. No escalation and no gate offers another fix round, GATE-PR included.
+   - 6.3 Only Jorge's own words naming a higher limit (`/tempo:resume <task-id> review-limit <N>`) reopen review.
 
 ### 3.11 QA (feature M and L, all bugs)
 - Call `qa` with the criteria source, the integration branch and the commands. Output: `qa-rN.md`.
@@ -158,11 +174,14 @@ For each wave:
 | NO-REPRO | bug not reproduced within budget | what was tried, and the user details that would help |
 | BEHAVIOUR-CHANGE | the fix changes intended behaviour | old vs new behaviour, and who it affects |
 | OUT-OF-ORDER-DECISION | the architect cannot answer a builder's question without changing the goal | the decision and options |
-| LOOP-LIMIT | review or QA passes the round limit | the finding that keeps coming back, and options |
+| LOOP-LIMIT | review or QA passes the round limit | the open findings, how many were introduced by fixes, and the options: (a) one extension round, only while `limits.review_extensions` allows; (b) ship them as known risks (3.10.6) |
+| FIX-CHAIN | two rounds in a row each have a finding introduced by the last fix, in the same area | the chain of findings, and the options: (a) re-spec that area: architect AMEND on Spec §8 for it, HANDOFF, BUILD, then a FULL round; (b) ship as known risks (3.10.6); (c) revert the last fix and ship its finding as a known risk |
 | HARD-TO-UNDO | new dependency, migration on real data, secrets, deploys, force-push, deleting branches | the action and its effect |
 
 4.2 To raise one:
 1. Write `esc-N.md` from the template. It SHALL include a recommended option.
+1.1 LOOP-LIMIT and FIX-CHAIN: "the fix is small" is not a reason to recommend another round. Each of the last fix rounds was small too. Recommend re-spec when findings were introduced by fixes; otherwise recommend shipping known risks unless a HIGH finding is open.
+1.2 GATE-PR: IF review has reached the hard stop, THEN the options do not include a fix round. A fix after the PR is open is a review round (3.10.1).
 2. Run `<state> wait <dir> esc-N.md`.
 3. Send Jorge one message: the question, the options, the recommendation, and "Reply yes to accept, or /tempo:resume <task-id> <answer> later."
 4. End your turn. Do not continue other stages of this task while waiting, except read-only work.
@@ -186,7 +205,7 @@ For each wave:
 6.1 A workspace task starts when the working directory is a workspace root (1.1.2). Its folder is `<workspace>/.tempo/<task-id>/`. Run 1.0, 1.2 and 1.3 with `--repo <workspace>`, and 1.6 for the ID.
 6.2 `<state> init <workspace>/.tempo/<task-id> --task <task-id> --flow WORKSPACE --mode <mode> --title "<request>" --base-branch <defaults.git.base_branch> --base-commit NIL --qa-limit <limits.qa_rounds>`.
 6.3 TRIAGE: call `triage` with `Scope: WORKSPACE` and the output of `<cfg> repos`. Raise GATE-CLARIFY as in 3.1.
-6.4 EXPLORE: call one `scout` with lens CROSS-REPO per repo the Task Card names, in parallel, at most `limits.max_parallel_builders` at a time. Merge their replies into `context.md`, one block of §3 lines per repo, and copy every CONTRACTS line into §4.
+6.4 EXPLORE: call one `scout` with lens CROSS-REPO per repo the Task Card names, in parallel, at most `limits.max_parallel_builders` at a time. Merge their replies into `context.md`, one block of §3 lines per repo, copy every CONTRACTS line into §4 and every BEHAVIOUR line into §9. The architect copies the §9 lines each slice consumes into the slice, so the child's scouts and spec start from them.
 6.5 PLAN: call `architect` in mode PLAN. Output: `plan.md`. Check it. Then raise GATE-PLAN, always. In PLAN-ONLY mode, `<state> set <dir> --stage PLANNED` first and stop at the gate.
 6.6 REPOS: for each slice, in §6 ORDER:
   - 6.6.1 Register it: `<state> child <dir> <repo> --folder <repo>/.tempo/<task-id>`.

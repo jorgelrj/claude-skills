@@ -185,6 +185,18 @@
           "minimum": 1,
           "maximum": 10
         },
+        "review_extensions": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3,
+          "description": "Extra review rounds Jorge may grant at LOOP-LIMIT. After them, new findings ship as known risks."
+        },
+        "narrow_fix_lines": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 500,
+          "description": "A fix round whose changed lines stay at or under this count gets a narrow review. 0 turns narrow rounds off."
+        },
         "qa_rounds": {
           "type": "integer",
           "minimum": 1,

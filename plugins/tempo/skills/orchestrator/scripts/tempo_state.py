@@ -8,10 +8,12 @@ Times come from this machine's clock, never from the caller.
 Usage: tempo_state.py <command> <task-dir> [args]
   init      <dir> --task ID --flow FEATURE|BUG|WORKSPACE --title T --base-branch B --base-commit H
             [--task-branch NAME] [--mode FULL|PLAN-ONLY] [--parent DIR] [--review-limit N] [--qa-limit N]
+            [--review-extensions N]
   set       <dir> [--lane L] [--stage S] [--status S] [--next TEXT] [--mode M] [--title T]
-            [--task-branch B] [--base-commit H] [--pr URL]
-  log       <dir> STAGE ARTIFACT PASS|FAIL|BLOCKED
-  bump      <dir> review|qa|reissue
+            [--task-branch B] [--base-commit H] [--pr URL] [--review-limit N] [--review-extensions N]
+  log       <dir> STAGE ARTIFACT PASS|FAIL|BLOCKED   (logging findings-rN.md raises the review count to N)
+  bump      <dir> review|qa|reissue               (exit 1: past the limit, raise LOOP-LIMIT;
+                                                   exit 2: past limit + extensions, HARD STOP)
   wo        <dir> WO-NN [--worktree P] [--branch B] [--status S]
   wait      <dir> ESC-FILE | --clear
   agent     <dir> start ID --label L --output PATH [--prompt FILE]
@@ -85,7 +87,7 @@ def render(s):
     section(3, "STAGE", [f"Current: {s['stage']}.", f"Status: {s['status']}."])
     section(4, "STAGE LOG", [f"{t} | {st} | {a} | {r}" for t, st, a, r in s["log"]])
     c = s["counters"]
-    section(5, "LOOP COUNTERS", [f"Review rounds: {c['review']} of {c['review_limit']}.",
+    section(5, "LOOP COUNTERS", [f"Review rounds: {c['review']} of {c['review_limit']}. Extensions: {c.get('review_extensions', 1)}.",
                                  f"QA rounds: {c['qa']} of {c['qa_limit']}.",
                                  f"Document re-issues: {c['reissue']}."])
     section(6, "WORK ORDERS", [f"{k} | {v.get('worktree') or 'TBD'} | {v.get('branch') or 'TBD'} | {v.get('status') or 'ISSUED'}"
@@ -132,6 +134,8 @@ def adopt(d):
     s["log"] = [x for x in s["log"] if len(x) == 4]
     m = re.search(r"Review rounds:\s*(\d+) of (\d+)", text)
     if m: s["counters"].update(review=int(m.group(1)), review_limit=int(m.group(2)))
+    m = re.search(r"Extensions:\s*(\d+)", text)
+    if m: s["counters"]["review_extensions"] = int(m.group(1))
     m = re.search(r"QA rounds:\s*(\d+) of (\d+)", text)
     if m: s["counters"].update(qa=int(m.group(1)), qa_limit=int(m.group(2)))
     for m in re.finditer(r"^6\.\d+\s+(WO-\d+)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*$", text, re.M):
@@ -144,11 +148,12 @@ def adopt(d):
 
 
 def new_state(task, flow, title, base_branch, base_commit, task_branch=None, mode="FULL", parent=None,
-              review_limit=3, qa_limit=3):
+              review_limit=3, qa_limit=3, review_extensions=1):
     return {"version": 1, "task": task, "flow": flow, "lane": None, "mode": mode, "title": title,
             "started": now(), "base_branch": base_branch, "base_commit": base_commit,
             "task_branch": task_branch, "parent": parent, "pr": None, "stage": "TRIAGE", "status": "RUNNING",
-            "log": [], "counters": {"review": 0, "review_limit": review_limit, "qa": 0, "qa_limit": qa_limit, "reissue": 0},
+            "log": [], "counters": {"review": 0, "review_limit": review_limit, "review_extensions": review_extensions,
+                         "qa": 0, "qa_limit": qa_limit, "reissue": 0},
             "work_orders": {}, "waiting": None, "next": None, "agents": {}, "children": {}}
 
 
@@ -162,10 +167,12 @@ def main(argv=None):
     i.add_argument("--mode", default="FULL", choices=["FULL", "PLAN-ONLY"])
     i.add_argument("--task-branch"); i.add_argument("--parent")
     i.add_argument("--review-limit", type=int, default=3); i.add_argument("--qa-limit", type=int, default=3)
+    i.add_argument("--review-extensions", type=int, default=1)
     s_ = sp.add_parser("set"); s_.add_argument("dir")
     s_.add_argument("--lane", choices=["S", "M", "L", "TBD"]); s_.add_argument("--stage", choices=STAGES)
     s_.add_argument("--status", choices=STATUSES); s_.add_argument("--next"); s_.add_argument("--mode", choices=["FULL", "PLAN-ONLY"])
     s_.add_argument("--title"); s_.add_argument("--task-branch"); s_.add_argument("--base-commit"); s_.add_argument("--pr")
+    s_.add_argument("--review-limit", type=int); s_.add_argument("--review-extensions", type=int)
     l = sp.add_parser("log"); l.add_argument("dir"); l.add_argument("stage", choices=STAGES); l.add_argument("artifact"); l.add_argument("result", choices=RESULTS)
     b = sp.add_parser("bump"); b.add_argument("dir"); b.add_argument("counter", choices=["review", "qa", "reissue"])
     w = sp.add_parser("wo"); w.add_argument("dir"); w.add_argument("wo")
@@ -185,7 +192,7 @@ def main(argv=None):
             sys.exit(f"tempo_state: {d}/state.json exists; resume the task instead")
         d.mkdir(parents=True, exist_ok=True)
         st = new_state(a.task, a.flow, a.title, a.base_branch, a.base_commit, a.task_branch, a.mode,
-                       a.parent, a.review_limit, a.qa_limit)
+                       a.parent, a.review_limit, a.qa_limit, a.review_extensions)
         st["next"] = "Run TRIAGE"
         save(d, st); print(f"STATE: {d}/state.md  STAGE: TRIAGE"); return 0
 
@@ -200,13 +207,23 @@ def main(argv=None):
                 st[k] = v
         if a.task_branch: st["task_branch"] = a.task_branch
         if a.base_commit: st["base_commit"] = a.base_commit
+        if a.review_limit is not None: st["counters"]["review_limit"] = a.review_limit
+        if a.review_extensions is not None: st["counters"]["review_extensions"] = a.review_extensions
         if a.status == "DONE" or a.stage == "DONE":
             st["stage"], st["status"] = "DONE", "DONE"
     elif a.cmd == "log":
         st["log"].append([now(), a.stage, a.artifact, a.result])
+        m = re.search(r"findings-r(\d+)\.md$", a.artifact)
+        if a.stage == "REVIEW" and m:  # the findings file is the round's record; the counter never lags it
+            st["counters"]["review"] = max(st["counters"]["review"], int(m.group(1)))
     elif a.cmd == "bump":
         c = st["counters"]; c[a.counter] += 1
         lim = c.get(a.counter + "_limit")
+        ext = c.get("review_extensions", 1) if a.counter == "review" else 0  # tasks from before 0.4.0 lack the key
+        if lim and c[a.counter] > lim + ext:
+            save(d, st)
+            print(f"HARD STOP: {a.counter} rounds {c[a.counter]} of {lim} plus {ext} extensions; ship open findings as known risks")
+            return 2
         if lim and c[a.counter] > lim:
             save(d, st); print(f"LIMIT: {a.counter} rounds {c[a.counter]} of {lim}; raise LOOP-LIMIT"); return 1
     elif a.cmd == "wo":

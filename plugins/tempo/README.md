@@ -75,7 +75,7 @@ See `skills/config/SKILL.md` for every key and subcommand. A legacy `.tempo/conf
 ## Where Jorge is needed
 
 Three gates: clarify a vague task, approve the spec (L lane, or M with open decisions), review and merge the PR.
-Five escalations: bug won't reproduce, fix changes intended behaviour, a builder decision that changes the goal, a review or QA loop past 3 rounds, anything hard to undo.
+Six escalations: bug won't reproduce, fix changes intended behaviour, a builder decision that changes the goal, a review or QA loop past 3 rounds, a fix chain (two review rounds in a row whose findings were caused by the last fix), anything hard to undo.
 Every stop comes with a recommended answer, so "yes" is always enough.
 
 ## Layout
@@ -121,9 +121,18 @@ It reads each document type's required sections from its template, so editing a 
 - Each builder gets its own git worktree at `.tempo/worktrees/<task-id>-wo-NN` on the work-order branch (default `{branch}-wo-{nn}`), prepared by the config's `worktree:` steps. The integrator merges them into the task branch (`git.branch`, e.g. `feat/{ticket}`), which becomes the PR branch.
 - Models are set per agent in the frontmatter (`opus` for architect, investigator, reproducer, reviewer, verifier; `sonnet` for the rest). Change them freely.
 
+## How review converges
+
+- Explore reads how called services behave on repeats, timeouts and failures (scout lens CONSUMED-BEHAVIOUR), not just their DTOs.
+- For retries, callbacks, scheduled jobs and idempotency keys, the spec has a §8 STATE MODEL: every state and event pair with its result. The spec pre-check fails a missing pair.
+- Every fix starts with an interaction check in the spec: each criterion that reads the same state is re-checked and gets a regression test.
+- The verifier tags findings INTRODUCED BY the last fix. Two such rounds in a row in one area raise FIX-CHAIN, which recommends re-specifying that area, not another patch.
+- A small fix (`limits.narrow_fix_lines`) gets a NARROW round: correctness plus the lenses that raised findings, on the fix diff only.
+- Past `limits.review_rounds` Jorge may grant `limits.review_extensions` more rounds. After that, open findings ship as known risks, at every gate. Only `/tempo:resume <task-id> review-limit <N>` reopens review.
+
 ## Things to tune after the first test runs
 
 - Size thresholds in `skills/triage-rubric/SKILL.md` §3.
 - The vague-word list in `scripts/check_doc.py` if it rejects too much or too little.
-- Loop limits and parallel builder count in `limits:` of the repo or workspace config.
+- Loop limits, review extensions, the narrow-round size and parallel builder count in `limits:` of the repo or workspace config.
 - Whether S-lane features need QA (currently skipped).

@@ -25,5 +25,10 @@ LANE: {{M|L}}          DEPENDS ON: task.md, context.md          ISSUED BY: archi
 7   OUT OF SCOPE
 7.1   {{What this task SHALL NOT change}}.
 
+8   STATE MODEL
+8.1   Entity: {{entity}} in {{path}}. States: {{list}}. Events: {{list, from Context Map 9}}.
+8.2   {{state}} + {{event}} -> {{resulting state and reply}}. {{AC-n | OUT OF SCOPE: reason}}.
+8.3   NIL when no criterion covers retries, repeated requests, callbacks, scheduled jobs or idempotency keys.
+
 AMENDMENT LOG
 AMDT 0   {{YYYY-MM-DD}}   Issued.

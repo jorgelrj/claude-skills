@@ -4,7 +4,7 @@ LANE: {{S|M|L}}          DEPENDS ON: integration.md, {{spec.md | repro.md}}     
 1   SCOPE
 1.1   Lens: {{CORRECTNESS | SECURITY | SPEC}}.
 1.2   Diff: {{base hash}}..{{head hash}}.
-1.3   Depth: {{QUICK | STANDARD | DEEP}}.
+1.3   Depth: {{QUICK | STANDARD | DEEP}}. Kind: {{FULL | NARROW}}.
 
 2   DEFINITIONS
 2.1   Severity HIGH: wrong result, data loss, security exposure or a failed criterion.

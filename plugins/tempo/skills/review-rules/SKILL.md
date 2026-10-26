@@ -23,6 +23,11 @@ description: How TEMPO finds and applies a project's rules files (CLAUDE.md, REV
 | STANDARD | M | correctness, security, spec | diff, touched files, direct callers |
 | DEEP | L | correctness, security, spec | diff, touched files, callers, tests, data flow from input to storage |
 
+2.1 Round kind. Round 1 and every round after a FIX-CHAIN re-spec are FULL: the lenses above review `<base>...<head>`. A fix round is NARROW when the orchestrator says so (orchestrator 3.10). In a NARROW round:
+  - 2.1.1 The lenses are CORRECTNESS plus each lens that raised a confirmed finding in the last round.
+  - 2.1.2 Each reviews only the fix diff `<previous head>..<head>`, at STANDARD depth, plus the interaction-check criteria in the Spec.
+  - 2.1.3 A problem outside the fix diff that the fix did not cause is out of scope for the round. Earlier full rounds covered that code.
+
 ## 3 Lenses
 
 ### 3.1 CORRECTNESS

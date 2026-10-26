@@ -18,7 +18,7 @@ LANE: {{S|M|L}}          DEPENDS ON: all task artifacts          ISSUED BY: orch
 5.1   {{path}}: {{what changed}}.
 
 6   FINDINGS LEFT OPEN
-6.1   {{F-n, severity, reason}}, or NIL.
+6.1   {{F-n, severity, reason; known risks after the review hard stop with their follow-up}}, or NIL.
 
 7   HOW TO VERIFY
 7.1   {{exact command or manual step}}.

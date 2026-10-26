@@ -27,5 +27,9 @@ LANE: {{S|M|L}}          DEPENDS ON: task.md          ISSUED BY: orchestrator (f
 8   OPEN QUESTIONS
 8.1   {{Question the scouts could not answer from the code}}.
 
+9   CONSUMED BEHAVIOUR
+9.1   {{service, library or ported code}} | {{event: repeat, replay, timeout, decline, failure code, callback order}} | {{what it does}} | {{path:line}}.
+9.2   Why {{non-obvious line in ported code}}: {{reason from code, commit or test}} | {{path:line}}. NIL when the task calls nothing and ports nothing.
+
 AMENDMENT LOG
 AMDT 0   {{YYYY-MM-DD}}   Issued.

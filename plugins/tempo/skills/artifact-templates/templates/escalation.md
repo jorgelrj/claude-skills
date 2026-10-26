@@ -8,7 +8,7 @@ LANE: {{S|M|L}}          DEPENDS ON: {{artifact that raised it}}          ISSUED
 2.1   {{Term}}: {{bound meaning}}, or NIL.
 
 3   KIND
-3.1   {{GATE-CLARIFY | GATE-SPEC | GATE-PR | NO-REPRO | BEHAVIOUR-CHANGE | OUT-OF-ORDER-DECISION | LOOP-LIMIT | HARD-TO-UNDO}}.
+3.1   {{GATE-CLARIFY | GATE-SPEC | GATE-PR | NO-REPRO | BEHAVIOUR-CHANGE | OUT-OF-ORDER-DECISION | LOOP-LIMIT | FIX-CHAIN | HARD-TO-UNDO}}.
 
 4   CONTEXT
 4.1   {{What happened, one line per fact, with artifact § references}}.
