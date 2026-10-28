@@ -177,3 +177,5 @@ Known cost: a builder's test-file allowance means two parallel orders may touch 
 - Dropping the readback pass (0.6.0): T-007 had no misreadings; its stops were scope-list gaps, which 0.7.0 addresses at Handoff.
 - The split thresholds (`limits.split_orders`, `limits.split_criteria`) and `limits.spec_slice_kb`, after the first split runs.
 - Whether the rm guard prompts too often outside TEMPO runs.
+- Stage log minutes for parallel builders: each log starts the next stage clock, so read per-order minutes in state §5 for build time. An order issued for PREFLIGHT starts its clock early.
+- PLAN-ONLY together with a split (plan.md slices per group of orders) has not run yet.
