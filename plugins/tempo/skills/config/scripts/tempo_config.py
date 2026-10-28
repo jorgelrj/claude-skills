@@ -20,6 +20,7 @@ Commands:
   resolve [--format json|yaml]           print the merged config for --repo (or the workspace)
   names   --task ID [--ticket KEY] [--wo N ...]   print branch names, commit and PR title templates
   cmd     NAME [--var k=v ...]           print one command as a shell line, env exported first
+  targets [--paths P ...]               print the platform test targets that apply to the changed paths
   setup   --worktree PATH                print the shell steps that prepare a new worktree
   repos                                  list workspace repos in dependency order
   docs    [--format list|json]           list the project's doc files (config docs:), index files first
@@ -487,6 +488,7 @@ def main(argv=None):
     n.add_argument("--task", required=True); n.add_argument("--ticket"); n.add_argument("--slug")
     n.add_argument("--wo", type=int, nargs="*", default=[])
     m = add("cmd"); m.add_argument("name"); m.add_argument("--var", action="append", default=[])
+    t = add("targets"); t.add_argument("--paths", nargs="*")
     s = add("setup"); s.add_argument("--worktree", required=True)
     add("repos")
     dc = add("docs"); dc.add_argument("--format", choices=["list", "json"], default="list")
@@ -554,6 +556,12 @@ def main(argv=None):
                 print(f"NIL: command '{a.name}' is not set", file=sys.stderr); return 1
             vals = dict(v.split("=", 1) for v in a.var)
             print(env_prefix(cfg.get("env")) + fill(command, vals)); return 0
+
+        if a.cmd == "targets":
+            for tg in cfg.get("targets") or []:
+                if a.paths is None or any(_matches(f, pat) for f in a.paths for pat in tg["paths"]):
+                    print(f"{tg['name']}\t{env_prefix(cfg.get('env'))}{tg['command']}")
+            return 0
 
         if a.cmd == "setup":
             wt, repo = Path(a.worktree), Path(info["repo"] or ".")

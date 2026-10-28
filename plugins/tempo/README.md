@@ -154,6 +154,19 @@ Measured on pod1um T-007 (27 Oct 2026, 0.6.0): 8 Work Orders chained one after a
 
 Known cost: a builder's test-file allowance means two parallel orders may touch the same fake. The integrator resolves the conflict, or returns it to an order.
 
+### Fewer fix commits (0.8.0)
+
+Measured on pod1um PR #203 (T-007, 0.6.0): 7 feature commits, then 12 fix and 2 docs commits. All 14 were real defects: 2 from the screen check, 9 from review round 1, 3 from round 2 (each caused by a round-1 fix). Three of them, two HIGH, were already flagged in the builders' own reports. Six came from lock and retry behaviour the spec stated but never tested, four from tests that ran on the VM only or skipped edge inputs, and four from repo rules the builders never saw. 0.8.0:
+
+- **Fixes fold into their commit.** Before the PR is pushed, fixes are `fixup!` commits of the commit they correct (`git.fold_fixes`, default on). At SHIP the integrator squashes them (mode FOLD), checks the tree is unchanged and that each commit still passes the cheapest check, or ships unfolded with a note. After the PR is open, fixes are plain commits.
+- **Deviation gate.** Report deviations carry a tag: MECHANICAL, SCOPE, CRITERION, CONTENT or CUT. The last three go back to the architect before the next wave. Builders stop instead of meeting a criterion partly or inventing user-facing words.
+- **Order check.** After each order builds, a sonnet reviewer checks its diff (lens ORDER: correctness with edge inputs, the order's criteria as worded, its rules, its deviations). The same builder fixes HIGH and MEDIUM findings before the order integrates (`limits.order_check`, M and L lanes).
+- **Specs prove their claims.** The §8 state model covers client state (write queues, optimistic updates, drafts) and concurrent writers, with failure classes (no network, refusal, 429, 5xx, user leaves) as events. Every concurrency promise in §4 is a criterion tested in both orders; the pre-check checks lock claims against foreign keys and indexes. Copied code is checked against §8 too.
+- **Platform targets.** `targets:` in config lists extra test runs (e.g. Flutter on Chrome) with the paths they cover. Orders that touch those paths verify on them, and the integrator runs every target the diff touches.
+- **Rules reach the builder.** Each order's §3 carries `RULES:` lines from CLAUDE.md, REVIEW.md and rule-stating docs; builders check their diff against them. Spec-wide rules (labels on every control, translated strings) become a test in each order that adds such a thing.
+
+Known cost: the order check adds about 5 to 10 minutes per order. On T-007 that is about 1 to 1.5 hours against the 1h45m its two fix rounds took.
+
 ## How it runs inside Claude Code
 
 - The main session is the orchestrator. Subagents cannot start other subagents, so the orchestrator starts every agent, including the parallel scouts, builders and reviewers.
@@ -177,5 +190,7 @@ Known cost: a builder's test-file allowance means two parallel orders may touch 
 - Dropping the readback pass (0.6.0): T-007 had no misreadings; its stops were scope-list gaps, which 0.7.0 addresses at Handoff.
 - The split thresholds (`limits.split_orders`, `limits.split_criteria`) and `limits.spec_slice_kb`, after the first split runs.
 - Whether the rm guard prompts too often outside TEMPO runs.
+- Whether the order check (0.8.0) pays for its time; turn it off with `limits.order_check: false`.
+- How often FOLD is skipped for a conflict; fixups that touch the same lines as a later commit cannot squash cleanly.
 - Stage log minutes for parallel builders: each log starts the next stage clock, so read per-order minutes in state §5 for build time. An order issued for PREFLIGHT starts its clock early.
 - PLAN-ONLY together with a split (plan.md slices per group of orders) has not run yet.

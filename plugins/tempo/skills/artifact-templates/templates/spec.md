@@ -27,6 +27,6 @@ The task's only glossary. Work Orders and reviewers cite it by term name.
 - {{What this task does not change}}
 
 ## 8 State model
-NIL when no criterion covers retries, repeated requests, callbacks, scheduled jobs or idempotency keys. Otherwise:
+NIL when no criterion covers retries, repeated requests, callbacks, scheduled jobs or idempotency keys, no rows gain a second concurrent writer, and no client state outlives a request (write queue, optimistic update, draft). Otherwise, server rows and client units alike, with failure classes (no network, refusal, 429, 5xx, user leaves) as events:
 - Entity: {{entity}} in `{{path}}`. States: {{list}}. Events: {{list, from Context Map §8}}.
 - {{state}} + {{event}} -> {{resulting state and reply}}. {{AC-n | OUT OF SCOPE: reason}}

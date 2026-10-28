@@ -15,7 +15,7 @@ Issued by: builder
 - {{AC tag}}: {{PASS | FAIL}}. Evidence: {{test name or output}}
 
 ## 5 Deviations
-- {{Each departure from the Work Order, with its § number, or NIL}}
+- {{MECHANICAL | SCOPE | CRITERION | CONTENT | CUT}} §{{n}}: {{each departure from the Work Order, or NIL}}
 
 ## 6 Questions
 - {{Question that blocked the work, citing the order's §, or NIL}}

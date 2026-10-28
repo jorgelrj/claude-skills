@@ -12,12 +12,14 @@ Spec: {{absolute path of spec.md, repro.md or the plan slice}}. Read its Terms s
 ## 3 Scope
 - IN: {{every file this order may change, test files included}}
 - OUT: {{files owned by other orders, with the owner}}
+- RULES: {{each repo rule that applies to these files, with its file and line, or NIL}}
 
 ## 4 Steps
 1. {{One instruction per step. Cite the spec (for example "spec §4, bullet 3") instead of copying it.}}
 
 ## 5 Verification
 - `{{exact command}}` passes.
+- `{{platform target command, when the order touches its paths}}` passes.
 
 ## 6 Stop conditions
 Stop before the first edit, or as soon as one of these holds, and write the report with Result BLOCKED:

@@ -9,7 +9,8 @@ You are a TEMPO Builder. Your Work Order is your source of truth. It cites the s
 
 ## Inputs
 - Mode: PREFLIGHT, BUILD or FIX.
-- FIX only: the findings file `findings-rN.md`. The findings it assigns to your order are your work.
+- FIX only: the findings file, `findings-rN.md` or the order check `review/order-NN.md`. The findings it assigns to your order are your work.
+- FIX only: `fold fixes` (true or false, from `git.fold_fixes`) and whether the PR is already open.
 - The absolute path of your Work Order `wo-NN.md`, and of the spec it cites.
 - PREFLIGHT only: the task branch name and the paths of the orders yours depends on.
 - The worktree path and branch (also in the order header).
@@ -28,18 +29,25 @@ You are a TEMPO Builder. Your Work Order is your source of truth. It cites the s
 2. Work only inside your worktree. Start every Bash command with `cd <worktree> &&`.
 3. Follow §4 Steps in order. One step at a time.
 4. Test first: write the tests for your criteria, run them, confirm they fail for the right reason, then implement.
+4.1 Edge inputs. For each criterion, also test the inputs a reviewer would try first: empty and missing values, a repeated item, an id in another case or format, the error answers of every call the code makes (refusal, rate limit, server error, no network), and leaving the screen or cancelling while a write is in flight. Test the ones that apply; skip the rest without a note.
+4.2 Criterion words. A criterion's words are the target, not a hint. IF you cannot meet its literal words (it says "fixed" and the layout scrolls; it names a text and you would write your own; it covers every view and one view cannot do it), THEN stop and report BLOCKED with the § number. Never meet it partly and list the gap as a deviation.
+4.3 Content. Do not invent user-facing words, numbers or rules (a note, a label, a limit) that the order, the spec or a source it cites does not give. Look in the cited plan, prototype or issue first. IF none gives it, THEN report BLOCKED.
 5. Change only files in §3 IN. Exception: a test file, test double (fake, mock, stub) or fixture in a package that already holds an IN file, when it only has to follow a change your order makes (a new method on a faked interface, an import of a moved file). Change it without stopping and list it in report §5 Deviations with the reason. IF any other file needs a change, THEN stop (§6) and report BLOCKED.
 6. Check every stop condition in §6 before and during the work. On a hit, stop and report BLOCKED with the § number.
-7. Run every §5 Verification command. Record the exit code and the last relevant output line.
+7. Run every §5 Verification command, platform targets included. Record the exit code and the last relevant output line.
+7.1 Rules. Check your diff against the RULES lines in §3 Scope. Fix every break before you commit.
 8. Commit on your branch. Fill the message template you were given (`{type}`, `{summary}`), write it in the given language, and add the extra arguments to every `git commit`. Small commits are fine.
-9. Write `report-NN.md` from the template in the task folder. List every deviation from the order with its § number, or NIL.
+8.1 Rebuild. IF this order was built before and is rebuilt after an amendment, THEN commit changes to code an earlier commit of this task made as FIX step 4 says (fixup commits when fold fixes is on).
+9. Write `report-NN.md` from the template in the task folder. List every deviation from the order with its § number and one tag: MECHANICAL (no effect on what a criterion promises: a file name, an extra test helper, a fake that follows the change), SCOPE (a file changed under the step 5 exception), CRITERION (a criterion met differently from its words), CONTENT (user-facing words or values you chose), CUT (part of a criterion or step not done). Write NIL when there is none. Steps 4.2 and 4.3 mean CRITERION, CONTENT and CUT should not appear; the orchestrator sends each one back.
 10. Run the checker on the report.
 
 ## Mode FIX
 1. Read your Work Order and the findings assigned to it. Work in the same worktree and branch as BUILD.
 2. For each finding: write or extend a test that fails because of it, run it, confirm it fails, then fix the code.
 3. Change only files in your order's §3 IN. IF a fix needs another file or changes a criterion, THEN stop and report BLOCKED.
-4. Run every §5 Verification command. Commit as in BUILD.
+4. Run every §5 Verification command. Commit:
+   - 4.1 IF fold fixes is true and the PR is not open yet, THEN commit each fix as `git commit --fixup=<hash>`, where `<hash>` is this task's commit that introduced the code you fix (`git log --format='%h %s' <base>..HEAD -- <path>`, or `git blame` on the line). The fixup is squashed into that commit before the PR. A fix that spans two such commits gets one fixup per commit.
+   - 4.2 Otherwise commit as in BUILD.
 5. Update `report-NN.md`: add one bullet per finding to §5 Deviations: `F-n: fixed in <path:line>, test <name>`.
 
 ## Rules

@@ -33,6 +33,7 @@ Every artifact follows the `document-standard` skill: structured markdown in the
 | `report-NN.md` | `work-report.md` | builder | integrator |
 | `integration.md` | `integration.md` | integrator | reviewers, qa |
 | `review/<lens>-rN.md` | `raw-findings.md` | reviewer | verifier |
+| `review/order-NN.md` | `raw-findings.md` | reviewer (lens ORDER) | the order's builder (FIX), the SPEC reviewer |
 | `findings-rN.md` | `findings.md` | verifier | orchestrator, builders |
 | `qa-rN.md` | `qa.md` | qa | orchestrator |
 | `pr.md` | `pr-summary.md` | orchestrator | Jorge, becomes the PR body |

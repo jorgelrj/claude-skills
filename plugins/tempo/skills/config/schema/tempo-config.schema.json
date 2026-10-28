@@ -105,6 +105,10 @@
               "description": "Appended to every git commit, for example --no-verify."
             }
           }
+        },
+        "fold_fixes": {
+          "type": "boolean",
+          "description": "Before the PR is pushed, fix commits are made as fixup! commits of the commit they correct and squashed into it before SHIP, so the PR shows one commit per feature step. Commits after the PR is open are never rewritten."
         }
       }
     },
@@ -229,6 +233,10 @@
           "minimum": 0,
           "maximum": 500,
           "description": "Above this Spec size in KB, each Work Order carries the Spec terms and design bullets it needs, so the builder does not read the whole Spec. 0 turns it off."
+        },
+        "order_check": {
+          "type": "boolean",
+          "description": "After each Work Order builds, a quick reviewer checks that order's diff (correctness, edge inputs, its rules) and its builder fixes what it finds before the order integrates. M and L lanes."
         }
       }
     },
@@ -284,6 +292,9 @@
         "commands": {
           "$ref": "#/$defs/commands"
         },
+        "targets": {
+          "$ref": "#/$defs/targets"
+        },
         "git": {
           "$ref": "#/$defs/git"
         },
@@ -316,6 +327,9 @@
         },
         "commands": {
           "$ref": "#/$defs/commands"
+        },
+        "targets": {
+          "$ref": "#/$defs/targets"
         },
         "worktree": {
           "$ref": "#/$defs/worktree"
@@ -352,6 +366,9 @@
         },
         "commands": {
           "$ref": "#/$defs/commands"
+        },
+        "targets": {
+          "$ref": "#/$defs/targets"
         },
         "git": {
           "$ref": "#/$defs/git"
@@ -412,6 +429,9 @@
             },
             "commands": {
               "$ref": "#/$defs/commands"
+            },
+            "targets": {
+              "$ref": "#/$defs/targets"
             },
             "git": {
               "$ref": "#/$defs/git"
@@ -505,6 +525,38 @@
         "rules": {
           "type": "boolean",
           "description": "true (default): docs that state conventions, ADRs or a design system count as rules for the spec lens and the spec pre-check."
+        }
+      }
+    },
+    "targets": {
+      "type": "array",
+      "description": "Extra test runs for platforms the main test command does not cover (a web build, a device). The architect adds a target to a Work Order's verification when the order changes a file under its paths; the integrator runs every target the diff touches.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "command",
+          "paths"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Short name, for example web."
+          },
+          "command": {
+            "$ref": "#/$defs/command",
+            "description": "Run from the repo or worktree root, for example: cd flutter-client && melos exec -- flutter test --platform chrome."
+          },
+          "paths": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            },
+            "description": "Globs relative to the repo root. The target applies when a changed file matches one."
+          }
         }
       }
     }

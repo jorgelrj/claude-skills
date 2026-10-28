@@ -90,7 +90,7 @@ Run the stages the Task Card's ROUTE lists, in this order.
 
 ### 3.7 HANDOFF (all)
 - Call `architect` in mode HANDOFF with `spec.md` (feature) or `repro.md` (bug), or `task.md` and `context.md` when present (feature S lane). Child task of a workspace (section 6): the parent `plan.md` slice and the parent `context.md` block for this repo. S and M lanes: pass `model: sonnet` on the Agent call.
-- Pass `limits.split_orders`, `limits.split_criteria` and `limits.spec_slice_kb` from config.
+- Pass `limits.split_orders`, `limits.split_criteria` and `limits.spec_slice_kb` from config, and the output of `<cfg> targets` (all platform targets; the architect matches them to each order).
 - Output: `wo-01.md` ... One order per builder. File scopes (§3 IN) SHALL NOT overlap.
 - IF the architect replies `SPLIT`, THEN follow section 9 instead of 3.8 to 3.12. Tell Jorge in one line how many slices and what each holds.
 - Bug flow: exactly one Work Order. Its criteria are `repro.md` §5. It forbids edits to the reproduction test.
@@ -106,11 +106,16 @@ For each wave:
 4.1 PREFLIGHT gets the order, the task branch name and the path of each order it depends on. It reads the order and the code at the task branch head, edits nothing, and replies READY or BLOCKED with questions. Answer its questions (step 7) while the current wave builds. When the wave integrates, create the order's worktree and continue the same builder agent in mode BUILD.
 5. Each builder writes `report-NN.md` and commits on its branch.
 6. Scope check, for every order: every path in `git diff --name-only <start>..<branch>` SHALL be in the order's §3 IN, or be a test file, test double (fake, mock, stub) or fixture in a package that already holds an IN file and that the report lists in §5 Deviations (builder rule). IF any other path is outside IN, THEN call `architect` to amend the order and rebuild it.
+6.1 Deviation gate. Read §5 Deviations of every report. MECHANICAL and SCOPE lines pass. For each CRITERION, CONTENT or CUT line, call `architect` in AMEND mode with the report line and the orders not yet built (architect AMEND 4.1), then continue the same builder on the amended order. Do this before the order's check, its fast-forward or the next wave. A deviation that goes on to review is a finding you let through.
+6.2 Order check. M and L lanes, when `limits.order_check` is true. For each order that passed 6 and 6.1, call `reviewer` with lens ORDER and `model: sonnet`: the order, its report, its start commit and branch, the rules files, `docs.txt`. Output: `review/order-NN.md`. Start the checks of a wave in parallel, in one message.
+  - IF it has a HIGH or MEDIUM candidate, THEN continue the same builder in mode FIX with `review/order-NN.md`, fold fixes from config, and "PR not open". Then run 6 again. One check per order: do not check the fix again; the full review covers it.
+  - LOW candidates stay in `review/order-NN.md`. Pass the order files to the full review's SPEC reviewer, which decides whether they still hold.
+  - An order check does not count as a review round.
 7. IF a report is BLOCKED (a question in §6, or a stop condition), THEN call `architect` with the report and every order not yet built. The architect amends the order, applies the same change to each later order it fits (the same fake, the same missing test, the same file), or raises OUT-OF-ORDER-DECISION when the answer changes the goal. Then rebuild that order; prefer continuing the same builder agent if the Agent tool lets you message it.
-8. Serial chain. IF a wave holds one order and the next wave depends on it, THEN after the scope check fast-forward the task branch to that order's branch yourself (`git merge --ff-only`); its builder already ran the order's verification on that tree. Call the integrator once, after the last wave, with the full test and build commands.
+8. Serial chain. IF a wave holds one order and the next wave depends on it, THEN after the scope check, the deviation gate and the order check, fast-forward the task branch to that order's branch yourself (`git merge --ff-only`); its builder already ran the order's verification on that tree. Call the integrator once, after the last wave, with the full test and build commands.
 
 ### 3.9 INTEGRATE (all)
-- Call `integrator` with the reports, branches and the full test and build commands.
+- Call `integrator` in mode MERGE with the reports, branches and the full test and build commands, and the platform targets for the diff: `<cfg> targets --paths $(git diff --name-only <base>..<task branch>)`.
 - Pass the task branch and the work-order branch names from §1.7.
 - It merges every WO branch into the task branch and writes `integration.md`.
 - IF FAIL, THEN return the failing orders to BUILD with the evidence (amend the order). This counts as a review round: run `<state> bump <dir> review` and follow 3.10.2. The REVIEW that follows the repaired integration does not bump again.
@@ -133,10 +138,11 @@ For each wave:
    - Otherwise call `verifier` with all raw findings files, the previous findings file and the previous round head. Output: `findings-rN.md`. Pass `model: sonnet` when there are 3 candidates or fewer and none is HIGH.
 5. On FAIL, in this order:
    - 5.1 Fix chain. IF this round has an INTRODUCED finding and round N-1 had an INTRODUCED finding in the same area (findings §2 Area), THEN raise FIX-CHAIN. Do not patch again.
-   - 5.2 Small fix. IF every confirmed finding is MEDIUM or LOW, each names a file already in its owner's §3 IN, and none changes a criterion, THEN skip the architect: call `builder` in mode FIX with its order and `findings-rN.md`. Prefer continuing the same builder agent. Then INTEGRATE, then REVIEW again.
+   - 5.2 Small fix. IF every confirmed finding is MEDIUM or LOW, each names a file already in its owner's §3 IN, and none changes a criterion, THEN skip the architect: call `builder` in mode FIX with its order, `findings-rN.md`, fold fixes from config, and whether the PR is open. Prefer continuing the same builder agent. Then INTEGRATE, then REVIEW again.
    - 5.3 Otherwise call `architect` in AMEND mode on `spec.md` (feature) with the findings, so it runs the interaction check, then on each owning order.
    - 5.4 Go back to BUILD for those orders only; the builder builds from the amended order. Then INTEGRATE, then REVIEW again.
 6. Hard stop. When `bump` exits 2, or Jorge chose to ship at LOOP-LIMIT or FIX-CHAIN:
+   - 6.0 A fix after the PR is open is a normal commit, never a fixup: the branch is pushed and is not rewritten.
    - 6.1 Record each open confirmed finding as a known risk: one line in `spec.md` §1 (with a Changes line), and one line in `pr.md` §5 with its follow-up.
    - 6.2 Continue to QA. No escalation and no gate offers another fix round, GATE-PR included.
    - 6.3 Only Jorge's own words naming a higher limit (`/tempo:resume <task-id> review-limit <N>`) reopen review.
@@ -151,6 +157,7 @@ For each wave:
 - Assumptions SHALL appear at the top of the PR body, before the summary list.
 - `pr.md` is the internal record. The PR body is written from it in `pr.language`, following the repo's PR template (`pr.body_template`, else `.github/pull_request_template.md` if present). Assumptions stay at the top.
 - PR title: `pr.title` with `{type}` and `{summary}` filled, in `pr.language`. Check the repo's CI files for a title rule and follow it.
+- Fold fixes. IF `git.fold_fixes` is true and `git log --format=%s <base>..<task branch>` lists a subject starting `fixup!`, THEN call `integrator` in mode FOLD with the base commit and the typecheck, build and lint commands. On `FOLD: DONE`, run `<state> log <dir> SHIP integration.md PASS` and use the new head. On `FOLD: SKIPPED`, ship the branch as it is and add one line to `pr.md` §5 with the reason. Fold only before the first push; never rewrite a pushed branch.
 - Push the task branch and open a pull request against `pr.base`. Draft when `pr.draft` is true. IF `pr.tool` is `none`, THEN push nothing and give Jorge the exact commands.
 - IF pushing or `gh` fails, THEN stop, keep the branch local, and give Jorge the exact commands.
 - Remove the task's worktrees with `git worktree remove`.
@@ -254,4 +261,4 @@ For each wave:
 9.3 For each slice, in order: `<state> child <dir> S-<n> --folder .tempo/<task-id>-s<n>`, then 1.7 with `--task <task-id>-s<n> --ticket <the parent's ticket>`, then 1.9 with `--parent`, then `<state> set <child dir> --lane <slice size> --stage BUILD`. The child's route is BUILD, INTEGRATE, REVIEW. Its criteria source is the slice's tags in Spec §3. It has no QA and no PR.
 9.4 Slice 1 starts from the base commit. Slice n starts from slice n-1's task branch as soon as slice n-1 has integrated, so slice n builds while slice n-1 is in review. IF slice n-1's review changes its branch, THEN rebase slice n onto the new head before slice n integrates; a conflict goes back to slice n's builder.
 9.5 Run `<state> tracker <dir>` after every child stage.
-9.6 When the last slice passes review, fast-forward the parent task branch to it. Call the integrator once on the parent with the full test and build commands. Do not run a review over the whole diff: each slice was reviewed. Run QA (3.11) against all of Spec §3, then SHIP (3.12) one PR whose commits keep the slice order.
+9.6 When the last slice passes review, fast-forward the parent task branch to it. Call the integrator once on the parent with the full test and build commands. Do not run a review over the whole diff: each slice was reviewed. Run QA (3.11) against all of Spec §3, then SHIP (3.12) one PR whose commits keep the slice order. Fixups from every slice fold at that SHIP.

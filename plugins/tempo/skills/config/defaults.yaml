@@ -8,6 +8,7 @@ commands:
   typecheck: null
   lint: null
   run_app: null
+targets: []        # extra platform test runs: [{name, command, paths}]
 git:
   base_branch: main
   branch: "tempo/{task}"
@@ -15,6 +16,7 @@ git:
   repro_branch: "{branch}-repro"
   worktree_root: .tempo/worktrees
   delete_merged_local_branches: true
+  fold_fixes: true        # fixes before the PR become fixup! commits, squashed into their owner commit at SHIP
   commit:
     message: "{type}({task}): {summary}"
     language: en
@@ -39,6 +41,7 @@ limits:
   repro_minutes: 30
   split_orders: 4         # more Work Orders than this: HANDOFF splits the task into stacked slices (0 = off)
   split_criteria: 30      # more criteria than this also splits (0 = off)
+  order_check: true       # quick review of each Work Order's diff before it integrates (M and L lanes)
   spec_slice_kb: 30       # Spec larger than this: each order carries the terms and design it needs (0 = off)
 task:
   id: ticket

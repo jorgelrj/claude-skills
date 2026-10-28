@@ -23,6 +23,7 @@ description: How TEMPO finds and applies a project's rules files (CLAUDE.md, REV
 | QUICK | S | correctness | read the diff and the files it touches |
 | STANDARD | M | correctness, spec; security only when 2.2 applies | diff, touched files, direct callers |
 | DEEP | L | correctness, security, spec | diff, touched files, callers, tests, data flow from input to storage |
+| ORDER | M, L (each order) | order (3.4) | the order's diff and touched files |
 
 2.2 Security lens in M. Add it when the diff touches an entry point's authentication or authorization, parses external input into a query, command, path or template, handles secrets or tokens, moves money, or adds a dependency.
 
@@ -54,6 +55,14 @@ Report only issues with a concrete exploit path. Skip theoretical issues.
 - Nothing outside the Spec's scope changed. Check Spec §7 Out of scope.
 - The diff follows `CLAUDE.md`, `REVIEW.md` and the rule-stating project docs (1.6). Cite the rule's file and line for each finding.
 - The Work Reports' DEVIATIONS sections are justified.
+
+### 3.4 ORDER (one Work Order, before it integrates)
+- Depth STANDARD on the order's own diff `<start>..<branch>`. Run it on `sonnet`.
+- Correctness: the §3.1 list, with the edge inputs builder step 4.1 names.
+- Criteria: each criterion in the order's §2 is met as worded, in every view or path it names.
+- Rules: the order's §3 RULES lines, and the rules files for the touched directories.
+- Deviations: each line of the report's §5 that is not MECHANICAL or SCOPE is a finding.
+- Out of scope: cross-order effects. The full review covers them.
 
 ## 4 Rules for every reviewer
 
