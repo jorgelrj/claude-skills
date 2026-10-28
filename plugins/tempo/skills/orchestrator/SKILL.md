@@ -18,6 +18,7 @@ Nothing travels between agents except files in `.tempo/<task-id>/`.
 0.6 Agent names. Installed as a plugin, the agents appear as `tempo:triage`, `tempo:scout`, and so on. Use whichever name the Agent tool lists.
 0.7 Config script: `<cfg>` is `uv run --quiet <orch>/../config/scripts/tempo_config.py` when `uv` is on PATH, else `python3 <orch>/../config/scripts/tempo_config.py`. The config skill (`<orch>/../config/SKILL.md`) explains the files and every subcommand.
 0.8 State script: `<state>` is `python3 <orch>/scripts/tempo_state.py`. It needs only the Python standard library. It is the only writer of `state.json` and `state.md`. Its docstring lists every subcommand.
+0.9 Baseline script: `<bl>` is `python3 <orch>/scripts/tempo_baseline.py`. Standard library only. It records which platform-target tests already fail on a base commit (`.tempo/baselines/`) and compares a run with them by name. Its docstring lists every subcommand.
 
 ## 1 Start of every run
 
@@ -30,6 +31,7 @@ Nothing travels between agents except files in `.tempo/<task-id>/`.
   - 1.1.2 IF it is not, THEN run `<cfg> repos`. IF it lists repos, THEN this is a workspace task. Follow section 6 instead of sections 1.2 to 3.
   - 1.1.3 IF there is no repository and no workspace file, THEN stop and tell Jorge. Offer `/tempo:init` to describe the workspace.
 1.2 Run `<cfg> check --repo <repo>`. IF it prints FAIL, THEN show Jorge the findings and stop. IF it warns about a legacy `config.md`, THEN tell Jorge once, with the migrate command.
+1.2.1 Worktree gaps. IF it warns that a git-ignored file is missing from worktree setup (an SDK link such as `.fvm`, an `.env`), THEN add it to `worktree.link` (a folder) or `worktree.copy` (a file) in `<repo>/.tempo/config.yaml` before any worktree is made, and tell Jorge in one line. On autopilot, record it with `<state> decide` instead. A worktree has only tracked files; a builder that has to recreate one by hand loses minutes and may point it at the wrong version.
 1.3 Run `<cfg> resolve --repo <repo>` once. Its `config` object is this run's config. Every later "from config" means a value from it. Do not read config files by hand.
 1.3.1 Project docs. Run `<cfg> docs --repo <repo>` once. It prints the project's documentation files (config `docs:`), index files first. Save the list as `.tempo/<task-id>/docs.txt` and pass that path to every scout, the architect, every reviewer and QA. IF it prints nothing, THEN pass NIL. Section 8 says how each agent uses it.
 1.3.2 Standing decisions. `task.standing_decisions` from config are answers Jorge has already given (a delivery order, a scoping rule). Pass them to triage. Do not raise GATE-CLARIFY for a question one of them answers: apply it, and name it in the progress line.
@@ -91,7 +93,7 @@ Run the stages the Task Card's ROUTE lists, in this order.
 
 ### 3.7 HANDOFF (all)
 - Call `architect` in mode HANDOFF with `spec.md` (feature) or `repro.md` (bug), or `task.md` and `context.md` when present (feature S lane). Child task of a workspace (section 6): the parent `plan.md` slice and the parent `context.md` block for this repo. S and M lanes: pass `model: sonnet` on the Agent call.
-- Pass `limits.split_orders`, `limits.split_criteria` and `limits.spec_slice_kb` from config, and the output of `<cfg> targets` (all platform targets; the architect matches them to each order).
+- Pass `limits.split_orders`, `limits.split_criteria` and `limits.spec_slice_kb` from config, and the `targets:` entries from the resolved config (name, command, scoped_command, advisory, paths; the architect matches them to each order).
 - Output: `wo-01.md` ... One order per builder. File scopes (§3 IN) SHALL NOT overlap.
 - IF the architect replies `SPLIT`, THEN follow section 9 instead of 3.8 to 3.12. Tell Jorge in one line how many slices and what each holds.
 - Bug flow: exactly one Work Order. Its criteria are `repro.md` §5. It forbids edits to the reproduction test.
@@ -101,13 +103,13 @@ Run the stages the Task Card's ROUTE lists, in this order.
 ### 3.8 BUILD (all)
 For each wave:
 1. For each order, get its branch name with `<cfg> names --task <task-id> --wo NN` and create a worktree: `git worktree add <git.worktree_root>/<task-id>-wo-NN -b <work-order branch> <start>`. Wave 1 starts from the base commit (bug flow: from the repro branch). Later waves start from the task branch.
-2. Prepare it: run the lines `<cfg> setup --worktree <path>` prints, in order. IF a line fails, THEN stop that order and raise HARD-TO-UNDO only if the fix needs a secret or a new dependency; otherwise fix the config with Jorge's yes (on autopilot, fix `.tempo/config.yaml` yourself and record it with `<state> decide`).
+2. Prepare it: run the lines `<cfg> setup --worktree <path>` prints, in order. Every worktree a task makes gets the same preparation: work-order, repro, integration (`-int`) and base-check worktrees. Pass the command `<cfg> setup --worktree <path>` to every agent that makes its own worktree (reproducer, integrator, QA). IF a line fails, THEN stop that order and raise HARD-TO-UNDO only if the fix needs a secret or a new dependency; otherwise fix the config with Jorge's yes (on autopilot, fix `.tempo/config.yaml` yourself and record it with `<state> decide`).
 3. Write the worktree path and branch into the order header, and run `<state> wo <dir> WO-NN --worktree <path> --branch <branch> --status ISSUED`.
 4. Build: call `builder` in mode BUILD for every order in the wave, in parallel, in one message. Orders of the next wave that are already issued: call their builders in mode PREFLIGHT in the same message (4.1). Max parallel builders comes from config. There is no separate readback: the builder reads the order first and stops before its first edit if anything is unclear (WO §6).
 4.1 PREFLIGHT gets the order, the task branch name and the path of each order it depends on. It reads the order and the code at the task branch head, edits nothing, and replies READY or BLOCKED with questions. Answer its questions (step 7) while the current wave builds. When the wave integrates, create the order's worktree and continue the same builder agent in mode BUILD.
 5. Each builder writes `report-NN.md` and commits on its branch.
 6. Scope check, for every order: every path in `git diff --name-only <start>..<branch>` SHALL be in the order's §3 IN, or be a test file, test double (fake, mock, stub) or fixture in a package that already holds an IN file and that the report lists in §5 Deviations (builder rule). IF any other path is outside IN, THEN call `architect` to amend the order and rebuild it.
-6.1 Deviation gate. Read §5 Deviations of every report. MECHANICAL and SCOPE lines pass. For each CRITERION, CONTENT or CUT line, call `architect` in AMEND mode with the report line and the orders not yet built (architect AMEND 4.1), then continue the same builder on the amended order. Do this before the order's check, its fast-forward or the next wave. A deviation that goes on to review is a finding you let through.
+6.1 Deviation gate. Read §5 Deviations of every report. MECHANICAL and SCOPE lines pass. A MECHANICAL line that says the worktree lacked a git-ignored file (an SDK link, an `.env`) is a config gap: add the file to `worktree.link` or `worktree.copy` as 1.2.1 says, so the next worktree has it. For each CRITERION, CONTENT or CUT line, call `architect` in AMEND mode with the report line and the orders not yet built (architect AMEND 4.1), then continue the same builder on the amended order. Do this before the order's check, its fast-forward or the next wave. A deviation that goes on to review is a finding you let through.
 6.2 Order check. M and L lanes, when `limits.order_check` is true. For each order that passed 6 and 6.1, call `reviewer` with lens ORDER and `model: sonnet`: the order, its report, its start commit and branch, the rules files, `docs.txt`. Output: `review/order-NN.md`. Start the checks of a wave in parallel, in one message.
   - IF it has a HIGH or MEDIUM candidate, THEN continue the same builder in mode FIX with `review/order-NN.md`, fold fixes from config, and "PR not open". Then run 6 again. One check per order: do not check the fix again; the full review covers it.
   - LOW candidates stay in `review/order-NN.md`. Pass the order files to the full review's SPEC reviewer, which decides whether they still hold.
@@ -116,7 +118,8 @@ For each wave:
 8. Serial chain. IF a wave holds one order and the next wave depends on it, THEN after the scope check, the deviation gate and the order check, fast-forward the task branch to that order's branch yourself (`git merge --ff-only`); its builder already ran the order's verification on that tree. Call the integrator once, after the last wave, with the full test and build commands.
 
 ### 3.9 INTEGRATE (all)
-- Call `integrator` in mode MERGE with the reports, branches and the full test and build commands, and the platform targets for the diff: `<cfg> targets --paths $(git diff --name-only <base>..<task branch>)`.
+- Call `integrator` in mode MERGE with the reports, branches and the full test and build commands, and the platform targets for the diff: `<cfg> targets --ref <task branch> --paths $(git diff --name-only <base>..<task branch>)`. A target with `scoped_command` prints one run per package, limited to the test files the diff touches or mirrors, and a `# NO-TESTS` line for changed files no test maps to. A target marked `advisory` is red on the base: pass `<bl>`, the base commit and the worktree setup command, so the integrator compares its failures with the base's (integrator step 5.1).
+- Never run a whole platform suite to prove one change. The full command (`<cfg> targets --full`) runs only when a change touches the target's own setup (its config, a test helper every test loads, the toolchain pin), and then once on the base too.
 - Pass the task branch and the work-order branch names from §1.7.
 - It merges every WO branch into the task branch and writes `integration.md`.
 - IF FAIL, THEN return the failing orders to BUILD with the evidence (amend the order). This counts as a review round: run `<state> bump <dir> review` and follow 3.10.2. The REVIEW that follows the repaired integration does not bump again.
@@ -133,20 +136,28 @@ For each wave:
 4. Review:
    - Depth comes from the lane (triage-rubric §3.3). Lenses come from review-rules §2.
    - The previous round head is the head hash in `findings-r<N-1>.md` §1 Diff. Round 1 has none.
-   - Call one `reviewer` per lens, in parallel, in one message. Pass: base and head commit, the previous round head, kind, lens, depth, criteria source (`spec.md` §3, `repro.md` §5, the plan slice for a child task, or `task.md` for an S lane), rules file list, `docs.txt`. Each writes `review/<lens>-rN.md`. S and M lanes: pass `model: sonnet` to the correctness and spec reviewers when the diff has 150 changed lines or fewer (`git diff --shortstat`).
+   - Call one `reviewer` per lens, in parallel, in one message. Pass: base and head commit, the previous round head, kind, lens, depth, criteria source (`spec.md` §3, `repro.md` §5, the plan slice for a child task, or `task.md` for an S lane), rules file list, `docs.txt`, and the test command and the `targets:` entries (review-rules §3.1, tests that never run). Each writes `review/<lens>-rN.md`. S and M lanes: pass `model: sonnet` to the correctness and spec reviewers when the diff has 150 changed lines or fewer (`git diff --shortstat`).
    - Bug flow: the correctness reviewer also runs the sibling sweep from `repro.md` §7.
    - Verifier. IF every reviewer reports 0 candidates, THEN skip the verifier: write `findings-rN.md` yourself from the template with Result PASS and each lens's §3 Checked and clean. IF every candidate is LOW, THEN skip the verifier too and copy them to §5 Left open.
    - Otherwise call `verifier` with all raw findings files, the previous findings file and the previous round head. Output: `findings-rN.md`. Pass `model: sonnet` when there are 3 candidates or fewer and none is HIGH.
 5. On FAIL, in this order:
    - 5.1 Fix chain. IF this round has an INTRODUCED finding and round N-1 had an INTRODUCED finding in the same area (findings §2 Area), THEN raise FIX-CHAIN. Do not patch again.
-   - 5.2 Small fix. IF every confirmed finding is MEDIUM or LOW, each names a file already in its owner's §3 IN, and none changes a criterion, THEN skip the architect: call `builder` in mode FIX with its order, `findings-rN.md`, fold fixes from config, and whether the PR is open. Prefer continuing the same builder agent. Then INTEGRATE, then REVIEW again.
-   - 5.3 Otherwise call `architect` in AMEND mode on `spec.md` (feature) with the findings, so it runs the interaction check, then on each owning order.
+   - 5.1.1 Fix of a fix. IF 2 or more confirmed findings of this round are INTRODUCED by the last round's fixes, THEN the patches are not holding: raise FIX-CHAIN now, without waiting for a second such round. Its recommendation is the re-spec.
+   - 5.2 Small fix. IF every confirmed finding is MEDIUM or LOW, each names a file already in its owner's §3 IN, none changes a criterion, and every one is `Fix kind: LOCAL` (findings template), THEN skip the architect: call `builder` in mode FIX with its order, `findings-rN.md`, fold fixes from config, and whether the PR is open. Prefer continuing the same builder agent. Then INTEGRATE, then REVIEW again.
+   - 5.2.1 State fixes. A finding with `Fix kind: STATE` changes who owns a state, which events change it, or when a run, write or session settles or ends. Its fix is a design change even when it fits one file: it goes to 5.3, so the architect writes the §8 lines before a builder touches the code. Bug flow: the architect amends `repro.md` §8 Fix direction.
+   - 5.3 Otherwise call `architect` in AMEND mode on `spec.md` (feature) or `repro.md` (bug) with the findings, so it runs the interaction check, then on each owning order.
    - 5.4 Go back to BUILD for those orders only; the builder builds from the amended order. Then INTEGRATE, then REVIEW again.
 6. Hard stop. When `bump` exits 2, or Jorge chose to ship at LOOP-LIMIT or FIX-CHAIN:
    - 6.0 A fix after the PR is open is a normal commit, never a fixup: the branch is pushed and is not rewritten.
    - 6.1 Record each open confirmed finding as a known risk: one line in `spec.md` §1 (with a Changes line), and one line in `pr.md` §5 with its follow-up.
    - 6.2 Continue to QA. No escalation and no gate offers another fix round, GATE-PR included.
    - 6.3 Only Jorge's own words naming a higher limit (`/tempo:resume <task-id> review-limit <N>`) reopen review.
+
+### 3.10.7 Findings after the PR is open
+A review that arrives after GATE-PR (an automated reviewer on the PR or the issue, Jorge's PR comments) is a review round, not a side task.
+1. Copy its findings into `findings-ext-N.md` from the findings template, Issued by: orchestrator, with each finding's owner, Area and Fix kind filled as the verifier would (read the code for each one). Keep the external ids.
+2. Run `<state> bump <dir> review` and follow 3.10.2 for the limits. Then route the findings by 3.10.5, Fix kind and fix-of-fix rules included. Fixes are plain commits (3.10.6.0).
+3. Review the fix with a round as 3.10.3 says (NARROW only when it qualifies), then QA the criteria the fixes touch, push, and give Jorge the PR link again.
 
 ### 3.11 QA (feature M and L, all bugs)
 - Call `qa` with the criteria source, the integration branch, the commands and `docs.txt`. Output: `qa-rN.md`.
@@ -192,7 +203,7 @@ For each wave:
 | BEHAVIOUR-CHANGE | the fix changes intended behaviour | old vs new behaviour, and who it affects |
 | OUT-OF-ORDER-DECISION | the architect cannot answer a builder's question without changing the goal | the decision and options |
 | LOOP-LIMIT | review or QA passes the round limit | the open findings, how many were introduced by fixes, and the options: (a) one extension round, only while `limits.review_extensions` allows; (b) ship them as known risks (3.10.6) |
-| FIX-CHAIN | two rounds in a row each have a finding introduced by the last fix, in the same area | the chain of findings, and the options: (a) re-spec that area: architect AMEND on Spec §8 for it, HANDOFF, BUILD, then a FULL round; (b) ship as known risks (3.10.6); (c) revert the last fix and ship its finding as a known risk |
+| FIX-CHAIN | two rounds in a row each have a finding introduced by the last fix, in the same area; or one round has 2 or more findings introduced by the last fix (3.10.5.1.1) | the chain of findings, and the options: (a) re-spec that area: architect AMEND on Spec §8 for it, HANDOFF, BUILD, then a FULL round; (b) ship as known risks (3.10.6); (c) revert the last fix and ship its finding as a known risk |
 | HARD-TO-UNDO | new dependency, migration on real data, secrets, deploys, force-push, deleting branches | the action and its effect |
 
 4.2 To raise one:

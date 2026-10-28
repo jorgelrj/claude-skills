@@ -189,6 +189,20 @@ Up to 0.8.0 the guard turned every `rm` outside the session's working directory 
 
 Known cost: a stray delete inside a temp folder is no longer caught, and a delete you actually wanted outside the project (another repo, `~/Library/Caches`) is refused; run it yourself.
 
+### Faster integration, fewer fix-of-fix rounds (0.10.0)
+
+Measured on pod1um after 0.8.0 (T-008 to T-014, 28 Oct): seven PRs with no review fix commits, six of seven passing review in one round. The time went elsewhere. The web target ran the whole Chrome suite, which fails on develop (about 90 failures), so integrators reran it on the base and compared names by hand: 40 to 72 minutes on small bugs, against 10 to 23 when they ran only the touched tests. Four of seven worktrees lacked the git-ignored `.fvm/flutter_sdk` link. On T-007, fixing an external review's 4 MEDIUM findings by the small-fix path caused 4 new ones, two in the settling state model. 0.10.0:
+
+- **Scoped platform targets.** A target's `scoped_command` (`cd {package} && flutter test --platform chrome {tests}`) runs only the changed test files and the tests that mirror changed files, one run per package. Changed files no test maps to are listed, not run. The whole suite runs only when a change touches the target's own setup.
+- **Advisory targets and baselines.** `advisory: true` marks a target that is red on the base. The integrator records the base's failures once per base commit in `.tempo/baselines/` (`tempo_baseline.py`) and only NEW failures block; a NEW failure that passes alone is a flake.
+- **Worktree gaps caught early.** `tempo_config.py check` warns about git-ignored setup files (`.fvm`, `.env`, `local.properties` ...) that `worktree.link`/`copy` do not cover; the orchestrator adds them before the first worktree, and every worktree (order, repro, integration, base check) gets the same setup.
+- **State fixes go through the architect.** The verifier tags each finding `Fix kind: LOCAL | STATE`. A STATE fix (who owns a state, what changes it, when it settles) skips the small-fix path: the architect writes the §8 lines first. A round with 2 or more findings introduced by the last fix raises FIX-CHAIN at once.
+- **Findings after the PR are a round.** An external review or PR comments go into `findings-ext-N.md` and follow the same routing, count and limits (orchestrator 3.10.7).
+- **Tests that never run.** The correctness lens flags a new test that no configured command or target runs (a `@TestOn('browser')` file with no Chrome target).
+- **State tidy-up.** A stage that redoes its artifact keeps one log entry; DONE clears agents left in flight; an order rebuilt after DONE shows its runs separately.
+
+Known cost: a mirror-name match misses tests named differently from their source; those changes show as `# NO-TESTS` and rely on the order's own verification.
+
 ## How it runs inside Claude Code
 
 - The main session is the orchestrator. Subagents cannot start other subagents, so the orchestrator starts every agent, including the parallel scouts, builders and reviewers.
@@ -213,6 +227,8 @@ Known cost: a stray delete inside a temp folder is no longer caught, and a delet
 - The split thresholds (`limits.split_orders`, `limits.split_criteria`) and `limits.spec_slice_kb`, after the first split runs.
 - Whether the rm guard (0.9.1) refuses a delete the run needed; refusals show in the agent's report or final message.
 - Whether the order check (0.8.0) pays for its time; turn it off with `limits.order_check: false`.
+- Whether scoped targets (0.10.0) miss failures a whole-suite run would catch; compare once a base is green and `advisory` is dropped.
+- The fix-of-fix threshold (2 introduced findings in one round) and how often verifiers tag STATE.
 - How often FOLD is skipped for a conflict; fixups that touch the same lines as a later commit cannot squash cleanly.
 - Stage log minutes for parallel builders: each log starts the next stage clock, so read per-order minutes in state §5 for build time. An order issued for PREFLIGHT starts its clock early.
 - PLAN-ONLY together with a split (plan.md slices per group of orders) has not run yet.

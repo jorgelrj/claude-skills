@@ -20,7 +20,9 @@ Commands:
   resolve [--format json|yaml]           print the merged config for --repo (or the workspace)
   names   --task ID [--ticket KEY] [--wo N ...]   print branch names, commit and PR title templates
   cmd     NAME [--var k=v ...]           print one command as a shell line, env exported first
-  targets [--paths P ...]               print the platform test targets that apply to the changed paths
+  targets [--paths P ...] [--ref REF] [--full]
+                                         print the platform test runs for the changed paths: scoped to the
+                                         tests those paths touch or mirror when a target has scoped_command
   setup   --worktree PATH                print the shell steps that prepare a new worktree
   repos                                  list workspace repos in dependency order
   docs    [--format list|json]           list the project's doc files (config docs:), index files first
@@ -412,6 +414,98 @@ def env_prefix(env):
     return "export " + " ".join(f"{k}={dq(v)}" for k, v in env.items()) + "; "
 
 
+# ---------- worktree setup ----------
+
+# Git-ignored files a build usually needs and a new worktree lacks.
+SETUP_NAMES = {".fvm", ".env", ".env.local", ".env.development", ".env.development.local", ".env.test",
+               ".env.test.local", "local.properties", "key.properties", ".npmrc", "google-services.json",
+               "GoogleService-Info.plist"}
+
+
+def worktree_gaps(repo, cfg):
+    """Warn about ignored setup files in the checkout that worktree.copy/link do not bring into a worktree."""
+    if not repo:
+        return []
+    out = subprocess.run(["git", "-C", str(repo), "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"],
+                         capture_output=True, text=True)
+    if out.returncode != 0:
+        return []
+    w = cfg.get("worktree") or {}
+    covered = [c.rstrip("/") for c in (w.get("copy") or []) + (w.get("link") or [])]
+    gaps = []
+    for rel in out.stdout.splitlines():
+        rel = rel.rstrip("/")
+        parts = rel.split("/")
+        if parts[-1] not in SETUP_NAMES or parts[0] == ".tempo" or "node_modules" in parts:
+            continue
+        if not any(rel == c or rel.startswith(c + "/") for c in covered):
+            gaps.append(rel)
+    return [f"{g} is git-ignored, so a new worktree will not have it; add it to worktree.link (or worktree.copy)"
+            for g in sorted(gaps)]
+
+
+# ---------- platform targets ----------
+
+TEST_GLOBS = ["**/test/**", "**/tests/**", "**/__tests__/**", "**/spec/**", "*_test.*", "*.test.*", "*.spec.*", "test_*.py"]
+PACKAGE_MARKERS = ["pubspec.yaml", "package.json", "go.mod", "Cargo.toml", "pyproject.toml", "pom.xml", "build.gradle", "build.gradle.kts"]
+
+
+def tracked_files(repo, ref=None):
+    args = ["git", "-C", str(repo), "ls-tree", "-r", "--name-only", ref] if ref else ["git", "-C", str(repo), "ls-files"]
+    out = subprocess.run(args, capture_output=True, text=True)
+    if out.returncode != 0:
+        raise ConfigError(f"cannot list files ({' '.join(args[3:])}): {out.stderr.strip()}")
+    return out.stdout.splitlines()
+
+
+def is_test(rel, globs):
+    name = rel.rsplit("/", 1)[-1]
+    return any(_matches(rel, g) or (("/" not in g) and fnmatch_path(name, g)) for g in globs)
+
+
+def package_of(rel, packages):
+    """The deepest package directory holding rel ('' for the repo root)."""
+    best = None
+    for pkg in packages:
+        if pkg == "" or rel.startswith(pkg + "/"):
+            if best is None or len(pkg) > len(best):
+                best = pkg
+    return best
+
+
+def scoped_runs(tg, changed, files):
+    """Group the tests a target should run by package. Changed test files run as they are;
+    a changed source file runs the tests whose name mirrors it (foo.dart -> foo_test.dart)."""
+    globs = tg.get("test_globs") or TEST_GLOBS
+    markers = tg.get("package_markers") or PACKAGE_MARKERS
+    packages = {f.rsplit("/", 1)[0] if "/" in f else "" for f in files if f.rsplit("/", 1)[-1] in markers}
+    present = set(files)
+    tests_by_stem = {}
+    for f in files:
+        if is_test(f, globs):
+            stem = f.rsplit("/", 1)[-1].split(".", 1)[0]
+            tests_by_stem.setdefault(stem, []).append(f)
+    picked, unmapped = {}, []
+    for rel in changed:
+        pkg = package_of(rel, packages)
+        if is_test(rel, globs):
+            if rel in present:
+                picked.setdefault(pkg, set()).add(rel)
+            continue
+        stem = rel.rsplit("/", 1)[-1].split(".", 1)[0]
+        mirrors = [t for c in (f"{stem}_test", f"test_{stem}", stem) for t in tests_by_stem.get(c, [])
+                   if package_of(t, packages) == pkg and t != rel]
+        if mirrors:
+            picked.setdefault(pkg, set()).update(mirrors)
+        else:
+            unmapped.append(rel)
+    runs = []
+    for pkg in sorted(picked, key=lambda x: x or ""):
+        cut = len(pkg) + 1 if pkg else 0
+        runs.append((pkg, sorted(t[cut:] for t in picked[pkg])))
+    return runs, unmapped
+
+
 # ---------- legacy migration ----------
 
 LEGACY_MAP = {
@@ -489,6 +583,8 @@ def main(argv=None):
     n.add_argument("--wo", type=int, nargs="*", default=[])
     m = add("cmd"); m.add_argument("name"); m.add_argument("--var", action="append", default=[])
     t = add("targets"); t.add_argument("--paths", nargs="*")
+    t.add_argument("--ref", help="find test files in this commit (default: the files git tracks in the checkout)")
+    t.add_argument("--full", action="store_true", help="print each target's full command, never the scoped one")
     s = add("setup"); s.add_argument("--worktree", required=True)
     add("repos")
     dc = add("docs"); dc.add_argument("--format", choices=["list", "json"], default="list")
@@ -505,7 +601,7 @@ def main(argv=None):
                     print("\n".join(errs)); print(f"FAIL: {len(errs)} finding(s)"); return 1
                 print(f"PASS: {len(a.files)} file(s)"); return 0
             cfg, info = resolve(a.repo)
-            for w in info["warnings"]:
+            for w in info["warnings"] + worktree_gaps(info.get("repo"), cfg):
                 print("WARN: " + w)
             print("PASS: " + ", ".join(info["files"])); return 0
 
@@ -558,9 +654,26 @@ def main(argv=None):
             print(env_prefix(cfg.get("env")) + fill(command, vals)); return 0
 
         if a.cmd == "targets":
+            files = None
             for tg in cfg.get("targets") or []:
-                if a.paths is None or any(_matches(f, pat) for f in a.paths for pat in tg["paths"]):
-                    print(f"{tg['name']}\t{env_prefix(cfg.get('env'))}{tg['command']}")
+                tail = "\tadvisory" if tg.get("advisory") else ""
+                full = f"{tg['name']}\t{env_prefix(cfg.get('env'))}{tg['command']}{tail}"
+                if a.paths is None:
+                    print(full); continue
+                hit = [f for f in a.paths if any(_matches(f, pat) for pat in tg["paths"])]
+                if not hit:
+                    continue
+                if a.full or not tg.get("scoped_command"):
+                    print(full); continue
+                if files is None:
+                    files = tracked_files(info["repo"] or a.repo, a.ref)
+                runs, unmapped = scoped_runs(tg, hit, files)
+                for pkg, tests in runs:
+                    cmd = fill(tg["scoped_command"], {"package": pkg or ".", "tests": " ".join(shlex.quote(t) for t in tests)})
+                    print(f"{tg['name']}\t{env_prefix(cfg.get('env'))}{cmd}{tail}")
+                if unmapped:
+                    print(f"{tg['name']}\t# NO-TESTS for {len(unmapped)} changed file(s): {' '.join(unmapped[:10])}"
+                          f"{' ...' if len(unmapped) > 10 else ''}{tail}")
             return 0
 
         if a.cmd == "setup":

@@ -8,7 +8,7 @@ commands:
   typecheck: null
   lint: null
   run_app: null
-targets: []        # extra platform test runs: [{name, command, paths}]
+targets: []        # extra platform test runs: [{name, command, paths, scoped_command?, advisory?}]
 git:
   base_branch: main
   branch: "tempo/{task}"

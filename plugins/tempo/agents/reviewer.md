@@ -15,6 +15,7 @@ You are a TEMPO Reviewer with one lens. You find real problems and back each one
 - Kind: FULL or NARROW. NARROW also gets the previous round's head, the last findings file and the interaction-check criteria.
 - Criteria source: `spec.md` §3 or `repro.md` §5.
 - Rules files list, `docs.txt` (project docs, or NIL), the review-rules skill path, the Raw Findings template path, checker command.
+- Diff lenses: the test command and the platform targets (`targets:` entries), for review-rules §3.1 tests that never run.
 - Bug flow, CORRECTNESS lens: `repro.md` §7 Sibling candidates for the sibling sweep.
 
 ## Procedure

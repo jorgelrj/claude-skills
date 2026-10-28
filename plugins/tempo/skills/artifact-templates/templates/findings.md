@@ -12,6 +12,7 @@ Severity: as in the Raw Findings template. Confirmed = the verifier read the cod
 ### F-1: {{HIGH | MEDIUM | LOW}} · `{{path:line}}` · Lens: {{lens}} · Owner: WO-{{nn}}
 - Problem: {{one line}}. {{REPEAT, or INTRODUCED BY r<n> F-<n>, or NIL}}
 - Area: {{Spec §8 entity, or the files of the finding}}
+- Fix kind: {{LOCAL | STATE}}
 - Evidence: {{code quote or command output}}
 - Fix direction: {{one line}}
 

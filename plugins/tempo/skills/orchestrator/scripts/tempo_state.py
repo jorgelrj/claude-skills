@@ -11,14 +11,16 @@ Usage: tempo_state.py <command> <task-dir> [args]
             [--review-extensions N] [--autopilot]
   set       <dir> [--lane L] [--stage S] [--status S] [--next TEXT] [--mode M] [--title T]
             [--task-branch B] [--base-commit H] [--pr URL] [--review-limit N] [--review-extensions N]
-            [--autopilot on|off]
+            [--autopilot on|off]                  (DONE clears the agents still listed in flight)
   decide    <dir> KIND --question Q --choice C --why W [--from FILE]
                                                  (record a decision autopilot accepted; writes decisions.md)
   log       <dir> STAGE ARTIFACT PASS|FAIL|BLOCKED   (logging findings-rN.md raises the review count to N;
-                                                   records start and end, closes the agent that wrote ARTIFACT)
+                                                   records start and end, closes the agent that wrote ARTIFACT;
+                                                   the same stage and artifact again right after extends that entry)
   bump      <dir> review|qa|reissue               (exit 1: past the limit, raise LOOP-LIMIT;
                                                    exit 2: past limit + extensions, HARD STOP)
   wo        <dir> WO-NN [--worktree P] [--branch B] [--status S]
+                                                 (an order issued again after DONE starts a new timed run)
   wait      <dir> ESC-FILE | --clear
   agent     <dir> start ID --label L --output PATH [--prompt FILE]
   agent     <dir> done ID
@@ -66,7 +68,11 @@ def wo_line(k, v):
     took = ""
     if v.get("started"):
         m = minutes(v["started"], v.get("finished") or now())
-        took = f" | {v['started'][11:]}, {m} min{'' if v.get('finished') else ' so far'}" if m is not None else ""
+        earlier = [minutes(a, b) for a, b in v.get("runs", [])]
+        if m is not None:
+            took = f" | {v['started'][11:]}, {m} min{'' if v.get('finished') else ' so far'}"
+            if earlier:
+                took += f" (run {len(earlier) + 1}; earlier runs {' + '.join(str(x) for x in earlier if x is not None)} min)"
     return f"{k} | {v.get('worktree') or 'TBD'} | {v.get('branch') or 'TBD'} | {v.get('status') or 'ISSUED'}{took}"
 
 
@@ -250,9 +256,16 @@ def main(argv=None):
         if a.autopilot: st["autopilot"] = a.autopilot == "on"
         if a.status == "DONE" or a.stage == "DONE":
             st["stage"], st["status"] = "DONE", "DONE"
+            if st["agents"]:
+                print(f"CLEARED: {len(st['agents'])} agent(s) still listed in flight: {', '.join(v['label'] for v in st['agents'].values())}")
+            st["agents"] = {}
     elif a.cmd == "log":
         prev = st["log"][-1][-4] if st["log"] else st["started"]  # end of the previous entry
-        st["log"].append([st.get("stage_since") or prev, now(), a.stage, a.artifact, a.result])
+        last = st["log"][-1] if st["log"] else None
+        if last and len(last) == 5 and last[2] == a.stage and last[3] == a.artifact and st.get("stage_since") == last[1]:
+            last[1], last[4] = now(), a.result  # the same stage redid its artifact (an amend): one entry
+        else:
+            st["log"].append([st.get("stage_since") or prev, now(), a.stage, a.artifact, a.result])
         st["stage_since"] = now()
         name = Path(a.artifact).name
         for aid in [k for k, v in st["agents"].items() if Path(v.get("output") or "").name == name]:
@@ -275,6 +288,9 @@ def main(argv=None):
         cur = st["work_orders"].setdefault(a.wo, {})
         for k in ("worktree", "branch", "status"):
             if getattr(a, k): cur[k] = getattr(a, k)
+        if a.status in ("ISSUED", "BUILDING") and cur.get("finished"):
+            cur.setdefault("runs", []).append([cur["started"], cur["finished"]])  # a fix run after DONE
+            cur["started"] = now()
         if a.status in ("ISSUED", "BUILDING") and not cur.get("started"):
             cur["started"] = now()
         if a.status in ("DONE", "BLOCKED"):

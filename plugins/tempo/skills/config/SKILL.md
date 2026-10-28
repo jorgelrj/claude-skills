@@ -51,8 +51,8 @@ description: TEMPO's structured configuration. The YAML files (.tempo/config.yam
 | `<cfg> resolve` | merged config and its sources as JSON (`--format yaml` to read it) |
 | `<cfg> names --task <ID> [--ticket <KEY>] [--wo 1 2 ...]` | task, work-order and repro branch names, commit and PR title templates, PR base and draft |
 | `<cfg> cmd <name> [--var pattern=X --var module=Y]` | one command as a shell line, with `export ...;` for the env first |
-| `<cfg> targets [--paths <changed files> ...]` | the platform test targets (`targets:`) whose `paths` match a changed file, as `name<TAB>command` with the env exported; all targets without `--paths` |
-| `<cfg> setup --worktree <path>` | shell steps that make a new worktree usable: copy, link, setup commands |
+| `<cfg> targets [--paths <changed files> ...] [--ref <commit>] [--full]` | the platform test runs for the changed files, as `name<TAB>command` with the env exported, plus `<TAB>advisory` for a target marked so. A target with `scoped_command` prints one run per package, limited to the changed test files and the tests whose names mirror changed files (`foo.dart` → `foo_test.dart`), found in `--ref` (default: the checkout); changed files no test maps to print as `name<TAB># NO-TESTS ...`. `--full`, or no `--paths`, prints the full commands |
+| `<cfg> setup --worktree <path>` | shell steps that make a new worktree usable: copy, link, setup commands. `check` warns about git-ignored setup files (`.fvm`, `.env`, `local.properties` ...) that `worktree.copy`/`link` do not cover |
 | `<cfg> repos` | workspace repos in dependency order, with paths |
 | `<cfg> docs [--format json]` | the doc files `docs:` matches, one absolute path per line, index files first; warns on a path that does not exist |
 | `<cfg> migrate <.tempo/config.md>` | the legacy markdown config as YAML on stdout; unmapped lines as comments |

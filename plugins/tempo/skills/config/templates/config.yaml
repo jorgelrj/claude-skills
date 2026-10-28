@@ -32,9 +32,16 @@ pr:
   title: "{type}({ticket}): {summary}"
   language: en
 
+# targets:                      # extra platform test runs, e.g. Flutter on Chrome
+#   - name: web
+#     command: cd app && flutter test --platform chrome            # the whole suite (rarely run)
+#     scoped_command: cd {package} && flutter test --platform chrome {tests}   # just the tests a change touches
+#     advisory: true              # red on the base branch: only failures the base lacks block
+#     paths: [app/lib/**, app/test/**]
+
 worktree:                       # a new worktree has only tracked files
   copy: []                      # gitignored files to copy, e.g. [.env.local]
-  link: []                      # big gitignored folders to symlink, e.g. [node_modules]
+  link: []                      # big gitignored folders to symlink, e.g. [node_modules, app/.fvm]
   setup: []                     # commands run inside the new worktree, in order
   env: {}
 
