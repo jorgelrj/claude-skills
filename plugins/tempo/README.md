@@ -125,7 +125,7 @@ agents/
   verifier.md      drop, dedupe, rank, assign → findings-rN.md
   qa.md            per acceptance criterion, with evidence → qa-rN.md
 hooks/
-  guard_rm.py      asks before rm outside the working directory
+  guard_rm.py      refuses rm outside the project and temp folders, never prompts
 skills/
   orchestrator/              the stage machine the commands run (gates, loops, worktrees, PR, workspaces)
     scripts/tempo_state.py   the only writer of state.json / state.md; tracker for workspace tasks
@@ -163,7 +163,7 @@ Measured on pod1um T-007 (27 Oct 2026, 0.6.0): 8 Work Orders chained one after a
 - **State.** The stage log records start, end and minutes; work orders show their build time; logging an artifact clears the agent that wrote it and the Next action.
 - **Explore.** Each scout reply is saved to `explore/<LENS>.md` when it arrives; a failed scout is retried once.
 - **Standing decisions.** `task.standing_decisions` in config are answers Jorge has already given; triage applies them instead of asking.
-- **Safety.** A plugin hook (`hooks/guard_rm.py`) asks before any `rm` outside the working directory, except mktemp and `tempo-*` scratch folders. Builders delete only what they made, and the orchestrator writes prompts with the Write tool, never a heredoc.
+- **Safety.** A plugin hook (`hooks/guard_rm.py`) guards `rm` (0.9.1: it refuses instead of asking, see below). Builders delete only what they made, and the orchestrator writes prompts with the Write tool, never a heredoc.
 
 Known cost: a builder's test-file allowance means two parallel orders may touch the same fake. The integrator resolves the conflict, or returns it to an order.
 
@@ -179,6 +179,15 @@ Measured on pod1um PR #203 (T-007, 0.6.0): 7 feature commits, then 12 fix and 2 
 - **Rules reach the builder.** Each order's §3 carries `RULES:` lines from CLAUDE.md, REVIEW.md and rule-stating docs; builders check their diff against them. Spec-wide rules (labels on every control, translated strings) become a test in each order that adds such a thing.
 
 Known cost: the order check adds about 5 to 10 minutes per order. On T-007 that is about 1 to 1.5 hours against the 1h45m its two fix rounds took.
+
+### The rm guard stops asking (0.9.1)
+
+Up to 0.8.0 the guard turned every `rm` outside the session's working directory into a permission prompt. That caught Claude scratchpads (`/private/tmp/claude-501/...`), `/var/folders` temp files that were not `tmp.*`, `.tempo/<task>` files removed from inside a worktree, and every non-TEMPO session with the plugin installed, so Jorge had to step in far more than the risk warranted. Now it never prompts:
+
+- **Allowed silently:** anything in the project (the main checkout and all its worktrees, found through `git rev-parse --git-common-dir`) and anything under `/tmp`, `/private/tmp`, `/var/folders` and `$TMPDIR`.
+- **Refused, with a reason the model reads:** the project root itself, its `.git`, the home folder, `/`, a temp root itself, and any other path. The reason tells the agent to leave the path, carry on and name it in its report, not to ask.
+
+Known cost: a stray delete inside a temp folder is no longer caught, and a delete you actually wanted outside the project (another repo, `~/Library/Caches`) is refused; run it yourself.
 
 ## How it runs inside Claude Code
 
@@ -202,7 +211,7 @@ Known cost: the order check adds about 5 to 10 minutes per order. On T-007 that 
 - Whether S-lane features need QA (currently skipped).
 - Dropping the readback pass (0.6.0): T-007 had no misreadings; its stops were scope-list gaps, which 0.7.0 addresses at Handoff.
 - The split thresholds (`limits.split_orders`, `limits.split_criteria`) and `limits.spec_slice_kb`, after the first split runs.
-- Whether the rm guard prompts too often outside TEMPO runs.
+- Whether the rm guard (0.9.1) refuses a delete the run needed; refusals show in the agent's report or final message.
 - Whether the order check (0.8.0) pays for its time; turn it off with `limits.order_check: false`.
 - How often FOLD is skipped for a conflict; fixups that touch the same lines as a later commit cannot squash cleanly.
 - Stage log minutes for parallel builders: each log starts the next stage clock, so read per-order minutes in state §5 for build time. An order issued for PREFLIGHT starts its clock early.
