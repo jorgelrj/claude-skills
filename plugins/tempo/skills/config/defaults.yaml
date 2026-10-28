@@ -48,3 +48,4 @@ task:
   ticket_pattern: "[A-Z][A-Z0-9]+-\\d+"
   tracker: none
   standing_decisions: []  # Jorge's standing answers; applied instead of GATE-CLARIFY
+  autopilot: false        # true: every task runs as if --auto were given (orchestrator §4.5)

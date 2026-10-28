@@ -8,9 +8,12 @@ Times come from this machine's clock, never from the caller.
 Usage: tempo_state.py <command> <task-dir> [args]
   init      <dir> --task ID --flow FEATURE|BUG|WORKSPACE --title T --base-branch B --base-commit H
             [--task-branch NAME] [--mode FULL|PLAN-ONLY] [--parent DIR] [--review-limit N] [--qa-limit N]
-            [--review-extensions N]
+            [--review-extensions N] [--autopilot]
   set       <dir> [--lane L] [--stage S] [--status S] [--next TEXT] [--mode M] [--title T]
             [--task-branch B] [--base-commit H] [--pr URL] [--review-limit N] [--review-extensions N]
+            [--autopilot on|off]
+  decide    <dir> KIND --question Q --choice C --why W [--from FILE]
+                                                 (record a decision autopilot accepted; writes decisions.md)
   log       <dir> STAGE ARTIFACT PASS|FAIL|BLOCKED   (logging findings-rN.md raises the review count to N;
                                                    records start and end, closes the agent that wrote ARTIFACT)
   bump      <dir> review|qa|reissue               (exit 1: past the limit, raise LOOP-LIMIT;
@@ -82,7 +85,8 @@ def save(d, s):
 
 def render(s):
     L = [f"# Task State: {s['task']}",
-         f"Flow: {s['flow']} · Lane: {s.get('lane') or 'TBD'} · Mode: {s.get('mode', 'FULL')} · Owner: orchestrator",
+         f"Flow: {s['flow']} · Lane: {s.get('lane') or 'TBD'} · Mode: {s.get('mode', 'FULL')}"
+         f"{' · Autopilot: ON' if s.get('autopilot') else ''} · Owner: orchestrator",
          "Rendered by tempo_state.py from state.json. Do not edit.", ""]
 
     def section(n, title, items):
@@ -112,6 +116,19 @@ def render(s):
     section(9, "Child tasks", [f"{k} | {v['folder']} | {v.get('stage') or 'TBD'} | {v.get('status') or 'TBD'} | {v.get('pr') or 'NIL'}"
                                for k, v in s["children"].items()])
     return "\n".join(L).rstrip() + "\n"
+
+
+def render_decisions(s):
+    L = [f"# Autopilot decisions: {s['task']}",
+         "Rendered by tempo_state.py from state.json. Do not edit. Each line is a stop TEMPO answered with its own",
+         "recommendation instead of asking Jorge. Review them at the pull request.", "",
+         "## 1 Decisions"]
+    L.extend(f"- D-{n} | {e['at']} | {e['kind']} | {e['question']} | Chose: {e['choice']} | Why: {e['why']}"
+             + (f" | From: {e['from']}" if e.get("from") else "")
+             for n, e in enumerate(s.get("decisions", []), 1))
+    if not s.get("decisions"):
+        L.append("- NIL")
+    return "\n".join(L) + "\n"
 
 
 def tracker(d, s):
@@ -161,13 +178,14 @@ def adopt(d):
 
 
 def new_state(task, flow, title, base_branch, base_commit, task_branch=None, mode="FULL", parent=None,
-              review_limit=3, qa_limit=3, review_extensions=1):
+              review_limit=3, qa_limit=3, review_extensions=1, autopilot=False):
     return {"version": 1, "task": task, "flow": flow, "lane": None, "mode": mode, "title": title,
             "started": now(), "stage_since": now(), "base_branch": base_branch, "base_commit": base_commit,
             "task_branch": task_branch, "parent": parent, "pr": None, "stage": "TRIAGE", "status": "RUNNING",
             "log": [], "counters": {"review": 0, "review_limit": review_limit, "review_extensions": review_extensions,
                          "qa": 0, "qa_limit": qa_limit, "reissue": 0},
-            "work_orders": {}, "waiting": None, "next": None, "agents": {}, "children": {}}
+            "work_orders": {}, "waiting": None, "next": None, "agents": {}, "children": {},
+            "autopilot": autopilot, "decisions": []}
 
 
 def main(argv=None):
@@ -180,12 +198,17 @@ def main(argv=None):
     i.add_argument("--mode", default="FULL", choices=["FULL", "PLAN-ONLY"])
     i.add_argument("--task-branch"); i.add_argument("--parent")
     i.add_argument("--review-limit", type=int, default=3); i.add_argument("--qa-limit", type=int, default=3)
-    i.add_argument("--review-extensions", type=int, default=1)
+    i.add_argument("--review-extensions", type=int, default=1); i.add_argument("--autopilot", action="store_true")
     s_ = sp.add_parser("set"); s_.add_argument("dir")
     s_.add_argument("--lane", choices=["S", "M", "L", "TBD"]); s_.add_argument("--stage", choices=STAGES)
     s_.add_argument("--status", choices=STATUSES); s_.add_argument("--next"); s_.add_argument("--mode", choices=["FULL", "PLAN-ONLY"])
     s_.add_argument("--title"); s_.add_argument("--task-branch"); s_.add_argument("--base-commit"); s_.add_argument("--pr")
     s_.add_argument("--review-limit", type=int); s_.add_argument("--review-extensions", type=int)
+    s_.add_argument("--autopilot", choices=["on", "off"])
+    dc = sp.add_parser("decide"); dc.add_argument("dir"); dc.add_argument("kind")
+    for x in ("--question", "--choice", "--why"):
+        dc.add_argument(x, required=True)
+    dc.add_argument("--from", dest="source")
     l = sp.add_parser("log"); l.add_argument("dir"); l.add_argument("stage", choices=STAGES); l.add_argument("artifact"); l.add_argument("result", choices=RESULTS)
     b = sp.add_parser("bump"); b.add_argument("dir"); b.add_argument("counter", choices=["review", "qa", "reissue"])
     w = sp.add_parser("wo"); w.add_argument("dir"); w.add_argument("wo")
@@ -205,7 +228,7 @@ def main(argv=None):
             sys.exit(f"tempo_state: {d}/state.json exists; resume the task instead")
         d.mkdir(parents=True, exist_ok=True)
         st = new_state(a.task, a.flow, a.title, a.base_branch, a.base_commit, a.task_branch, a.mode,
-                       a.parent, a.review_limit, a.qa_limit, a.review_extensions)
+                       a.parent, a.review_limit, a.qa_limit, a.review_extensions, a.autopilot)
         st["next"] = "Run TRIAGE"
         save(d, st); print(f"STATE: {d}/state.md  STAGE: TRIAGE"); return 0
 
@@ -224,6 +247,7 @@ def main(argv=None):
         if a.base_commit: st["base_commit"] = a.base_commit
         if a.review_limit is not None: st["counters"]["review_limit"] = a.review_limit
         if a.review_extensions is not None: st["counters"]["review_extensions"] = a.review_extensions
+        if a.autopilot: st["autopilot"] = a.autopilot == "on"
         if a.status == "DONE" or a.stage == "DONE":
             st["stage"], st["status"] = "DONE", "DONE"
     elif a.cmd == "log":
@@ -264,6 +288,10 @@ def main(argv=None):
             st["waiting"], st["status"] = a.file, "WAITING-ON-JORGE"
         else:
             sys.exit("tempo_state: wait needs a file or --clear")
+    elif a.cmd == "decide":
+        st.setdefault("decisions", []).append({"at": now(), "kind": a.kind, "question": a.question,
+                                               "choice": a.choice, "why": a.why, "from": a.source})
+        (d / "decisions.md").write_text(render_decisions(st), encoding="utf-8")
     elif a.cmd == "agent":
         if a.action == "start":
             if not (a.label and a.output):

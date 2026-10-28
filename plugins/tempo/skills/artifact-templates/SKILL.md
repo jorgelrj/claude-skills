@@ -24,6 +24,7 @@ Every artifact follows the `document-standard` skill: structured markdown in the
 | `plan.md` | `plan.md` | orchestrator (single repo), architect (workspace) | Jorge (gate), child tasks |
 | `tracker.md` | none, generated | `tempo_state.py tracker` | Jorge (workspace tasks) |
 | `prompts/<label>.md` | none | orchestrator | orchestrator after a restart |
+| `decisions.md` | none, generated | `tempo_state.py decide` | Jorge, copied into the PR body (autopilot only) |
 | `task.md` | `task.md` | triage | everyone downstream |
 | `context.md` | `context.md` | orchestrator, merged from scout reports | architect |
 | `hypotheses.md` | `hypotheses.md` | investigator | reproducer |
@@ -60,6 +61,7 @@ Every artifact follows the `document-standard` skill: structured markdown in the
     qa-r1.md
     pr.md
     esc-1.md
+    decisions.md        (autopilot only)
   worktrees/
     T-042-wo-01/        (git worktree, removed after integration)
 ```

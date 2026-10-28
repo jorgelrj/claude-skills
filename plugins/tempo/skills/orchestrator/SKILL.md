@@ -1,6 +1,6 @@
 ---
 name: orchestrator
-description: The TEMPO stage machine. Runs a task from Triage to an open pull request (or, in plan-only mode, to a reviewed plan) by calling one TEMPO agent per stage, checking each handoff document, and stopping only at Jorge's gates and escalations. Handles single-repo tasks and workspace tasks that span several repos. Use when /tempo:feature, /tempo:bug, /tempo:plan or /tempo:resume runs, or when asked to run a task "the TEMPO way".
+description: The TEMPO stage machine. Runs a task from Triage to an open pull request (or, in plan-only mode, to a reviewed plan) by calling one TEMPO agent per stage, checking each handoff document, and stopping only at Jorge's gates and escalations (or, on autopilot, only at the few that need Jorge). Handles single-repo tasks and workspace tasks that span several repos. Use when /tempo:feature, /tempo:bug, /tempo:plan or /tempo:resume runs, or when asked to run a task "the TEMPO way".
 ---
 
 # TEMPO orchestrator
@@ -23,6 +23,7 @@ Nothing travels between agents except files in `.tempo/<task-id>/`.
 
 1.0 Mode. The mode is PLAN-ONLY when the command is `/tempo:plan`, or the request starts with `--plan-only`. Otherwise it is FULL. Remove the flag from the request text.
 1.0.1 Lane override. IF the request carries `--lane S`, `--lane M`, `--lane L` or `--quick` (= `--lane S`), THEN remove the flag from the request text and pass the lane to triage as the override (triage-rubric §3.6). Explore does not re-size an overridden lane.
+1.0.2 Autopilot. IF the request carries `--auto` (or `--autopilot`), THEN autopilot is ON. IF it carries `--no-auto`, THEN it is OFF. Otherwise it is `task.autopilot` from config (1.3). Remove the flag from the request text. Pass `--autopilot` to `init` (1.9) when ON, and tell Jorge in the route-chosen line: "Autopilot: ON. I stop only for <list from 4.5.1>." Section 4.5 says what changes.
 
 1.1 Find the repository.
   - 1.1.1 IF the working directory is inside a git repository, THEN that repository is the target.
@@ -32,12 +33,12 @@ Nothing travels between agents except files in `.tempo/<task-id>/`.
 1.3 Run `<cfg> resolve --repo <repo>` once. Its `config` object is this run's config. Every later "from config" means a value from it. Do not read config files by hand.
 1.3.1 Project docs. Run `<cfg> docs --repo <repo>` once. It prints the project's documentation files (config `docs:`), index files first. Save the list as `.tempo/<task-id>/docs.txt` and pass that path to every scout, the architect, every reviewer and QA. IF it prints nothing, THEN pass NIL. Section 8 says how each agent uses it.
 1.3.2 Standing decisions. `task.standing_decisions` from config are answers Jorge has already given (a delivery order, a scoping rule). Pass them to triage. Do not raise GATE-CLARIFY for a question one of them answers: apply it, and name it in the progress line.
-1.4 IF `commands.test` is null, THEN detect it from the repo (package.json scripts, pubspec.yaml, Makefile, pyproject.toml, go.mod, Cargo.toml, pom.xml, build.gradle). Record what you used in `state.md` §1. Offer once to write it into `.tempo/config.yaml`.
+1.4 IF `commands.test` is null, THEN detect it from the repo (package.json scripts, pubspec.yaml, Makefile, pyproject.toml, go.mod, Cargo.toml, pom.xml, build.gradle). Record what you used in `state.md` §1. Offer once to write it into `.tempo/config.yaml` (on autopilot, do not offer: record it in `decisions.md` with `<state> decide`).
 1.5 Ensure `.tempo/` is listed in `.git/info/exclude` (`git rev-parse --git-path info/exclude`). This keeps artifacts, config and worktrees out of the diff without touching tracked files.
 1.6 Task ID. IF `task.id` is `ticket` and the request contains a key matching `task.ticket_pattern`, THEN the task ID is that key (`AV-5696`). Otherwise it is `T-` plus the next free 3-digit number in `.tempo/`. IF `.tempo/<task-id>/` already exists, THEN resume it as `/tempo:resume` does instead of starting over.
 1.7 Branch names. Run `<cfg> names --repo <repo> --task <task-id> --ticket <ticket or task-id>`. Use these names exactly. Never invent a branch name.
 1.8 Commands. For each command an agent needs, run `<cfg> cmd <name> --repo <repo>` and pass the printed line as is. It exports the configured env (JDK, PATH) first.
-1.9 Create the state: `<state> init .tempo/<task-id> --task <task-id> --flow <FEATURE|BUG> --mode <mode> --title "<request, one line>" --base-branch <git.base_branch> --base-commit <hash of its head> --task-branch <task branch> --review-limit <limits.review_rounds> --review-extensions <limits.review_extensions> --qa-limit <limits.qa_rounds>`. Add `--parent <workspace task folder>` for a child task (section 6).
+1.9 Create the state: `<state> init .tempo/<task-id> --task <task-id> --flow <FEATURE|BUG> --mode <mode> --title "<request, one line>" --base-branch <git.base_branch> --base-commit <hash of its head> --task-branch <task branch> --review-limit <limits.review_rounds> --review-extensions <limits.review_extensions> --qa-limit <limits.qa_rounds>`. Add `--parent <workspace task folder>` for a child task (section 6), and `--autopilot` when autopilot is ON (1.0.2).
 
 ## 2 After every stage
 
@@ -54,9 +55,9 @@ Nothing travels between agents except files in `.tempo/<task-id>/`.
 Run the stages the Task Card's ROUTE lists, in this order.
 
 ### 3.1 TRIAGE (all flows)
-- Call `triage` with: Jorge's request verbatim, the flow hint (feature or bug), the task folder, the template path, the rubric path.
+- Call `triage` with: Jorge's request verbatim, the flow hint (feature or bug), the task folder, the template path, the rubric path, and whether autopilot is ON.
 - Output: `task.md`.
-- IF §6 QUESTIONS FOR JORGE is not NIL, THEN raise GATE-CLARIFY (section 4). On the answer, call `triage` again to amend `task.md`.
+- IF §6 QUESTIONS FOR JORGE is not NIL, THEN raise GATE-CLARIFY (section 4). On the answer, call `triage` again to amend `task.md`. On autopilot, follow 4.5: ask only the questions marked NEEDS-JORGE, and take the recommendation for the rest.
 
 ### 3.2 EXPLORE (feature, M and L)
 - L lane: call 3 `scout` agents in parallel, in one message, with lenses `CODE-PATHS`, `DATA-MODEL`, `PATTERNS-AND-TESTS`. M lane: call `CODE-PATHS` and `PATTERNS-AND-TESTS` only. Pass `task.md` and `docs.txt`.
@@ -100,7 +101,7 @@ Run the stages the Task Card's ROUTE lists, in this order.
 ### 3.8 BUILD (all)
 For each wave:
 1. For each order, get its branch name with `<cfg> names --task <task-id> --wo NN` and create a worktree: `git worktree add <git.worktree_root>/<task-id>-wo-NN -b <work-order branch> <start>`. Wave 1 starts from the base commit (bug flow: from the repro branch). Later waves start from the task branch.
-2. Prepare it: run the lines `<cfg> setup --worktree <path>` prints, in order. IF a line fails, THEN stop that order and raise HARD-TO-UNDO only if the fix needs a secret or a new dependency; otherwise fix the config with Jorge's yes.
+2. Prepare it: run the lines `<cfg> setup --worktree <path>` prints, in order. IF a line fails, THEN stop that order and raise HARD-TO-UNDO only if the fix needs a secret or a new dependency; otherwise fix the config with Jorge's yes (on autopilot, fix `.tempo/config.yaml` yourself and record it with `<state> decide`).
 3. Write the worktree path and branch into the order header, and run `<state> wo <dir> WO-NN --worktree <path> --branch <branch> --status ISSUED`.
 4. Build: call `builder` in mode BUILD for every order in the wave, in parallel, in one message. Orders of the next wave that are already issued: call their builders in mode PREFLIGHT in the same message (4.1). Max parallel builders comes from config. There is no separate readback: the builder reads the order first and stops before its first edit if anything is unclear (WO §6).
 4.1 PREFLIGHT gets the order, the task branch name and the path of each order it depends on. It reads the order and the code at the task branch head, edits nothing, and replies READY or BLOCKED with questions. Answer its questions (step 7) while the current wave builds. When the wave integrates, create the order's worktree and continue the same builder agent in mode BUILD.
@@ -155,6 +156,7 @@ For each wave:
 ### 3.12 SHIP (all)
 - Write `pr.md` from the template, using: Task Card §5, Spec §1 (or Repro §4 and §6, or the plan slice and plan §8 for a child task without a Spec), QA §2 (NIL when QA did not run), Findings §5, the integration diff stat.
 - Assumptions SHALL appear at the top of the PR body, before the summary list.
+- Autopilot decisions. IF `decisions.md` lists any decision, THEN copy each line to `pr.md` §8, and put them in the PR body right after the assumptions, under a heading such as "Decisions TEMPO made on autopilot", in `pr.language`. Jorge reviews them there. Otherwise §8 is NIL and the PR body has no such heading.
 - `pr.md` is the internal record. The PR body is written from it in `pr.language`, following the repo's PR template (`pr.body_template`, else `.github/pull_request_template.md` if present). Assumptions stay at the top.
 - PR title: `pr.title` with `{type}` and `{summary}` filled, in `pr.language`. Check the repo's CI files for a title rule and follow it.
 - Fold fixes. IF `git.fold_fixes` is true and `git log --format=%s <base>..<task branch>` lists a subject starting `fixup!`, THEN call `integrator` in mode FOLD with the base commit and the typecheck, build and lint commands. On `FOLD: DONE`, run `<state> log <dir> SHIP integration.md PASS` and use the new head. On `FOLD: SKIPPED`, ship the branch as it is and add one line to `pr.md` §5 with the reason. Fold only before the first push; never rewrite a pushed branch.
@@ -162,7 +164,7 @@ For each wave:
 - IF pushing or `gh` fails, THEN stop, keep the branch local, and give Jorge the exact commands.
 - Remove the task's worktrees with `git worktree remove`.
 - IF `git.delete_merged_local_branches` is true, THEN delete the local work-order and repro branches with `git branch -d` (never `-D`, never a remote branch). Keep the task branch.
-- Raise GATE-PR: give Jorge the PR link and a 3-line summary. Jorge merges. TEMPO never merges.
+- Raise GATE-PR: give Jorge the PR link and a 3-line summary. On autopilot, add one line: "<n> decisions made on autopilot, listed in the PR body." Jorge merges. TEMPO never merges.
 - `<state> set <dir> --pr <url> --stage DONE`. IF the task has a parent, THEN run `<state> tracker <parent dir>`.
 
 ### 3.13 PLAN-ONLY stop (single repo)
@@ -178,7 +180,7 @@ For each wave:
 
 ## 4 Gates and escalations
 
-4.1 The only moments to stop for Jorge:
+4.1 The only moments to stop for Jorge (on autopilot, only those 4.5.1 keeps):
 
 | Kind | When | What Jorge gets |
 |---|---|---|
@@ -203,6 +205,40 @@ For each wave:
 4.3 On Jorge's answer, record it in `esc-N.md` §6 Answer, run `<state> wait <dir> --clear` and continue from `state.md` §7 Next action.
 4.4 GATE-PLAN needs no `esc-N.md`: `plan.md` is the question. Run `<state> wait <dir> plan.md`. IF Jorge answers open decisions, THEN call `architect` in AMEND mode on `plan.md` (and `spec.md`) first.
 
+### 4.5 Autopilot
+
+When autopilot is ON (1.0.2, or `state.json` `autopilot` on resume), TEMPO answers its own questions with its own recommendation and stops only where Jorge's input is needed.
+
+4.5.1 These still stop, exactly as 4.2 says:
+
+| Kind | Why it still needs Jorge |
+|---|---|
+| GATE-CLARIFY, only for a question marked NEEDS-JORGE | the Outcome is missing, or no option can be found in the code: there is nothing to recommend from |
+| NO-REPRO | the next step needs details only Jorge or the user has |
+| BEHAVIOUR-CHANGE | it changes what users get; that is Jorge's call |
+| OUT-OF-ORDER-DECISION | it changes the goal |
+| HARD-TO-UNDO | a new dependency, a migration on real data, secrets, deploys, force-push, deleting branches |
+| FIX-CHAIN, the second one in a task | the first re-spec did not hold; another automatic loop would hide that |
+| Any option without a recommendation | an escalation, Spec §1 or `plan.md` open decision that names no recommended option |
+| GATE-PR | the end of the run, not a question: Jorge reviews the decisions and merges |
+
+4.5.2 These no longer stop. Accept the recommendation, record it (4.5.3) and continue at once:
+
+| Kind | What autopilot does |
+|---|---|
+| GATE-CLARIFY, questions not marked NEEDS-JORGE | take each question's recommended option; call `triage` to amend `task.md` with it as an assumption |
+| GATE-SPEC | approve the Spec; each open decision in §1 takes its recommended option. Call `architect` in AMEND mode only when a decision's recommendation is not already what the Spec says |
+| GATE-PLAN, FULL mode (workspace tasks) | approve the plan; each open decision takes its recommendation, as GATE-SPEC |
+| LOOP-LIMIT | take the option 4.2 step 1.1 recommends |
+| FIX-CHAIN, the first one in a task | take the option 4.2 step 1.1 recommends |
+| The small asks in 1.4 and 3.8 step 2 | do the recommended thing and record it |
+
+4.5.3 Record every accepted stop. For an escalation, write `esc-N.md` as 4.2 step 1 says, then fill §6 Answer with "Autopilot: accepted (<letter>), <date>" instead of waiting. Then run `<state> decide <dir> <KIND> --question "<the question>" --choice "<the option taken>" --why "<the recommendation's reason>" --from <esc-N.md, spec.md §1 or plan.md>`. One `decide` per open decision. It writes `decisions.md`, which SHIP copies into the PR body (3.12). Do not run `<state> wait` for an accepted stop.
+4.5.4 Progress stays one line per milestone (2.6). Do not message Jorge about an accepted stop. The GATE-PR message counts them.
+4.5.5 PLAN-ONLY mode still ends at GATE-PLAN: the plan is the deliverable. Autopilot stays recorded in the state, so `/tempo:resume <task-id> build` continues on autopilot and accepts the plan's recommendations there.
+4.5.6 Child tasks and split slices (sections 6 and 9) inherit the parent's autopilot: pass `--autopilot` to their `init`.
+4.5.7 Autopilot never widens what TEMPO may do. 5.6 holds: never merge, never push to the base branch, never force-push.
+
 ## 5 Rules for the orchestrator
 
 5.1 Give each agent only the files its stage reads (see the index in the artifact-templates skill). Do not paste conversation history into an agent prompt.
@@ -213,13 +249,13 @@ For each wave:
 5.4 Do not write production code yourself. Builders write code. You MAY fix a document's structure (§2.2).
 5.5 Do not skip a stage the route lists, except the skips this skill names (lane, re-size, verifier with no candidates). To skip any other, raise an escalation.
 5.6 Never merge the PR. Never push to the base branch. Never force-push.
-5.7 Keep Jorge's messages short: one line per milestone (2.6), one message per gate.
+5.7 Keep Jorge's messages short: one line per milestone (2.6), one message per gate. On autopilot, no message for an accepted stop (4.5.4).
 5.8 Models. The frontmatter model is the default for L. Pass the `model` override this skill names for S and M stages. Never override a model upward.
 
 ## 6 Workspace tasks (several repos)
 
 6.1 A workspace task starts when the working directory is a workspace root (1.1.2). Its folder is `<workspace>/.tempo/<task-id>/`. Run 1.0, 1.2 and 1.3 with `--repo <workspace>`, and 1.6 for the ID.
-6.2 `<state> init <workspace>/.tempo/<task-id> --task <task-id> --flow WORKSPACE --mode <mode> --title "<request>" --base-branch <defaults.git.base_branch> --base-commit NIL --qa-limit <limits.qa_rounds>`.
+6.2 `<state> init <workspace>/.tempo/<task-id> --task <task-id> --flow WORKSPACE --mode <mode> --title "<request>" --base-branch <defaults.git.base_branch> --base-commit NIL --qa-limit <limits.qa_rounds>`, plus `--autopilot` when ON.
 6.3 TRIAGE: call `triage` with `Scope: WORKSPACE` and the output of `<cfg> repos`. Raise GATE-CLARIFY as in 3.1.
 6.4 EXPLORE: run `<cfg> docs --repo <path>` for each repo the Task Card names and save the lists under `<workspace>/.tempo/<task-id>/docs/<repo>.txt`. Call one `scout` with lens CROSS-REPO per repo, with its docs list, in parallel, at most `limits.max_parallel_builders` at a time. Merge their replies into `context.md`, one block of §2 lines per repo, copy every CONTRACTS line into §3 and every BEHAVIOUR line into §8. The architect copies the §8 lines each slice consumes into the slice, so the child's scouts and spec start from them.
 6.5 PLAN: call `architect` in mode PLAN. Output: `plan.md`. Check it. Each slice SHALL carry its criteria text, production files, test files, pattern and test command (template §3), because the child builds from it. Then raise GATE-PLAN, always. In PLAN-ONLY mode, `<state> set <dir> --stage PLANNED` first and stop at the gate.
@@ -231,7 +267,7 @@ For each wave:
     - 6.6.4.1 Slice size S or M with no open decision in plan §7 for it: no child TRIAGE, EXPLORE or SPEC. Run `<state> set <child dir> --lane <slice size>`, then HANDOFF from the plan slice and the parent `context.md` block for this repo (3.7), then BUILD to SHIP. The criteria source for review and QA is the plan slice. QA runs only for M.
     - 6.6.4.2 Slice size L, or an open decision: run the full route from TRIAGE. The request is the slice line; triage also gets the parent `plan.md` and `task.md`.
     - 6.6.4.3 Do not re-size a slice in the child. The plan sized it with the cross-repo view, and Jorge approved the plan.
-  - 6.6.5 Child gates (GATE-SPEC on L lanes, escalations) still stop for Jorge.
+  - 6.6.5 Child gates (GATE-SPEC on L lanes, escalations) still stop for Jorge, unless autopilot accepts them (4.5).
   - 6.6.6 After every child stage, run `<state> tracker <dir>`. `tracker.md` is the cross-repo status; never write a tracker by hand.
   - 6.6.7 At the child's SHIP, the PR body lists the PR links of its blocks-merge sources (from `tracker.md`) under a "Depends on" line, in `pr.language`. Record the link with `<state> set <child dir> --pr <url>`. Children run in parallel, so a source's PR MAY open after this one: when it does, add its link to this PR body with `gh pr edit`.
   - 6.6.8 Run children in parallel, up to `limits.max_parallel_builders` at a time, as 6.6.2 allows. Drive each child's stages from this session; start the agents of different children in the same message when they are ready together. IF a child needs a change in another child's repo, THEN raise OUT-OF-ORDER-DECISION: amend that child's plan slice, or add a slice.

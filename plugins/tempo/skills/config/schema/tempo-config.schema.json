@@ -269,6 +269,10 @@
             "type": "string"
           },
           "description": "Decisions Jorge has already made for this project, one per line (for example a delivery order or a scoping rule). Triage and the orchestrator apply them instead of raising GATE-CLARIFY, and record which one they applied."
+        },
+        "autopilot": {
+          "type": "boolean",
+          "description": "Run every task as if --auto were given: TEMPO accepts its own recommendation at each gate and escalation, logs it in decisions.md, and stops only for the questions orchestrator §4.5 keeps. --no-auto on a command turns it off for that task."
         }
       }
     },

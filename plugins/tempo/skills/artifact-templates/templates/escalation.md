@@ -18,4 +18,4 @@ Raised by: {{agent}} · From: {{artifact that raised it}}
 {{a}}, because {{reason}}. Reply "yes" to accept.
 
 ## 6 Answer
-{{NIL until Jorge answers; then his answer, verbatim, and the date}}
+{{NIL until Jorge answers; then the answer, verbatim, and the date. On autopilot: "Autopilot: accepted (<letter>), <date>"}}

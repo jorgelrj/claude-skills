@@ -22,3 +22,6 @@ Issued by: orchestrator
 
 ## 7 Artifacts
 - .tempo/{{task-id}}/
+
+## 8 Autopilot decisions
+- {{D-n | kind | question | choice | why, copied from decisions.md}}, or NIL

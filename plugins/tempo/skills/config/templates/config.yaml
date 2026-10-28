@@ -56,3 +56,4 @@ task:
   id: ticket                    # ticket | sequence
   ticket_pattern: "[A-Z][A-Z0-9]+-\\d+"
   tracker: none                 # jira | github | linear | none
+  # autopilot: true             # accept TEMPO's own recommendations; stop only where orchestrator §4.5 says

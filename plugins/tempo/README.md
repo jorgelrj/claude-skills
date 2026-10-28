@@ -36,6 +36,7 @@ After editing files here, restart Claude Code (Option A) or run `/plugin marketp
 | `/tempo:feature --quick <request>` | Lane S: one Work Order from the Task Card → Build → correctness review → draft PR. `--lane S\|M\|L` sets any lane; `/tempo:bug` takes the same flags |
 | `/tempo:bug <report>` | Bug flow: [Investigate] → Reproduce (failing test) → Root cause → Fix → Integrate → Review + sibling sweep → QA → PR |
 | `/tempo:plan <request>` | Plan only: Triage → Explore → Spec → Work Orders (or the cross-repo plan), then stop at GATE-PLAN. Also `/tempo:feature --plan-only ...` |
+| `/tempo:feature --auto <request>` | Autopilot: TEMPO takes its own recommendation at every gate and escalation and stops only where Jorge is truly needed (see below). Works on `/tempo:bug`, `/tempo:plan` and `/tempo:resume` too; `--no-auto` turns it off |
 | `/tempo:resume <task-id> [build \| answer]` | Continue a task from its last artifact, answer the question it is waiting on, or `build` a planned task |
 | `/tempo:init [repo\|workspace] [notes]` | Write or update the TEMPO config for a repo or a multi-repo workspace, detected from the code |
 
@@ -92,6 +93,18 @@ See `skills/config/SKILL.md` for every key and subcommand. A legacy `.tempo/conf
 Three gates: clarify a vague task, approve the spec (L lane, or M with open decisions), review and merge the PR.
 Six escalations: bug won't reproduce, fix changes intended behaviour, a builder decision that changes the goal, a review or QA loop past 3 rounds, a fix chain (two review rounds in a row whose findings were caused by the last fix), anything hard to undo.
 Every stop comes with a recommended answer, so "yes" is always enough.
+
+### Autopilot (`--auto`, 0.9.0)
+
+With `--auto` on a command (or `task.autopilot: true` in config), TEMPO says "yes" for Jorge wherever its recommendation is grounded, and keeps going. It still stops for:
+
+- a clarify question triage marks NEEDS-JORGE (the outcome is missing, or nothing in the code gives an option to recommend);
+- a bug that won't reproduce, a fix that changes intended behaviour, a builder decision that changes the goal;
+- anything hard to undo (new dependency, data migration, secrets, deploys, force-push, deleting branches);
+- a second fix chain in the same task, and any open decision with no recommended option;
+- the PR, which Jorge reviews and merges as always.
+
+Spec approval, the workspace plan, clarify questions with a recommendation, loop limits and the first fix chain are accepted on their recommendation. Each one is logged with `tempo_state.py decide` into `.tempo/<task-id>/decisions.md`, and SHIP copies the list into the PR body under the assumptions, so Jorge reviews them at the PR. `/tempo:plan --auto` still stops at the plan (the plan is the deliverable) and remembers autopilot for `/tempo:resume <task-id> build`.
 
 ## Layout
 
