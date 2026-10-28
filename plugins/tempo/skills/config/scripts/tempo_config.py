@@ -446,7 +446,7 @@ def worktree_gaps(repo, cfg):
 
 # ---------- platform targets ----------
 
-TEST_GLOBS = ["**/test/**", "**/tests/**", "**/__tests__/**", "**/spec/**", "*_test.*", "*.test.*", "*.spec.*", "test_*.py"]
+TEST_GLOBS = ["*_test.*", "*.test.*", "*.spec.*", "test_*.py", "*Test.java", "*Test.kt"]  # files a runner runs
 PACKAGE_MARKERS = ["pubspec.yaml", "package.json", "go.mod", "Cargo.toml", "pyproject.toml", "pom.xml", "build.gradle", "build.gradle.kts"]
 
 
@@ -491,6 +491,9 @@ def scoped_runs(tg, changed, files):
         if is_test(rel, globs):
             if rel in present:
                 picked.setdefault(pkg, set()).add(rel)
+            continue
+        if re.search(r"(^|/)(test|tests|__tests__|spec|integration_test)/", rel):
+            unmapped.append(rel)  # a helper or fixture many tests load: no single test mirrors it
             continue
         stem = rel.rsplit("/", 1)[-1].split(".", 1)[0]
         mirrors = [t for c in (f"{stem}_test", f"test_{stem}", stem) for t in tests_by_stem.get(c, [])

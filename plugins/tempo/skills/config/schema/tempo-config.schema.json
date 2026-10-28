@@ -575,7 +575,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Globs that mark a file as a test, for scoped runs. Default: test/, tests/, __tests__/, spec/ folders and *_test.*, *.test.*, *.spec.*, test_*.py."
+            "description": "Globs for the test files a runner runs, matched against the path or the file name, for scoped runs. Default: *_test.*, *.test.*, *.spec.*, test_*.py, *Test.java, *Test.kt. Other changed files in test folders (helpers, fixtures) are listed as NO-TESTS."
           },
           "package_markers": {
             "type": "array",

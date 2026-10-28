@@ -201,6 +201,8 @@ Measured on pod1um after 0.8.0 (T-008 to T-014, 28 Oct): seven PRs with no revie
 - **Tests that never run.** The correctness lens flags a new test that no configured command or target runs (a `@TestOn('browser')` file with no Chrome target).
 - **State tidy-up.** A stage that redoes its artifact keeps one log entry; DONE clears agents left in flight; an order rebuilt after DONE shows its runs separately.
 
+0.10.1: a scoped run picks only files a runner runs (`*_test.*`, `*.test.*`, `*.spec.*` ...); a changed helper or fixture in a test folder is listed as NO-TESTS instead of being passed to the runner.
+
 Known cost: a mirror-name match misses tests named differently from their source; those changes show as `# NO-TESTS` and rely on the order's own verification.
 
 ## How it runs inside Claude Code
