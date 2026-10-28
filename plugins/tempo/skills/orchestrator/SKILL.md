@@ -31,6 +31,7 @@ Nothing travels between agents except files in `.tempo/<task-id>/`.
 1.2 Run `<cfg> check --repo <repo>`. IF it prints FAIL, THEN show Jorge the findings and stop. IF it warns about a legacy `config.md`, THEN tell Jorge once, with the migrate command.
 1.3 Run `<cfg> resolve --repo <repo>` once. Its `config` object is this run's config. Every later "from config" means a value from it. Do not read config files by hand.
 1.3.1 Project docs. Run `<cfg> docs --repo <repo>` once. It prints the project's documentation files (config `docs:`), index files first. Save the list as `.tempo/<task-id>/docs.txt` and pass that path to every scout, the architect, every reviewer and QA. IF it prints nothing, THEN pass NIL. Section 8 says how each agent uses it.
+1.3.2 Standing decisions. `task.standing_decisions` from config are answers Jorge has already given (a delivery order, a scoping rule). Pass them to triage. Do not raise GATE-CLARIFY for a question one of them answers: apply it, and name it in the progress line.
 1.4 IF `commands.test` is null, THEN detect it from the repo (package.json scripts, pubspec.yaml, Makefile, pyproject.toml, go.mod, Cargo.toml, pom.xml, build.gradle). Record what you used in `state.md` §1. Offer once to write it into `.tempo/config.yaml`.
 1.5 Ensure `.tempo/` is listed in `.git/info/exclude` (`git rev-parse --git-path info/exclude`). This keeps artifacts, config and worktrees out of the diff without touching tracked files.
 1.6 Task ID. IF `task.id` is `ticket` and the request contains a key matching `task.ticket_pattern`, THEN the task ID is that key (`AV-5696`). Otherwise it is `T-` plus the next free 3-digit number in `.tempo/`. IF `.tempo/<task-id>/` already exists, THEN resume it as `/tempo:resume` does instead of starting over.
@@ -43,9 +44,10 @@ Nothing travels between agents except files in `.tempo/<task-id>/`.
 2.1 Run the checker on the artifact the stage wrote.
 2.2 IF it FAILS, THEN fix the structure yourself (add a missing heading with NIL, remove a leftover placeholder) and continue. Send it back to the agent only when a section the next stage needs is missing its content. Allow 1 return.
 2.3 Do not re-read artifacts for wording. Read only what the next step needs from them.
-2.5 Update the state with `<state>` only: `log <dir> <STAGE> <artifact> <PASS|FAIL|BLOCKED>`, then `set <dir> --stage <next stage> --next "<exact next step>"`. Use `bump` for loop counters, `wo` for Work Orders, `wait` for escalations, `set --lane` after triage. Never edit `state.md` or `state.json` by hand; never use `sed` on them.
+2.5 Update the state with `<state>` only: `log <dir> <STAGE> <artifact> <PASS|FAIL|BLOCKED>`, then `set <dir> --stage <next stage> --next "<exact next step>"`. `log` records the stage's start and end, removes the agent that wrote the artifact from §8, and clears Next action, so always follow it with `set --next`. Use `bump` for loop counters, `wo` for Work Orders, `wait` for escalations, `set --lane` after triage. Never edit `state.md` or `state.json` by hand; never use `sed` on them.
 2.6 Progress to Jorge: one line per milestone, not per stage. The milestones are: route chosen (with the lane's time estimate), spec ready, build done, review done, PR open. Report a failure, a re-size or an escalation when it happens. Do not paste the artifact.
 2.7 Agents in flight. Before you start an agent, write its full prompt to `.tempo/<task-id>/prompts/<label>.md`. Right after it starts, run `<state> agent <dir> start <agent id> --label "<label>" --output <its output path> --prompt <prompt file>`. When it replies, run `<state> agent <dir> done <agent id>`. Section 7 uses this list after a restart.
+2.7.1 Write every prompt file with the Write tool. Never write one through a shell heredoc, `echo` or `cat >`: backticks and `$(...)` in the text run as commands.
 
 ## 3 Stages
 
@@ -60,6 +62,7 @@ Run the stages the Task Card's ROUTE lists, in this order.
 - L lane: call 3 `scout` agents in parallel, in one message, with lenses `CODE-PATHS`, `DATA-MODEL`, `PATTERNS-AND-TESTS`. M lane: call `CODE-PATHS` and `PATTERNS-AND-TESTS` only. Pass `task.md` and `docs.txt`.
 - S lane: skip.
 - IF the change calls another service or library whose behaviour decides the result (payments, webhooks, queues, external APIs), or ports existing code, THEN also call a fourth `scout` with lens `CONSUMED-BEHAVIOUR`, in M and L lanes. Pass the services and code to port, with their paths, from `task.md` and the workspace config.
+- Save each scout's reply to `explore/<LENS>.md` as soon as it arrives. IF a scout fails or ends without a reply, THEN start it once more from its saved prompt file. IF it fails again, THEN merge without it and add "Lens <LENS> missing: <error>" to `context.md` §6 Risks.
 - Merge their replies into `context.md` from the template. Remove duplicates. Keep the reason for each file. BEHAVIOUR lines go to §8 Consumed behaviour.
 - Re-size (triage-rubric §3.5), unless Jorge set the lane. Count the production files `context.md` marks CHANGE. IF the lane changes, THEN run `<state> set <dir> --lane <new>` and tell Jorge in one line. A task that drops to S skips SPEC and goes to HANDOFF with `task.md` and `context.md`.
 
@@ -87,20 +90,24 @@ Run the stages the Task Card's ROUTE lists, in this order.
 
 ### 3.7 HANDOFF (all)
 - Call `architect` in mode HANDOFF with `spec.md` (feature) or `repro.md` (bug), or `task.md` and `context.md` when present (feature S lane). Child task of a workspace (section 6): the parent `plan.md` slice and the parent `context.md` block for this repo. S and M lanes: pass `model: sonnet` on the Agent call.
+- Pass `limits.split_orders`, `limits.split_criteria` and `limits.spec_slice_kb` from config.
 - Output: `wo-01.md` ... One order per builder. File scopes (§3 IN) SHALL NOT overlap.
+- IF the architect replies `SPLIT`, THEN follow section 9 instead of 3.8 to 3.12. Tell Jorge in one line how many slices and what each holds.
 - Bug flow: exactly one Work Order. Its criteria are `repro.md` §5. It forbids edits to the reproduction test.
 - Check scope overlap yourself: list every §3 IN path of every order. IF a path appears twice, THEN return to `architect`.
-- Group orders into waves by DEPENDS ON. Wave 1 has no dependencies.
+- Group orders into waves by DEPENDS ON. Wave 1 has no dependencies. A `(start)` dependency puts the order in a later wave. An `(order)` dependency does not: both orders build in the same wave, and the integrator stacks their commits in dependency order.
 
 ### 3.8 BUILD (all)
 For each wave:
 1. For each order, get its branch name with `<cfg> names --task <task-id> --wo NN` and create a worktree: `git worktree add <git.worktree_root>/<task-id>-wo-NN -b <work-order branch> <start>`. Wave 1 starts from the base commit (bug flow: from the repro branch). Later waves start from the task branch.
 2. Prepare it: run the lines `<cfg> setup --worktree <path>` prints, in order. IF a line fails, THEN stop that order and raise HARD-TO-UNDO only if the fix needs a secret or a new dependency; otherwise fix the config with Jorge's yes.
 3. Write the worktree path and branch into the order header, and run `<state> wo <dir> WO-NN --worktree <path> --branch <branch> --status ISSUED`.
-4. Build: call `builder` in mode BUILD for every order in the wave, in parallel, in one message. Max parallel builders comes from config. There is no separate readback: the builder reads the order first and stops before its first edit if anything is unclear (WO §6).
+4. Build: call `builder` in mode BUILD for every order in the wave, in parallel, in one message. Orders of the next wave that are already issued: call their builders in mode PREFLIGHT in the same message (4.1). Max parallel builders comes from config. There is no separate readback: the builder reads the order first and stops before its first edit if anything is unclear (WO §6).
+4.1 PREFLIGHT reads the order and the code at the task branch head, edits nothing, and replies READY or BLOCKED with questions. Answer its questions (step 7) while the current wave builds. When the wave integrates, create the order's worktree and continue the same builder agent in mode BUILD.
 5. Each builder writes `report-NN.md` and commits on its branch.
-6. Scope check, for every order: every path in `git diff --name-only <start>..<branch>` SHALL be in the order's §3 IN. IF a path is not, THEN call `architect` to amend the order and rebuild it.
-7. IF a report is BLOCKED (a question in §6, or a stop condition), THEN call `architect` with the report. The architect amends the order, or raises OUT-OF-ORDER-DECISION when the answer changes the goal. Then rebuild that order; prefer continuing the same builder agent if the Agent tool lets you message it.
+6. Scope check, for every order: every path in `git diff --name-only <start>..<branch>` SHALL be in the order's §3 IN, or be a test file, test double (fake, mock, stub) or fixture in a package that already holds an IN file and that the report lists in §5 Deviations (builder rule). IF any other path is outside IN, THEN call `architect` to amend the order and rebuild it.
+7. IF a report is BLOCKED (a question in §6, or a stop condition), THEN call `architect` with the report and every order not yet built. The architect amends the order, applies the same change to each later order it fits (the same fake, the same missing test, the same file), or raises OUT-OF-ORDER-DECISION when the answer changes the goal. Then rebuild that order; prefer continuing the same builder agent if the Agent tool lets you message it.
+8. Serial chain. IF a wave holds one order and the next wave depends on it, THEN after the scope check fast-forward the task branch to that order's branch yourself (`git merge --ff-only`); its builder already ran the order's verification on that tree. Call the integrator once, after the last wave, with the full test and build commands.
 
 ### 3.9 INTEGRATE (all)
 - Call `integrator` with the reports, branches and the full test and build commands.
@@ -240,3 +247,11 @@ For each wave:
 8.5 QA reads a doc about running or testing the app (a QA harness, a runbook) before it picks its methods.
 8.6 An agent reads only the docs that bear on its task. The list is a map, not a reading assignment.
 
+## 9 Split tasks (one repo, many orders)
+
+9.1 A task splits when the HANDOFF architect replies `SPLIT`: it would issue more than `limits.split_orders` orders, or the Spec has more than `limits.split_criteria` criteria. 0 turns a trigger off. GATE-SPEC has already passed, so a split raises no new gate.
+9.2 The architect writes `plan.md` (Scope: REPO): one slice per group of 1 to 3 orders, chained blocks-start in commit order, each slice with its criteria tags from Spec §3. It writes each slice's orders as `.tempo/<task-id>-s<n>/wo-NN.md`.
+9.3 For each slice, in order: `<state> child <dir> S-<n> --folder .tempo/<task-id>-s<n>`, then 1.7 with `--task <task-id>-s<n> --ticket <the parent's ticket>`, then 1.9 with `--parent`, then `<state> set <child dir> --lane <slice size> --stage BUILD`. The child's route is BUILD, INTEGRATE, REVIEW. Its criteria source is the slice's tags in Spec §3. It has no QA and no PR.
+9.4 Slice 1 starts from the base commit. Slice n starts from slice n-1's task branch as soon as slice n-1 has integrated, so slice n builds while slice n-1 is in review. IF slice n-1's review changes its branch, THEN rebase slice n onto the new head before slice n integrates; a conflict goes back to slice n's builder.
+9.5 Run `<state> tracker <dir>` after every child stage.
+9.6 When the last slice passes review, fast-forward the parent task branch to it. Call the integrator once on the parent with the full test and build commands. Do not run a review over the whole diff: each slice was reviewed. Run QA (3.11) against all of Spec §3, then SHIP (3.12) one PR whose commits keep the slice order.

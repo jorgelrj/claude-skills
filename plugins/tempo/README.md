@@ -105,12 +105,14 @@ agents/
   scout.md         read-only explorer, one lens per instance → merged into context.md
   investigator.md  user feedback → hypotheses.md
   reproducer.md    failing test + root cause → repro.md
-  architect.md     spec.md, then wo-NN.md Work Orders, and amendments
-  builder.md       one Work Order: stop-and-ask check, then test-first build → report-NN.md
+  architect.md     spec.md, then wo-NN.md Work Orders (or stacked slices), and amendments
+  builder.md       one Work Order: preflight, stop-and-ask check, then test-first build → report-NN.md
   integrator.md    merge WO branches, full suite → integration.md
   reviewer.md      one lens: correctness | security | spec | spec-precheck → review/<lens>-rN.md
   verifier.md      drop, dedupe, rank, assign → findings-rN.md
   qa.md            per acceptance criterion, with evidence → qa-rN.md
+hooks/
+  guard_rm.py      asks before rm outside the working directory
 skills/
   orchestrator/              the stage machine the commands run (gates, loops, worktrees, PR, workspaces)
     scripts/tempo_state.py   the only writer of state.json / state.md; tracker for workspace tasks
@@ -134,6 +136,24 @@ It checks structure only: a known title line, every template section present and
 
 Up to 0.5.0 every artifact followed an aviation-style (ICAO) standard: numbered paragraphs, a DEFINITIONS section in every document, AMDT headers and amendment logs, SHALL/SHOULD capitals, a vague-word lint and a separate builder readback pass. Measured on the xipp runs of 24 to 26 Oct 2026 (20 task folders), definitions, numbering and amendment logs were about 24% of all handoff text, readbacks found a real issue in 4 of 34 cases (all plain builder questions), and none of the 41 review findings traced back to wording. 0.6.0 keeps the parts that did work (fixed sections, AC/F tags, concrete paths and commands, PASS/FAIL lines, the spec state model) and drops the rest. The builder now stops before its first edit when the order is unclear, and the orchestrator checks scope from the diff. Evaluation: https://claude.ai/artifact/R9rqkre5FagHwuEvCyVGFE
 
+### Large tasks and builder stops (0.7.0)
+
+Measured on pod1um T-007 (27 Oct 2026, 0.6.0): 8 Work Orders chained one after another took about 3 hours of build, and 6 of 7 builders stopped on scope. Every stop was a test, fake or shared file missing from §3 IN, and none was a misreading, so dropping the readback did not hurt. The same two fakes stopped two orders in a row. On xipp the same plugin ran fast because the workspace flow cut features into per-repo tasks of 1 to 2 orders. 0.7.0 brings that cut to a single repo and removes the stops:
+
+- **Split.** Past `limits.split_orders` orders (default 4) or `limits.split_criteria` criteria (default 30), Handoff cuts the task into stacked slices of 1 to 3 orders (orchestrator §9). Each slice builds and gets its own short review; slice n builds while slice n-1 is in review. One QA and one PR at the end.
+- **Dependents in scope.** Handoff greps for importers, fakes and tests of every type an order changes and puts them in IN. Builders may also edit a test file, test double or fixture in a package they already own without stopping, listed under Deviations; the scope check accepts it.
+- **Scope fixes carry forward.** An amendment after a BLOCKED report is applied to every later order that needs it, in the same architect call.
+- **Preflight.** The next wave's builders check their orders against the code while the current wave builds, so questions are answered before their turn.
+- **Dependency kinds.** `WO-nn (start)` orders build in sequence; `WO-nn (order)` orders build in parallel and the integrator stacks them. A serial chain is fast-forwarded between waves, with one integration at the end.
+- **Spec slices.** When the Spec passes `limits.spec_slice_kb` (default 30), each order carries the terms and design lines it uses.
+- **Feasibility pre-check.** The spec pre-check flags a criterion that needs a file the Spec forbids, and plan items silently dropped.
+- **State.** The stage log records start, end and minutes; work orders show their build time; logging an artifact clears the agent that wrote it and the Next action.
+- **Explore.** Each scout reply is saved to `explore/<LENS>.md` when it arrives; a failed scout is retried once.
+- **Standing decisions.** `task.standing_decisions` in config are answers Jorge has already given; triage applies them instead of asking.
+- **Safety.** A plugin hook (`hooks/guard_rm.py`) asks before any `rm` outside the working directory, except mktemp and `tempo-*` scratch folders. Builders delete only what they made, and the orchestrator writes prompts with the Write tool, never a heredoc.
+
+Known cost: a builder's test-file allowance means two parallel orders may touch the same fake. The integrator resolves the conflict, or returns it to an order.
+
 ## How it runs inside Claude Code
 
 - The main session is the orchestrator. Subagents cannot start other subagents, so the orchestrator starts every agent, including the parallel scouts, builders and reviewers.
@@ -154,4 +174,6 @@ Up to 0.5.0 every artifact followed an aviation-style (ICAO) standard: numbered 
 - Size thresholds in `skills/triage-rubric/SKILL.md` §3.
 - Loop limits, review extensions, the narrow-round size and parallel builder count in `limits:` of the repo or workspace config.
 - Whether S-lane features need QA (currently skipped).
-- Whether dropping the readback pass (0.6.0) lets more scope violations or misreadings through. Watch the orchestrator's scope check and BLOCKED reports in the next runs.
+- Dropping the readback pass (0.6.0): T-007 had no misreadings; its stops were scope-list gaps, which 0.7.0 addresses at Handoff.
+- The split thresholds (`limits.split_orders`, `limits.split_criteria`) and `limits.spec_slice_kb`, after the first split runs.
+- Whether the rm guard prompts too often outside TEMPO runs.

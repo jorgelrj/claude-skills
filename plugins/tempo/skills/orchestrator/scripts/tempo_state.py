@@ -11,14 +11,15 @@ Usage: tempo_state.py <command> <task-dir> [args]
             [--review-extensions N]
   set       <dir> [--lane L] [--stage S] [--status S] [--next TEXT] [--mode M] [--title T]
             [--task-branch B] [--base-commit H] [--pr URL] [--review-limit N] [--review-extensions N]
-  log       <dir> STAGE ARTIFACT PASS|FAIL|BLOCKED   (logging findings-rN.md raises the review count to N)
+  log       <dir> STAGE ARTIFACT PASS|FAIL|BLOCKED   (logging findings-rN.md raises the review count to N;
+                                                   records start and end, closes the agent that wrote ARTIFACT)
   bump      <dir> review|qa|reissue               (exit 1: past the limit, raise LOOP-LIMIT;
                                                    exit 2: past limit + extensions, HARD STOP)
   wo        <dir> WO-NN [--worktree P] [--branch B] [--status S]
   wait      <dir> ESC-FILE | --clear
   agent     <dir> start ID --label L --output PATH [--prompt FILE]
   agent     <dir> done ID
-  child     <dir> REPO --folder DIR            (register a per-repo child task of a workspace task)
+  child     <dir> NAME --folder DIR            (register a child task: a repo of a workspace task, or a slice S-n)
   tracker   <dir>                              (refresh children from their state.json, write tracker.md)
   show      <dir> [--json]
   adopt     <dir>                              (build state.json from a hand-written state.md)
@@ -40,6 +41,30 @@ WO_STATUSES = ["ISSUED", "BUILDING", "DONE", "BLOCKED"]
 
 def now():
     return dt.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M")
+
+
+def minutes(start, end):
+    try:
+        f = "%Y-%m-%d %H:%M"
+        return int((dt.datetime.strptime(end, f) - dt.datetime.strptime(start, f)).total_seconds() // 60)
+    except (TypeError, ValueError):
+        return None
+
+
+def log_line(e):
+    if len(e) == 4:  # entries from before 0.7.0 carry the end time only
+        return " | ".join(e)
+    start, end, stage, artifact, result = e
+    m = minutes(start, end)
+    return f"{start} → {end[11:]} ({m} min) | {stage} | {artifact} | {result}" if m is not None else f"{end} | {stage} | {artifact} | {result}"
+
+
+def wo_line(k, v):
+    took = ""
+    if v.get("started"):
+        m = minutes(v["started"], v.get("finished") or now())
+        took = f" | {v['started'][11:]}, {m} min{'' if v.get('finished') else ' so far'}" if m is not None else ""
+    return f"{k} | {v.get('worktree') or 'TBD'} | {v.get('branch') or 'TBD'} | {v.get('status') or 'ISSUED'}{took}"
 
 
 def load(d):
@@ -73,13 +98,13 @@ def render(s):
         f"Parent: {s.get('parent') or 'NIL'}",
     ] + ([f"Pull request: {s['pr']}"] if s.get("pr") else []))
     section(2, "Stage", [f"Current: {s['stage']}", f"Status: {s['status']}"])
-    section(3, "Stage log", [f"{t} | {st} | {a} | {r}" for t, st, a, r in s["log"]])
+    section(3, "Stage log", [log_line(e) for e in s["log"]] +
+            ([f"{s['stage']} running since {s['stage_since']}"] if s.get("stage_since") and s["status"] == "RUNNING" else []))
     c = s["counters"]
     section(4, "Loop counters", [f"Review rounds: {c['review']} of {c['review_limit']}. Extensions: {c.get('review_extensions', 1)}",
                                  f"QA rounds: {c['qa']} of {c['qa_limit']}",
                                  f"Document re-issues: {c['reissue']}"])
-    section(5, "Work orders", [f"{k} | {v.get('worktree') or 'TBD'} | {v.get('branch') or 'TBD'} | {v.get('status') or 'ISSUED'}"
-                               for k, v in sorted(s["work_orders"].items())])
+    section(5, "Work orders", [wo_line(k, v) for k, v in sorted(s["work_orders"].items())])
     section(6, "Waiting on Jorge", [s["waiting"]] if s.get("waiting") else [])
     section(7, "Next action", [s["next"]] if s.get("next") else [])
     section(8, "Agents in flight", [f"{k} | {v['label']} | {v['output']} | {v.get('prompt') or 'NIL'} | started {v['started']}"
@@ -91,7 +116,7 @@ def render(s):
 
 def tracker(d, s):
     rows = ["# Tracker " + s["task"], "", f"Generated {now()} by tempo_state.py from each child's state.json. Do not edit.", "",
-            "| Repo | Stage | Status | Pull request | Next action |", "|---|---|---|---|---|"]
+            "| Repo or slice | Stage | Status | Pull request | Next action |", "|---|---|---|---|---|"]
     for repo, ch in s["children"].items():
         f = Path(ch["folder"]) / "state.json"
         if f.is_file():
@@ -138,7 +163,7 @@ def adopt(d):
 def new_state(task, flow, title, base_branch, base_commit, task_branch=None, mode="FULL", parent=None,
               review_limit=3, qa_limit=3, review_extensions=1):
     return {"version": 1, "task": task, "flow": flow, "lane": None, "mode": mode, "title": title,
-            "started": now(), "base_branch": base_branch, "base_commit": base_commit,
+            "started": now(), "stage_since": now(), "base_branch": base_branch, "base_commit": base_commit,
             "task_branch": task_branch, "parent": parent, "pr": None, "stage": "TRIAGE", "status": "RUNNING",
             "log": [], "counters": {"review": 0, "review_limit": review_limit, "review_extensions": review_extensions,
                          "qa": 0, "qa_limit": qa_limit, "reissue": 0},
@@ -189,6 +214,8 @@ def main(argv=None):
 
     st = load(d)
     if a.cmd == "set":
+        if a.stage and a.stage != st["stage"]:
+            st["stage_since"] = now()
         for k in ("lane", "stage", "status", "next", "mode", "title", "pr"):
             v = getattr(a, k)
             if v is not None:
@@ -200,7 +227,13 @@ def main(argv=None):
         if a.status == "DONE" or a.stage == "DONE":
             st["stage"], st["status"] = "DONE", "DONE"
     elif a.cmd == "log":
-        st["log"].append([now(), a.stage, a.artifact, a.result])
+        prev = st["log"][-1][-4] if st["log"] else st["started"]  # end of the previous entry
+        st["log"].append([st.get("stage_since") or prev, now(), a.stage, a.artifact, a.result])
+        st["stage_since"] = now()
+        name = Path(a.artifact).name
+        for aid in [k for k, v in st["agents"].items() if Path(v.get("output") or "").name == name]:
+            st["agents"].pop(aid)  # its output is logged, so it is no longer in flight
+        st["next"] = None  # the caller sets the next step; a stale one never survives a log
         m = re.search(r"findings-r(\d+)\.md$", a.artifact)
         if a.stage == "REVIEW" and m:  # the findings file is the round's record; the counter never lags it
             st["counters"]["review"] = max(st["counters"]["review"], int(m.group(1)))
@@ -218,6 +251,12 @@ def main(argv=None):
         cur = st["work_orders"].setdefault(a.wo, {})
         for k in ("worktree", "branch", "status"):
             if getattr(a, k): cur[k] = getattr(a, k)
+        if a.status in ("ISSUED", "BUILDING") and not cur.get("started"):
+            cur["started"] = now()
+        if a.status in ("DONE", "BLOCKED"):
+            cur["finished"] = now()
+        elif a.status:
+            cur.pop("finished", None)
     elif a.cmd == "wait":
         if a.clear:
             st["waiting"], st["status"] = None, "RUNNING"

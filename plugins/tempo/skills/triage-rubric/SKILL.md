@@ -50,6 +50,7 @@ Count production files only. Test files, fixtures and docs do not count toward t
 3.5 Re-size after Explore. IF the Context Map marks 3 production files or fewer as CHANGE, with no schema, design or dependency change, THEN the lane drops to S. IF it marks more than 8, or a schema or design change, THEN it rises to L. The orchestrator records the change with `set --lane`.
 3.6 Lane override. IF Jorge's request carries `--lane S|M|L` or `--quick`, THEN that lane wins over 3.1 to 3.5. `--quick` is lane S. Record the override in §3.3.
 3.7 A workspace task is not sized by its repo count. Each slice is sized on its own repo's change. "Work across several repos" is never by itself a reason for L.
+3.7.1 A large single-repo task is split at Handoff into stacked slices of 1 to 3 Work Orders when it passes `limits.split_orders` orders or `limits.split_criteria` criteria (orchestrator §9). Size it L as usual; do not shrink a task to avoid the split.
 3.8 Time estimate. Record in §3.3 the expected wall-clock time of the chosen lane: S about 10 minutes, M about 25 minutes, L 60 minutes or more. Add 10 minutes per review fix round.
 
 ## 4 Routes
@@ -63,6 +64,7 @@ Count production files only. Test files, fixtures and docs do not count toward t
 | WORKSPACE (request spans repos) | Explore (one CROSS-REPO scout per repo), Plan, Plan gate, one child task per repo (children whose dependencies allow it run in parallel), Joint QA, Ship |
 | CHILD of a workspace task, slice S or M | Handoff (Work Orders from the plan slice and the parent Context Map), Build, Integrate, Review, [QA for M], Ship |
 | CHILD of a workspace task, slice L or with an open decision | the FEATURE or BUG route for its size |
+| SLICE of a split task (orchestrator §9) | Build, Integrate, Review; the parent runs one Integrate, QA and Ship after the last slice |
 
 4.1 Plan-only mode (`/tempo:plan`) runs a route up to and including Handoff (single repo) or the Plan gate (workspace), then stops. The bug route keeps Reproduce and Root cause in plan-only mode: they commit only a test, on the repro branch.
 

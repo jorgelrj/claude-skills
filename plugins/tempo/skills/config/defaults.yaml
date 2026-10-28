@@ -37,7 +37,11 @@ limits:
   qa_rounds: 3
   repro_hypotheses: 3
   repro_minutes: 30
+  split_orders: 4         # more Work Orders than this: HANDOFF splits the task into stacked slices (0 = off)
+  split_criteria: 30      # more criteria than this also splits (0 = off)
+  spec_slice_kb: 30       # Spec larger than this: each order carries the terms and design it needs (0 = off)
 task:
   id: ticket
   ticket_pattern: "[A-Z][A-Z0-9]+-\\d+"
   tracker: none
+  standing_decisions: []  # Jorge's standing answers; applied instead of GATE-CLARIFY

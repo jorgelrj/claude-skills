@@ -14,7 +14,7 @@ Rendered by tempo_state.py from state.json. Do not edit.
 - Status: {{RUNNING | WAITING-ON-JORGE | FAILED | DONE}}
 
 ## 3 Stage log
-- {{YYYY-MM-DD HH:MM}} | {{stage}} | {{artifact}} | {{PASS | FAIL | BLOCKED}}
+- {{start YYYY-MM-DD HH:MM}} → {{end HH:MM}} ({{minutes}} min) | {{stage}} | {{artifact}} | {{PASS | FAIL | BLOCKED}}
 
 ## 4 Loop counters
 - Review rounds: {{0}} of {{3}}
@@ -22,7 +22,7 @@ Rendered by tempo_state.py from state.json. Do not edit.
 - Document re-issues: {{0}}
 
 ## 5 Work orders
-- WO-{{nn}} | {{worktree path}} | {{branch}} | {{ISSUED | BUILDING | DONE | BLOCKED}}
+- WO-{{nn}} | {{worktree path}} | {{branch}} | {{ISSUED | BUILDING | DONE | BLOCKED}} | {{started HH:MM, minutes}}
 
 ## 6 Waiting on Jorge
 - {{ESC-n file, or NIL}}

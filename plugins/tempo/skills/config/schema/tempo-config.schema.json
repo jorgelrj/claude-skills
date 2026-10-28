@@ -211,6 +211,24 @@
           "type": "integer",
           "minimum": 5,
           "maximum": 240
+        },
+        "split_orders": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20,
+          "description": "HANDOFF splits a single-repo task into stacked slices when it would issue more Work Orders than this. 0 turns splitting off."
+        },
+        "split_criteria": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 200,
+          "description": "HANDOFF also splits when the Spec has more acceptance criteria than this. 0 turns this trigger off."
+        },
+        "spec_slice_kb": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 500,
+          "description": "Above this Spec size in KB, each Work Order carries the Spec terms and design bullets it needs, so the builder does not read the whole Spec. 0 turns it off."
         }
       }
     },
@@ -236,6 +254,13 @@
             "linear",
             "none"
           ]
+        },
+        "standing_decisions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Decisions Jorge has already made for this project, one per line (for example a delivery order or a scoping rule). Triage and the orchestrator apply them instead of raising GATE-CLARIFY, and record which one they applied."
         }
       }
     },
