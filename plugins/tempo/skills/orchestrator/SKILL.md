@@ -19,6 +19,7 @@ Nothing travels between agents except files in `.tempo/<task-id>/`.
 0.7 Config script: `<cfg>` is `uv run --quiet <orch>/../config/scripts/tempo_config.py` when `uv` is on PATH, else `python3 <orch>/../config/scripts/tempo_config.py`. The config skill (`<orch>/../config/SKILL.md`) explains the files and every subcommand.
 0.8 State script: `<state>` is `python3 <orch>/scripts/tempo_state.py`. It needs only the Python standard library. It is the only writer of `state.json` and `state.md`. Its docstring lists every subcommand.
 0.9 Baseline script: `<bl>` is `python3 <orch>/scripts/tempo_baseline.py`. Standard library only. It records which platform-target tests already fail on a base commit (`.tempo/baselines/`) and compares a run with them by name. Its docstring lists every subcommand.
+0.10 Branch script: `<br>` is `python3 <orch>/scripts/tempo_branches.py`. Standard library only. It deletes local work-order and repro branches whose work the task branch already holds, and keeps everything else. Its docstring lists the checks.
 
 ## 1 Start of every run
 
@@ -178,7 +179,7 @@ A review that arrives after GATE-PR (an automated reviewer on the PR or the issu
 - Push the task branch and open a pull request against `pr.base`. Draft when `pr.draft` is true. IF `pr.tool` is `none`, THEN push nothing and give Jorge the exact commands.
 - IF pushing or `gh` fails, THEN stop, keep the branch local, and give Jorge the exact commands.
 - Remove the task's worktrees with `git worktree remove`.
-- IF `git.delete_merged_local_branches` is true, THEN delete the local work-order and repro branches with `git branch -d` (never `-D`, never a remote branch). Keep the task branch.
+- IF `git.delete_merged_local_branches` is true, THEN run `<br> prune --repo <repo> --task-branch <task branch> --base-branch <git.base_branch> --glob "<git.work_order_branch with {branch} filled and {nn} as *>" --branch <repro branch>`, adding `--from <FROM hash>` when FOLD ran. Never use `git branch -d` for this: it compares with the base branch, which never has these commits, and always refuses. The script deletes a branch only when the task branch holds its work (merged, same patches, or folded) and keeps the task branch, the base branch, any branch checked out, pushed or tracking a remote, and any branch with commits the task branch lacks. Report the KEPT lines to Jorge in the GATE-PR message only when one says commits are missing; that is work that did not ship.
 - Raise GATE-PR: give Jorge the PR link and a 3-line summary. On autopilot, add one line: "<n> decisions made on autopilot, listed in the PR body." Jorge merges. TEMPO never merges.
 - `<state> set <dir> --pr <url> --stage DONE`. IF the task has a parent, THEN run `<state> tracker <parent dir>`.
 

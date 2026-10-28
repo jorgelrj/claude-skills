@@ -83,7 +83,7 @@
         },
         "delete_merged_local_branches": {
           "type": "boolean",
-          "description": "After SHIP, delete local work-order and repro branches already merged into the task branch. Never touches remote branches."
+          "description": "After SHIP, delete local work-order and repro branches whose work the task branch holds (merged, same patches, or folded before the PR). Branches with unshipped commits, pushed or checked-out branches and the task branch are kept. Never touches remote branches."
         },
         "commit": {
           "type": "object",

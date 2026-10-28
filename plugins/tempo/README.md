@@ -112,7 +112,7 @@ Spec approval, the workspace plan, clarify questions with a recommendation, loop
 .claude-plugin/
   plugin.json                 plugin manifest (listed in the repo root's marketplace.json)
 commands/
-  feature.md  bug.md  plan.md  resume.md  init.md
+  feature.md  bug.md  plan.md  resume.md  init.md  cleanup.md
 agents/
   triage.md        classify, clarity check, size, route → task.md
   scout.md         read-only explorer, one lens per instance → merged into context.md
@@ -129,6 +129,7 @@ hooks/
 skills/
   orchestrator/              the stage machine the commands run (gates, loops, worktrees, PR, workspaces)
     scripts/tempo_state.py   the only writer of state.json / state.md; tracker for workspace tasks
+    scripts/tempo_branches.py  deletes local work-order and repro branches the task branch already holds
   document-standard/         the document shape + scripts/check_doc.py (structure check)
   artifact-templates/        one template per artifact in templates/
   triage-rubric/             clarity questions, task types, S/M/L lanes, routes
@@ -213,6 +214,13 @@ A second machine running TEMPO on pod1um numbers its own tasks, so `tempo/T-004`
 - `check` fails a commit or PR title template that holds a `T-NNN` id. `{scope}` is documented as the code area, never the task id.
 - `task.ticket_pattern` may have a capture group: `(?:#|/issues/)(\d+)` makes GitHub issue `#215` the ticket `215`.
 - Orchestrator 1.6.1, builder 8.0 and the integrator's merge message keep `T-NNN`, `WO-NN`, `ESC-N` and `.tempo/` paths out of branches, commits, PR text, review replies, issues and trackers. SHIP checks the outward text before it pushes.
+
+### Work branches are deleted after SHIP (0.12.0)
+
+SHIP used `git branch -d` on the work-order and repro branches. `-d` compares with the checked-out branch (the base, e.g. `develop`), which never has those commits until the PR merges, so every run ended with "git refused to delete tempo/...-wo-NN" and the branches piled up. 0.12.0:
+- `skills/orchestrator/scripts/tempo_branches.py prune` checks each branch against the task branch itself and deletes it with `-D` only when the task branch holds its work: its tip is merged, every missing commit has an equal patch there (`git cherry`), or it was folded (its tip is in an earlier tip of the task branch, from the reflog or the integrator's new `FOLD ... FROM: <hash>`, whose tree the task branch still has).
+- It never deletes the task or base branch, a branch checked out in a worktree, a branch with an upstream or a same-named remote branch, or a branch with commits the task branch lacks; those print `KEPT` with the reason. Remote branches are never touched.
+- `/tempo:cleanup` sweeps leftovers from earlier runs for every task at DONE: a dry run first, then deletes after Jorge says yes.
 
 ## How it runs inside Claude Code
 
