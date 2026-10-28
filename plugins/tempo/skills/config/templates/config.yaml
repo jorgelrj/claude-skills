@@ -17,7 +17,8 @@ commands:                       # null = not available; unset = detect from the 
 
 git:
   base_branch: main
-  branch: "feat/{ticket}"       # task branch = integration branch = PR branch
+  branch: "feat/{ticket}"       # task branch = integration branch = PR branch; no ticket: a slug of the request
+                                # never put a local T-NNN id here: other machines number their tasks too
   work_order_branch: "{branch}-wo-{nn}"
   repro_branch: "{branch}-repro"
   worktree_root: .tempo/worktrees

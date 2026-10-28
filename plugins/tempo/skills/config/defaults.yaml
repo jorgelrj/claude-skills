@@ -11,20 +11,20 @@ commands:
 targets: []        # extra platform test runs: [{name, command, paths, scoped_command?, advisory?}]
 git:
   base_branch: main
-  branch: "tempo/{task}"
+  branch: "tempo/{ticket}"     # ticket key, else a slug of the request (never the local T-NNN id)
   work_order_branch: "{branch}-wo-{nn}"
   repro_branch: "{branch}-repro"
   worktree_root: .tempo/worktrees
   delete_merged_local_branches: true
   fold_fixes: true        # fixes before the PR become fixup! commits, squashed into their owner commit at SHIP
   commit:
-    message: "{type}({task}): {summary}"
+    message: "{type}({ticket}): {summary}"   # no ticket: "{type}: {summary}"
     language: en
     extra_args: []
 pr:
   draft: true
   tool: gh
-  title: "{type}({task}): {summary}"
+  title: "{type}({ticket}): {summary}"
   language: en
 worktree:
   copy: []

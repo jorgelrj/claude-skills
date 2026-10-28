@@ -21,7 +21,7 @@ Issued by: orchestrator
 - {{exact command or manual step}}
 
 ## 7 Artifacts
-- .tempo/{{task-id}}/
+- .tempo/{{task-id}}/ (internal record only: never copied into the PR body)
 
 ## 8 Autopilot decisions
 - {{D-n | kind | question | choice | why, copied from decisions.md}}, or NIL

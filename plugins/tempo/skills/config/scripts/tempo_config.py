@@ -18,7 +18,9 @@ or `python3 tempo_config.py ...` when both are installed.
 Commands:
   check   [FILE ...]                     validate files (default: the ones that apply to --repo)
   resolve [--format json|yaml]           print the merged config for --repo (or the workspace)
-  names   --task ID [--ticket KEY] [--wo N ...]   print branch names, commit and PR title templates
+  names   [--ticket KEY] [--slug S] [--suffix X] [--branch B] [--wo N ...]
+                                         print branch names, commit and PR title templates. Names carry the
+                                         ticket key, else the slug; a local T-NNN id never leaves .tempo/
   cmd     NAME [--var k=v ...]           print one command as a shell line, env exported first
   targets [--paths P ...] [--ref REF] [--full]
                                          print the platform test runs for the changed paths: scoped to the
@@ -152,8 +154,12 @@ def lint(data, path):
         if isinstance(wob, str) and wob.startswith("{branch}/"):
             out.append(f"{path}: {loc + '.' if loc else ''}git.work_order_branch: '{wob}' puts a branch below the task branch; git cannot hold both. Use '{{branch}}-wo-{{nn}}'.")
         br = git.get("branch")
-        if isinstance(br, str) and "{task}" not in br and "{ticket}" not in br:
-            out.append(f"{path}: {loc + '.' if loc else ''}git.branch: '{br}' has no {{task}} or {{ticket}}; every task would share one branch.")
+        if isinstance(br, str) and not any(k in br for k in ("{task}", "{ticket}", "{slug}")):
+            out.append(f"{path}: {loc + '.' if loc else ''}git.branch: '{br}' has no {{ticket}} or {{slug}}; every task would share one branch.")
+        for key, tpl in (("git.commit.message", (git.get("commit") or {}).get("message")),
+                         ("pr.title", (block.get("pr") or {}).get("title"))):
+            if isinstance(tpl, str) and LOCAL_ID.search(tpl):
+                out.append(f"{path}: {loc + '.' if loc else ''}{key}: '{tpl}' holds a local task id; use {{ticket}}.")
     return out
 
 
@@ -399,6 +405,39 @@ def expand_docs(docs):
 
 # ---------- rendering ----------
 
+# Local task ids (T-001 ...) are numbered per checkout: another machine running TEMPO on the same
+# project has its own T-001. They name .tempo/ folders only, never a branch, commit, PR or tracker text.
+LOCAL_ID = re.compile(r"\bT-\d+\b")
+
+
+def slugify(text, limit=40):
+    words = re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).split()
+    out = ""
+    for w in words:
+        if len(out) + len(w) + (1 if out else 0) > limit:
+            break
+        out = f"{out}-{w}" if out else w
+    return out or None
+
+
+def branch_taken(repo, name):
+    """True when a local branch or any remote-tracking branch already has this name."""
+    try:
+        refs = subprocess.run(["git", "-C", str(repo), "for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"],
+                              capture_output=True, text=True, check=True).stdout.split()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+    return any(r == f"refs/heads/{name}" or (r.startswith("refs/remotes/") and r.split("/", 3)[-1] == name) for r in refs)
+
+
+def tidy(text):
+    """Drop what an empty {ticket} leaves in a message: '()', '[]', '(#)', a leading ': ', double spaces."""
+    text = re.sub(r"\s*[(\[][\s#:/-]*[)\]]", "", text)
+    text = re.sub(r"^[\s:#/-]+", "", text)
+    text = re.sub(r"[\s:#/-]+$", "", text)
+    return re.sub(r"\s{2,}", " ", text)
+
+
 def fill(template, values):
     def sub(m):
         k = m.group(1)
@@ -548,7 +587,7 @@ def migrate_md(text):
         elif key == "branch-prefix":
             base = val.split(" (")[0].strip()
             base = re.sub(r"[A-Z][A-Z0-9]+-\d+", "{ticket}", base)
-            cfg.setdefault("git", {})["branch"] = base + "{task}" if base.endswith("/") else base
+            cfg.setdefault("git", {})["branch"] = base + "{ticket}" if base.endswith("/") else base
             if "{ticket}" in base:
                 cfg.setdefault("task", {})["id"] = "ticket"
         elif key == "open-as-draft":
@@ -582,7 +621,10 @@ def main(argv=None):
     c = add("check"); c.add_argument("files", nargs="*")
     r = add("resolve"); r.add_argument("--format", choices=["json", "yaml"], default="json")
     n = add("names")
-    n.add_argument("--task", required=True); n.add_argument("--ticket"); n.add_argument("--slug")
+    n.add_argument("--task", help="the local task id; accepted for logs, never used in a name")
+    n.add_argument("--ticket"); n.add_argument("--slug")
+    n.add_argument("--suffix", help="appended to the task branch, e.g. s2 for a split task's second slice")
+    n.add_argument("--branch", help="an existing task branch (from state): derive work-order and repro names from it")
     n.add_argument("--wo", type=int, nargs="*", default=[])
     m = add("cmd"); m.add_argument("name"); m.add_argument("--var", action="append", default=[])
     t = add("targets"); t.add_argument("--paths", nargs="*")
@@ -635,17 +677,31 @@ def main(argv=None):
 
         if a.cmd == "names":
             git, pr = cfg["git"], cfg["pr"]
-            vals = {"task": a.task, "ticket": a.ticket or a.task, "slug": a.slug}
-            branch = fill(git["branch"], vals)
+            ticket = a.ticket if a.ticket and not LOCAL_ID.fullmatch(a.ticket) else None
+            slug = slugify(a.slug)
+            ref = ticket or slug or a.branch
+            if not ref:
+                print("names: no ticket key and no --slug. Pass --slug <a few words on the change>; "
+                      "a local task id never names a branch.", file=sys.stderr)
+                return 1
+            # {task} is kept for old configs and means the same as {ticket} here.
+            vals = {"ticket": ref, "task": ref, "slug": slug or ref}
+            branch = a.branch or fill(git["branch"], vals) + (f"-{a.suffix}" if a.suffix else "")
+            if not ticket and not a.branch:
+                # A slug is not unique the way a ticket key is: never reuse a branch someone already has.
+                n, base = 2, branch
+                while branch_taken(info.get("repo") or a.repo, branch):
+                    branch, n = f"{base}-{n}", n + 1
             vals["branch"] = branch
-            out = {"branch": branch, "integration_branch": branch,
+            text = {"ticket": ticket or "", "task": ticket or "", "slug": slug or ""}
+            out = {"ticket": ticket, "slug": slug, "branch": branch, "integration_branch": branch,
                    "repro_branch": fill(git["repro_branch"], vals),
                    "work_order_branches": {f"WO-{w:02d}": fill(git["work_order_branch"], {**vals, "nn": f"{w:02d}"}) for w in a.wo},
                    "worktree_root": git["worktree_root"],
-                   "commit_message": fill(git["commit"]["message"], vals),
+                   "commit_message": tidy(fill(git["commit"]["message"], text)),
                    "commit_language": git["commit"].get("language"),
                    "commit_extra_args": git["commit"].get("extra_args", []),
-                   "pr_title": fill(pr["title"], vals), "pr_language": pr.get("language"),
+                   "pr_title": tidy(fill(pr["title"], text)), "pr_language": pr.get("language"),
                    "pr_base": pr.get("base"), "pr_draft": pr.get("draft"), "pr_tool": pr.get("tool")}
             print(json.dumps(out, indent=2, ensure_ascii=False)); return 0
 

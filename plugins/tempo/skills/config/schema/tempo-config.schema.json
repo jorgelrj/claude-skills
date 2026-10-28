@@ -15,7 +15,7 @@
     "template": {
       "type": "string",
       "minLength": 1,
-      "description": "Text with placeholders in single braces, filled at run time: {ticket} {task} {slug} {branch} {nn} {type} {summary} {pattern} {module}. ${env:NAME}, ${workspace} and ${repo} are filled when the config is resolved."
+      "description": "Text with placeholders in single braces, filled at run time: {ticket} {slug} {branch} {nn} {type} {scope} {summary} {pattern} {module} ({task} is an old alias of {ticket}). A local T-NNN task id is never filled into a template. ${env:NAME}, ${workspace} and ${repo} are filled when the config is resolved."
     },
     "command": {
       "type": [
@@ -249,11 +249,11 @@
             "ticket",
             "sequence"
           ],
-          "description": "ticket: the task ID is the ticket key found in the request (falls back to sequence). sequence: T-001, T-002 ..."
+          "description": "ticket: the task ID is the ticket key found in the request (falls back to sequence). sequence: T-001, T-002 ... A T-NNN id is local to one checkout and never leaves .tempo/."
         },
         "ticket_pattern": {
           "type": "string",
-          "description": "Regex for ticket keys, for example [A-Z]+-\\d+."
+          "description": "Regex for ticket keys, for example [A-Z]+-\\d+. With a capture group, the group is the key: (?:#|/issues/)(\\d+) for GitHub issues."
         },
         "tracker": {
           "enum": [

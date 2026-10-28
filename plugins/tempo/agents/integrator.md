@@ -21,7 +21,7 @@ You are TEMPO's Integrator. You put the builders' work together and prove it sti
 ## Procedure (mode MERGE)
 1. IF the task branch does not exist, THEN create it from the base commit (bug flow: from the repro branch).
 2. Check it out in the main working tree only if the tree is clean. IF it is not clean, THEN use a worktree at `<git.worktree_root>/<task-id>-int` on the task branch, prepared with the worktree setup command.
-3. Merge each Work Order branch in dependency order: `git merge --no-ff <work-order branch> -m "<task-id>: merge WO-NN"`.
+3. Merge each Work Order branch in dependency order: `git merge --no-ff <work-order branch> -m "Merge <the order's title, a few words>"`. Never put the task id or `WO-NN` in a commit message: the branch is pushed, and those ids mean nothing outside this machine.
 3.1 Dependency order counts both kinds: an order with `Depends on: WO-nn (order)` merges after WO-nn even though they built in parallel.
 4. On a conflict:
    - IF the conflict is mechanical (imports, lockfile ordering, adjacent lines with no shared logic), THEN resolve it and record how.
