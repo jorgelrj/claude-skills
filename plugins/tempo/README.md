@@ -203,6 +203,9 @@ Measured on pod1um after 0.8.0 (T-008 to T-014, 28 Oct): seven PRs with no revie
 
 0.10.1: a scoped run picks only files a runner runs (`*_test.*`, `*.test.*`, `*.spec.*` ...); a changed helper or fixture in a test folder is listed as NO-TESTS instead of being passed to the runner.
 
+Known cost: a mirror-name match misses tests named differently from their source; those changes show as `# NO-TESTS` and rely on the order's own verification.
+
+
 ### Local task ids stay local (0.11.0)
 
 A second machine running TEMPO on pod1um numbers its own tasks, so `tempo/T-004`, `fix(T-010): ...`, `T-015: merge WO-03` and issue text naming `T-015` meant nothing there, and a branch could collide with that machine's fourth task. 0.11.0:
@@ -210,3 +213,34 @@ A second machine running TEMPO on pod1um numbers its own tasks, so `tempo/T-004`
 - `check` fails a commit or PR title template that holds a `T-NNN` id. `{scope}` is documented as the code area, never the task id.
 - `task.ticket_pattern` may have a capture group: `(?:#|/issues/)(\d+)` makes GitHub issue `#215` the ticket `215`.
 - Orchestrator 1.6.1, builder 8.0 and the integrator's merge message keep `T-NNN`, `WO-NN`, `ESC-N` and `.tempo/` paths out of branches, commits, PR text, review replies, issues and trackers. SHIP checks the outward text before it pushes.
+
+## How it runs inside Claude Code
+
+- The main session is the orchestrator. Subagents cannot start other subagents, so the orchestrator starts every agent, including the parallel scouts, builders and reviewers.
+- Each builder gets its own git worktree at `.tempo/worktrees/<task-id>-wo-NN` on the work-order branch (default `{branch}-wo-{nn}`), prepared by the config's `worktree:` steps. The integrator merges them into the task branch (`git.branch`, e.g. `feat/{ticket}`), which becomes the PR branch.
+- Models are set per agent in the frontmatter (`opus` for architect, investigator, reproducer, reviewer, verifier; `sonnet` for the rest). That is the L-lane default; the orchestrator passes `sonnet` for S and M stages (orchestrator §5.8).
+
+## How review converges
+
+- Explore reads how called services behave on repeats, timeouts and failures (scout lens CONSUMED-BEHAVIOUR), not just their DTOs.
+- For retries, callbacks, scheduled jobs and idempotency keys, the spec has a §8 State model: every state and event pair with its result. The spec pre-check fails a missing pair.
+- Every fix starts with an interaction check in the spec: each criterion that reads the same state is re-checked and gets a regression test.
+- The verifier tags findings INTRODUCED BY the last fix. Two such rounds in a row in one area raise FIX-CHAIN, which recommends re-specifying that area, not another patch.
+- A small fix (`limits.narrow_fix_lines`) gets a NARROW round: correctness plus the lenses that raised findings, on the fix diff only.
+- Past `limits.review_rounds` Jorge may grant `limits.review_extensions` more rounds. After that, open findings ship as known risks, at every gate. Only `/tempo:resume <task-id> review-limit <N>` reopens review.
+
+## Things to tune after the first test runs
+
+- Size thresholds in `skills/triage-rubric/SKILL.md` §3.
+- Loop limits, review extensions, the narrow-round size and parallel builder count in `limits:` of the repo or workspace config.
+- Whether S-lane features need QA (currently skipped).
+- Dropping the readback pass (0.6.0): T-007 had no misreadings; its stops were scope-list gaps, which 0.7.0 addresses at Handoff.
+- The split thresholds (`limits.split_orders`, `limits.split_criteria`) and `limits.spec_slice_kb`, after the first split runs.
+- Whether the rm guard (0.9.1) refuses a delete the run needed; refusals show in the agent's report or final message.
+- Whether the order check (0.8.0) pays for its time; turn it off with `limits.order_check: false`.
+- Whether scoped targets (0.10.0) miss failures a whole-suite run would catch; compare once a base is green and `advisory` is dropped.
+- The fix-of-fix threshold (2 introduced findings in one round) and how often verifiers tag STATE.
+- How often FOLD is skipped for a conflict; fixups that touch the same lines as a later commit cannot squash cleanly.
+- Stage log minutes for parallel builders: each log starts the next stage clock, so read per-order minutes in state §5 for build time. An order issued for PREFLIGHT starts its clock early.
+- PLAN-ONLY together with a split (plan.md slices per group of orders) has not run yet.
+- Whether slugs (0.11.0) read well as branch names, and whether outward text still names a local id; `git log --all | grep -E 'T-[0-9]+'` finds leftovers.
