@@ -231,10 +231,20 @@ AV-6033 in xipp ran with `--auto`. The ticket said every item follows AV-6018's 
 - 4.5.1.1: an option existing is not enough to accept a stop; a stand-in for a named source is never a decision.
 - `tempo_state.py decide` refuses the kinds autopilot never accepts and a question that reads like a missing source ("not found", "404", "no access", "only an older version"). `--not-a-source "<why>"` lets through a missing local file that is not a source of truth, such as a git-ignored SDK link.
 
+### Pushed branches follow the repo's convention (0.14.0)
+
+Up to 0.13.0 the task branch defaulted to `tempo/{ticket}`, and it is the branch that gets pushed and opens the PR. pod1um's remote filled with `tempo/5`, `tempo/T-007` ... and a config that fixed `feat/{ticket}` (xipp) put bug fixes on `feat/` too. Jorge's rule: `tempo/` names never reach git; pushed branches use Conventional Commits types or the repo's own convention. 0.14.0:
+- Default `git.branch` is `{type}/{ticket}`. The orchestrator picks the type (orchestrator 1.6.3: `feat`, `fix`, `chore`, `docs`, `refactor` ...) and passes `names --type`. New `git.branch_types` maps a type to the repo's word (`{feat: feature, fix: bugfix}`).
+- With no branch setting in any config file, `names` reads the type words from the remote branches (`story/`, `bugfix/` ...; `tempo/` ignored) and prints `branch_convention`. A CONTRIBUTING or docs branch rule wins and is written into the repo config (orchestrator 1.7.1).
+- `tempo/` now marks local work branches only: work orders are `tempo/{branch}-wo-{nn}`, repro `tempo/{branch}-repro`. `check` fails a `git.branch` under `tempo/`, `names` refuses to make one, and a `feat/{ticket}`-style fixed prefix warns.
+- New hook `hooks/guard_push.py` denies any `git push` whose destination is under `tempo/` (named, `HEAD`, a bare push from a `tempo/` branch, `--all`). Deleting a remote branch is allowed.
+- A task started before 0.14.0 with a `tempo/` task branch is renamed before its first push (orchestrator 3.12); if already pushed it keeps the name and Jorge is told.
+- `tempo_branches.py prune` and `sweep` match the new `tempo/...` names and the pre-0.14 ones; new `pushed` lists `tempo/` branches already on a remote (report only). `/tempo:cleanup` shows them.
+
 ## How it runs inside Claude Code
 
 - The main session is the orchestrator. Subagents cannot start other subagents, so the orchestrator starts every agent, including the parallel scouts, builders and reviewers.
-- Each builder gets its own git worktree at `.tempo/worktrees/<task-id>-wo-NN` on the work-order branch (default `{branch}-wo-{nn}`), prepared by the config's `worktree:` steps. The integrator merges them into the task branch (`git.branch`, e.g. `feat/{ticket}`), which becomes the PR branch.
+- Each builder gets its own git worktree at `.tempo/worktrees/<task-id>-wo-NN` on the work-order branch (default `tempo/{branch}-wo-{nn}`, local only), prepared by the config's `worktree:` steps. The integrator merges them into the task branch (`git.branch`, default `{type}/{ticket}` or the repo's own convention), which becomes the PR branch and is the only branch pushed.
 - Models are set per agent in the frontmatter (`opus` for architect, investigator, reproducer, reviewer, verifier; `sonnet` for the rest). That is the L-lane default; the orchestrator passes `sonnet` for S and M stages (orchestrator §5.8).
 
 ## How review converges

@@ -1,6 +1,6 @@
 ---
 description: Write or update TEMPO's config for this repo (.tempo/config.yaml) or for a multi-repo workspace (.tempo/workspace.yaml), detected from the code, then check it.
-argument-hint: [repo | workspace] [notes, e.g. "Java 21, branches feat/AV-XXXX, PRs in Portuguese"]
+argument-hint: [repo | workspace] [notes, e.g. "Java 21, branches {type}/AV-XXXX, PRs in Portuguese"]
 ---
 
 Set up TEMPO config here: $ARGUMENTS
@@ -17,7 +17,7 @@ Set up TEMPO config here: $ARGUMENTS
    - 5.1 Build tool and commands: package.json scripts, pom.xml or mvnw, build.gradle, pubspec.yaml, Makefile, pyproject.toml, go.mod, Cargo.toml.
    - 5.2 Toolchain: required JDK, Node or Python version (pom.xml `java.version`, `.nvmrc`, `.tool-versions`, `.python-version`) and where it is installed on this machine. Put machine paths in `env:` with `${env:HOME}`, never a literal home path.
    - 5.3 Base branch: the remote default branch, or `develop` if the team branches from it (`git branch -r`).
-   - 5.4 Branch pattern: the 30 most recent remote branches (`git for-each-ref --sort=-committerdate refs/remotes`). Turn the common shape into a template, e.g. `feat/AV-1234` → `feat/{ticket}`.
+   - 5.4 Branch pattern: the 30 most recent remote branches (`git for-each-ref --sort=-committerdate refs/remotes`) and any branch rule in CONTRIBUTING or the docs. Turn the common shape into a template with `{type}` for the type word, e.g. `feat/AV-1234` and `fix/AV-99` → `{type}/{ticket}`. IF the words differ from the Conventional Commits types (`feature/`, `bugfix/`, `story/`), THEN map them in `git.branch_types`. Ignore `tempo/` branches: they are leftovers from older TEMPO runs, never a convention. Never write a fixed `feat/` when other types appear.
    - 5.5 Commit and PR conventions: the last 30 commit subjects, `.github/pull_request_template.md`, and title rules in `.github/workflows/*`, commitlint or danger config. Record the language they are written in.
    - 5.6 Hooks that block commits on this machine (a pre-commit hook that fails) → `git.commit.extra_args: [--no-verify]` only with my yes.
    - 5.7 Worktree needs: gitignored files the build or tests read (`.env*`, local config, keys) → `worktree.copy`; large dependency folders → `worktree.link` or a `worktree.setup` install step.

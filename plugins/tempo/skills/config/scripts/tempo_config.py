@@ -18,9 +18,12 @@ or `python3 tempo_config.py ...` when both are installed.
 Commands:
   check   [FILE ...]                     validate files (default: the ones that apply to --repo)
   resolve [--format json|yaml]           print the merged config for --repo (or the workspace)
-  names   [--ticket KEY] [--slug S] [--suffix X] [--branch B] [--wo N ...]
+  names   [--type T] [--ticket KEY] [--slug S] [--suffix X] [--branch B] [--wo N ...]
                                          print branch names, commit and PR title templates. Names carry the
-                                         ticket key, else the slug; a local T-NNN id never leaves .tempo/
+                                         ticket key, else the slug; a local T-NNN id never leaves .tempo/.
+                                         The task branch follows the repo's convention (config, else the
+                                         prefixes of its remote branches, else {type}/{ticket}); tempo/ names
+                                         are local work branches only and never name the task branch
   cmd     NAME [--var k=v ...]           print one command as a shell line, env exported first
   targets [--paths P ...] [--ref REF] [--full]
                                          print the platform test runs for the changed paths: scoped to the
@@ -156,6 +159,13 @@ def lint(data, path):
         br = git.get("branch")
         if isinstance(br, str) and not any(k in br for k in ("{task}", "{ticket}", "{slug}")):
             out.append(f"{path}: {loc + '.' if loc else ''}git.branch: '{br}' has no {{ticket}} or {{slug}}; every task would share one branch.")
+        if isinstance(br, str) and br.startswith(LOCAL_PREFIX):
+            out.append(f"{path}: {loc + '.' if loc else ''}git.branch: '{br}' is pushed and opens the PR; '{LOCAL_PREFIX}' names local work branches only. Use the repo's convention or '{{type}}/{{ticket}}'.")
+        for key, val in (git.get("branch_types") or {}).items():
+            if key not in BRANCH_TYPES:
+                out.append(f"{path}: {loc + '.' if loc else ''}git.branch_types.{key}: not a conventional type ({', '.join(BRANCH_TYPES)}).")
+            elif isinstance(val, str) and val.rstrip("/") == LOCAL_PREFIX.rstrip("/"):
+                out.append(f"{path}: {loc + '.' if loc else ''}git.branch_types.{key}: '{val}' would push a tempo/ branch.")
         for key, tpl in (("git.commit.message", (git.get("commit") or {}).get("message")),
                          ("pr.title", (block.get("pr") or {}).get("title"))):
             if isinstance(tpl, str) and LOCAL_ID.search(tpl):
@@ -326,6 +336,10 @@ def resolve(repo_arg):
             except ConfigError as e:
                 errors.append(str(e))
     merged.setdefault("pr", {}).setdefault("base", merged.get("git", {}).get("base_branch"))
+    br = (merged.get("git") or {}).get("branch")
+    if isinstance(br, str) and "{type}" not in br and br.split("/", 1)[0] in TYPE_OF_PREFIX and "/" in br:
+        info["warnings"].append(f"git.branch '{br}' fixes the prefix: bug fixes and chores get '{br.split('/', 1)[0]}/' too. "
+                                "Use '{type}/...' (and git.branch_types for words like feature/ or bugfix/).")
     merged["docs"] = merge_docs(doc_layers)
     ctx = {"workspace": info["workspace"], "repo": info["repo"]}
     merged = interpolate(merged, ctx, "", errors)
@@ -408,6 +422,48 @@ def expand_docs(docs):
 # Local task ids (T-001 ...) are numbered per checkout: another machine running TEMPO on the same
 # project has its own T-001. They name .tempo/ folders only, never a branch, commit, PR or tracker text.
 LOCAL_ID = re.compile(r"\bT-\d+\b")
+
+# Branches under tempo/ are TEMPO's own local work branches (work orders, repro). They never leave the
+# machine: the task branch, the one that is pushed and opens the PR, follows the repo's convention.
+LOCAL_PREFIX = "tempo/"
+
+# Conventional Commits types, and the prefix words repos use for them on branches.
+BRANCH_TYPES = ["feat", "fix", "chore", "docs", "refactor", "test", "perf", "build", "ci", "style", "revert"]
+TYPE_OF_PREFIX = {"feat": "feat", "feature": "feat", "features": "feat", "story": "feat",
+                  "fix": "fix", "bugfix": "fix", "bug": "fix", "chore": "chore", "docs": "docs", "doc": "docs",
+                  "refactor": "refactor", "test": "test", "tests": "test", "perf": "perf", "build": "build",
+                  "ci": "ci", "style": "style", "revert": "revert"}
+
+
+def local_name(name):
+    """A task branch from before 0.14.0 is itself under tempo/: keep one prefix, not tempo/tempo/."""
+    while name.startswith(LOCAL_PREFIX * 2):
+        name = name[len(LOCAL_PREFIX):]
+    return name
+
+
+def remote_branch_types(repo, limit=200):
+    """The prefix word the repo's remote branches use for each type, e.g. {'feat': 'story', 'fix': 'bugfix'}.
+
+    Reads the most recent remote branches; a word wins when it is the type's most used one. tempo/ and any
+    prefix that is not a known type word are ignored. Returns {} when no remote branch carries a type word."""
+    try:
+        refs = subprocess.run(["git", "-C", str(repo), "for-each-ref", "--sort=-committerdate", "--format=%(refname)",
+                               "refs/remotes"], capture_output=True, text=True, check=True).stdout.split()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return {}
+    counts = {}
+    for r in refs[:limit]:
+        name = r.split("/", 3)[-1] if r.count("/") >= 3 else ""
+        word = name.split("/", 1)[0] if "/" in name else ""
+        if word in TYPE_OF_PREFIX:
+            counts[word] = counts.get(word, 0) + 1
+    best = {}
+    for word, n in counts.items():
+        t = TYPE_OF_PREFIX[word]
+        if n > counts.get(best.get(t), 0):
+            best[t] = word
+    return best
 
 
 def slugify(text, limit=40):
@@ -622,6 +678,8 @@ def main(argv=None):
     r = add("resolve"); r.add_argument("--format", choices=["json", "yaml"], default="json")
     n = add("names")
     n.add_argument("--task", help="the local task id; accepted for logs, never used in a name")
+    n.add_argument("--type", default="feat", choices=BRANCH_TYPES,
+                   help="Conventional Commits type of the change: feat, fix, chore ... (default feat)")
     n.add_argument("--ticket"); n.add_argument("--slug")
     n.add_argument("--suffix", help="appended to the task branch, e.g. s2 for a split task's second slice")
     n.add_argument("--branch", help="an existing task branch (from state): derive work-order and repro names from it")
@@ -684,9 +742,23 @@ def main(argv=None):
                 print("names: no ticket key and no --slug. Pass --slug <a few words on the change>; "
                       "a local task id never names a branch.", file=sys.stderr)
                 return 1
+            # The repo's convention: the config when a file sets the branch, else its remote branches' words.
+            types = {k: str(v).strip("/") for k, v in (git.get("branch_types") or {}).items()}
+            defaults = load_yaml(DEFAULTS_PATH).get("git", {})
+            if git["branch"] != defaults.get("branch") or types:
+                convention = "config"
+            else:
+                types = remote_branch_types(info.get("repo") or a.repo)
+                convention = ("remote branches: " + ", ".join(f"{w}/ for {t}" for t, w in sorted(types.items()))
+                              if types else "default {type}/{ticket}")
             # {task} is kept for old configs and means the same as {ticket} here.
-            vals = {"ticket": ref, "task": ref, "slug": slug or ref}
+            vals = {"ticket": ref, "task": ref, "slug": slug or ref, "type": types.get(a.type, a.type)}
             branch = a.branch or fill(git["branch"], vals) + (f"-{a.suffix}" if a.suffix else "")
+            if branch.startswith(LOCAL_PREFIX) and not a.branch:
+                print(f"names: git.branch makes '{branch}'. The task branch is pushed and opens the PR, and "
+                      f"'{LOCAL_PREFIX}' names local work branches only. Set git.branch to the repo's convention "
+                      "or '{type}/{ticket}'.", file=sys.stderr)
+                return 1
             if not ticket and not a.branch:
                 # A slug is not unique the way a ticket key is: never reuse a branch someone already has.
                 n, base = 2, branch
@@ -694,9 +766,11 @@ def main(argv=None):
                     branch, n = f"{base}-{n}", n + 1
             vals["branch"] = branch
             text = {"ticket": ticket or "", "task": ticket or "", "slug": slug or ""}
-            out = {"ticket": ticket, "slug": slug, "branch": branch, "integration_branch": branch,
-                   "repro_branch": fill(git["repro_branch"], vals),
-                   "work_order_branches": {f"WO-{w:02d}": fill(git["work_order_branch"], {**vals, "nn": f"{w:02d}"}) for w in a.wo},
+            out = {"type": a.type, "ticket": ticket, "slug": slug, "branch": branch, "integration_branch": branch,
+                   "branch_convention": convention,
+                   "local_only": branch.startswith(LOCAL_PREFIX),
+                   "repro_branch": local_name(fill(git["repro_branch"], vals)),
+                   "work_order_branches": {f"WO-{w:02d}": local_name(fill(git["work_order_branch"], {**vals, "nn": f"{w:02d}"})) for w in a.wo},
                    "worktree_root": git["worktree_root"],
                    "commit_message": tidy(fill(git["commit"]["message"], text)),
                    "commit_language": git["commit"].get("language"),

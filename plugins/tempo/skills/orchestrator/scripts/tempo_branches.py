@@ -21,12 +21,15 @@ Usage: tempo_branches.py <command> [args]
   prune  --repo R --task-branch B [--base-branch X] [--branch NAME ...] [--glob PATTERN ...]
          [--from SHA ...] [--dry-run]
          check and delete the named branches and the ones matching the globs
-         (default globs: B-wo-* and B-repro)
-  sweep  --repo R [--wo-pattern P] [--repro-pattern P] [--dry-run]
+         (default globs: tempo/B-wo-*, tempo/B-repro, and the pre-0.14 B-wo-*, B-repro)
+  sweep  --repo R [--wo-pattern P ...] [--repro-pattern P ...] [--dry-run]
          prune for every task in R/.tempo/ whose stage is DONE; patterns take {branch}
-         (defaults: {branch}-wo-* and {branch}-repro)
+         (defaults: the four globs above with {branch} for B)
+  pushed --repo R
+         list remote branches under tempo/. Those names are TEMPO's local work branches and
+         should never have been pushed; the script only reports them, it never touches a remote
 Prints one line per branch: DELETED <branch> <sha> (<why>), WOULD-DELETE (--dry-run) or
-KEPT <branch> (<reason>); SKIPPED <task branch> when it does not exist.
+KEPT <branch> (<reason>); SKIPPED <task branch> when it does not exist; PUSHED <remote>/<branch>.
 Exit 0 ok, 1 error.
 """
 import argparse
@@ -160,6 +163,19 @@ def prune(repo, task, base, names, globs, extra, dry):
                 print(f"DELETED {n} {tip[:10]} ({why})")
 
 
+# tempo/ names are local work branches (0.14.0); before that work orders were <task>-wo-NN.
+WO_PATTERNS = ["tempo/{branch}-wo-*", "{branch}-wo-*"]
+REPRO_PATTERNS = ["tempo/{branch}-repro", "{branch}-repro"]
+LOCAL_PREFIX = "tempo/"
+
+
+def pushed_local(repo):
+    for r in out(repo, "for-each-ref", "--format=%(refname)", "refs/remotes").splitlines():
+        parts = r.split("/", 3)
+        if len(parts) == 4 and parts[3].startswith(LOCAL_PREFIX):
+            print(f"PUSHED {parts[2]}/{parts[3]}")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sp = p.add_subparsers(dest="cmd", required=True)
@@ -173,16 +189,21 @@ def main():
     pr.add_argument("--dry-run", action="store_true")
     sw = sp.add_parser("sweep")
     sw.add_argument("--repo", default=".")
-    sw.add_argument("--wo-pattern", default="{branch}-wo-*")
-    sw.add_argument("--repro-pattern", default="{branch}-repro")
+    sw.add_argument("--wo-pattern", action="append")
+    sw.add_argument("--repro-pattern", action="append")
     sw.add_argument("--dry-run", action="store_true")
+    pu = sp.add_parser("pushed")
+    pu.add_argument("--repo", default=".")
     a = p.parse_args()
     repo = Path(a.repo)
     try:
         if a.cmd == "prune":
-            globs = a.glob or ([] if a.branch else [f"{a.task_branch}-wo-*", f"{a.task_branch}-repro"])
+            globs = a.glob or ([] if a.branch else [g.replace("{branch}", a.task_branch) for g in WO_PATTERNS + REPRO_PATTERNS])
             prune(repo, a.task_branch, a.base_branch, a.branch, globs, a.extra, a.dry_run)
+        elif a.cmd == "pushed":
+            pushed_local(repo)
         else:
+            patterns = (a.wo_pattern or WO_PATTERNS) + (a.repro_pattern or REPRO_PATTERNS)
             root = Path(out(repo, "rev-parse", "--show-toplevel"))
             for f in sorted((root / ".tempo").glob("*/state.json")):
                 s = json.loads(f.read_text(encoding="utf-8"))
@@ -190,7 +211,7 @@ def main():
                 if s.get("stage") != "DONE" or not task:
                     continue
                 print(f"# {f.parent.name} {task}")
-                globs = [a.wo_pattern.replace("{branch}", task), a.repro_pattern.replace("{branch}", task)]
+                globs = [g.replace("{branch}", task) for g in patterns]
                 prune(repo, task, s.get("base_branch"), [], globs, [], a.dry_run)
     except RuntimeError as e:
         print(f"ERROR {e}", file=sys.stderr)

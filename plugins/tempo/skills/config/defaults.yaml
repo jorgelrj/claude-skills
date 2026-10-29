@@ -11,9 +11,10 @@ commands:
 targets: []        # extra platform test runs: [{name, command, paths, scoped_command?, advisory?}]
 git:
   base_branch: main
-  branch: "tempo/{ticket}"     # ticket key, else a slug of the request (never the local T-NNN id)
-  work_order_branch: "{branch}-wo-{nn}"
-  repro_branch: "{branch}-repro"
+  branch: "{type}/{ticket}"    # pushed, opens the PR: feat/AV-1, fix/fix-safari-export. {ticket} is the key, else a slug
+  branch_types: {}             # type -> the repo's branch word, e.g. {feat: feature, fix: bugfix}; empty: read from remote branches
+  work_order_branch: "tempo/{branch}-wo-{nn}"   # tempo/ = local only, never pushed
+  repro_branch: "tempo/{branch}-repro"
   worktree_root: .tempo/worktrees
   delete_merged_local_branches: true
   fold_fixes: true        # fixes before the PR become fixup! commits, squashed into their owner commit at SHIP

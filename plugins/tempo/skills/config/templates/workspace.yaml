@@ -8,7 +8,7 @@ workspace:
 defaults:                       # same keys as a repo config.yaml
   git:
     base_branch: develop
-    branch: "feat/{ticket}"
+    branch: "{type}/{ticket}"
   pr:
     draft: true
 
