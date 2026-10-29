@@ -54,6 +54,7 @@ VERDICT (CROSS-REPO only)
 - CHANGE | NO CHANGE | UNSURE: <one line>
 OPEN QUESTIONS
 - <question the code cannot answer>
+- MISSING SOURCE: <source the ticket or task names that you could not find, or found only in another version> | <items that depend on it>
 ```
 
 No vague words. Name the file, the symbol and the value.

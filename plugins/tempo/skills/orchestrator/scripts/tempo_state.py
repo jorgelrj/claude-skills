@@ -12,8 +12,10 @@ Usage: tempo_state.py <command> <task-dir> [args]
   set       <dir> [--lane L] [--stage S] [--status S] [--next TEXT] [--mode M] [--title T]
             [--task-branch B] [--base-commit H] [--pr URL] [--review-limit N] [--review-extensions N]
             [--autopilot on|off]                  (DONE clears the agents still listed in flight)
-  decide    <dir> KIND --question Q --choice C --why W [--from FILE]
-                                                 (record a decision autopilot accepted; writes decisions.md)
+  decide    <dir> KIND --question Q --choice C --why W [--from FILE] [--not-a-source WHY]
+                                                 (record a decision autopilot accepted; writes decisions.md.
+                                                  Refuses the stop kinds of orchestrator 4.5.1, and a question
+                                                  that reads like a missing source unless --not-a-source)
   log       <dir> STAGE ARTIFACT PASS|FAIL|BLOCKED   (logging findings-rN.md raises the review count to N;
                                                    records start and end, closes the agent that wrote ARTIFACT;
                                                    the same stage and artifact again right after extends that entry)
@@ -42,6 +44,14 @@ STAGES = ["TRIAGE", "EXPLORE", "INVESTIGATE", "REPRODUCE", "ROOT-CAUSE", "SPEC",
 STATUSES = ["RUNNING", "WAITING-ON-JORGE", "FAILED", "DONE"]
 RESULTS = ["PASS", "FAIL", "BLOCKED"]
 WO_STATUSES = ["ISSUED", "BUILDING", "DONE", "BLOCKED"]
+# Stops autopilot never accepts (orchestrator 4.5.1). decide refuses them, and refuses a question
+# that reads like a source the ticket names could not be opened: a stand-in for it is not a decision.
+STOP_KINDS = {"NO-REPRO", "BEHAVIOUR-CHANGE", "OUT-OF-ORDER-DECISION", "HARD-TO-UNDO", "MISSING-SOURCE", "GATE-PR"}
+MISSING_SOURCE = re.compile(
+    r"not (found|available|accessible|visible|reachable)|\b40[134]\b|no access|access denied|"
+    r"can(not|'t|\u2019t) (open|access|find|fetch|see)|missing (source|asset|attachment|design|prototype|file|image|icon)|"
+    r"(asset|attachment|prototype|design|figma)s? (is |are )?(missing|unavailable)|only (an )?(older|newer|other) version",
+    re.IGNORECASE)
 
 
 def now():
@@ -215,6 +225,7 @@ def main(argv=None):
     for x in ("--question", "--choice", "--why"):
         dc.add_argument(x, required=True)
     dc.add_argument("--from", dest="source")
+    dc.add_argument("--not-a-source", help="why a question that mentions something missing is not a source of truth")
     l = sp.add_parser("log"); l.add_argument("dir"); l.add_argument("stage", choices=STAGES); l.add_argument("artifact"); l.add_argument("result", choices=RESULTS)
     b = sp.add_parser("bump"); b.add_argument("dir"); b.add_argument("counter", choices=["review", "qa", "reissue"])
     w = sp.add_parser("wo"); w.add_argument("dir"); w.add_argument("wo")
@@ -305,6 +316,14 @@ def main(argv=None):
         else:
             sys.exit("tempo_state: wait needs a file or --clear")
     elif a.cmd == "decide":
+        kind = a.kind.upper()
+        if kind in STOP_KINDS:
+            sys.exit(f"tempo_state: autopilot does not accept {kind} (orchestrator 4.5.1). Write the esc file, "
+                     f"run `wait`, and ask Jorge.")
+        if not a.not_a_source and MISSING_SOURCE.search(f"{a.question} {a.choice}"):
+            sys.exit("tempo_state: this reads like a missing source (orchestrator 4.5.1.1). A stand-in for something "
+                     "the ticket names is not a decision: raise MISSING-SOURCE and ask Jorge. If the missing thing is "
+                     "not a source of truth (a git-ignored local file, a tool), pass --not-a-source \"<why>\".")
         st.setdefault("decisions", []).append({"at": now(), "kind": a.kind, "question": a.question,
                                                "choice": a.choice, "why": a.why, "from": a.source})
         (d / "decisions.md").write_text(render_decisions(st), encoding="utf-8")

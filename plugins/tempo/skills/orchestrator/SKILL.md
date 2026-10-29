@@ -36,6 +36,7 @@ Nothing travels between agents except files in `.tempo/<task-id>/`.
 1.3 Run `<cfg> resolve --repo <repo>` once. Its `config` object is this run's config. Every later "from config" means a value from it. Do not read config files by hand.
 1.3.1 Project docs. Run `<cfg> docs --repo <repo>` once. It prints the project's documentation files (config `docs:`), index files first. Save the list as `.tempo/<task-id>/docs.txt` and pass that path to every scout, the architect, every reviewer and QA. IF it prints nothing, THEN pass NIL. Section 8 says how each agent uses it.
 1.3.2 Standing decisions. `task.standing_decisions` from config are answers Jorge has already given (a delivery order, a scoping rule). Pass them to triage. Do not raise GATE-CLARIFY for a question one of them answers: apply it, and name it in the progress line.
+1.3.3 Sources. Before triage, list every source of truth the request and the ticket name for the work: a linked ticket, an attachment, a design file or prototype (with the version it names), a spec or doc, an asset, an API doc. Try to open each one: search the repo and workspace, fetch it from the tracker, follow the link. Pass triage one line per source: `<source> | named in <where> | FOUND <path> | MISSING <what was tried>`. An older or newer version, another brand's file, a copy of a different source or a picture of it is MISSING, not FOUND. Triage turns each MISSING source the work depends on into a `NEEDS-JORGE MISSING-SOURCE` question, so GATE-CLARIFY stops for it, on autopilot too (4.5.1). Never pick a stand-in here and record it as a decision.
 1.4 IF `commands.test` is null, THEN detect it from the repo (package.json scripts, pubspec.yaml, Makefile, pyproject.toml, go.mod, Cargo.toml, pom.xml, build.gradle). Record what you used in `state.md` §1. Offer once to write it into `.tempo/config.yaml` (on autopilot, do not offer: record it in `decisions.md` with `<state> decide`).
 1.5 Ensure `.tempo/` is listed in `.git/info/exclude` (`git rev-parse --git-path info/exclude`). This keeps artifacts, config and worktrees out of the diff without touching tracked files.
 1.6 Task ID. IF `task.id` is `ticket` and the request contains a key matching `task.ticket_pattern`, THEN the task ID is that key (`AV-5696`; with a capture group in the pattern, the group: `#215` → `215`). Otherwise it is `T-` plus the next free 3-digit number in `.tempo/`. IF `.tempo/<task-id>/` already exists, THEN resume it as `/tempo:resume` does instead of starting over.
@@ -50,6 +51,7 @@ Nothing travels between agents except files in `.tempo/<task-id>/`.
 2.1 Run the checker on the artifact the stage wrote.
 2.2 IF it FAILS, THEN fix the structure yourself (add a missing heading with NIL, remove a leftover placeholder) and continue. Send it back to the agent only when a section the next stage needs is missing its content. Allow 1 return.
 2.3 Do not re-read artifacts for wording. Read only what the next step needs from them.
+2.4 Missing sources found later. IF an agent reports a source the work depends on as not found, not accessible or found only in another version (a scout `MISSING SOURCE` line, an architect decision marked MISSING-SOURCE, a builder or QA stop), THEN raise MISSING-SOURCE before any stage decides from it. Read-only stages MAY run while it waits (4.2 step 4); Spec, Handoff and Build SHALL NOT.
 2.5 Update the state with `<state>` only: `log <dir> <STAGE> <artifact> <PASS|FAIL|BLOCKED>`, then `set <dir> --stage <next stage> --next "<exact next step>"`. `log` records the stage's start and end, removes the agent that wrote the artifact from §8, and clears Next action, so always follow it with `set --next`. Use `bump` for loop counters, `wo` for Work Orders, `wait` for escalations, `set --lane` after triage. Never edit `state.md` or `state.json` by hand; never use `sed` on them.
 2.6 Progress to Jorge: one line per milestone, not per stage. The milestones are: route chosen (with the lane's time estimate), spec ready, build done, review done, PR open. Report a failure, a re-size or an escalation when it happens. Do not paste the artifact.
 2.7 Agents in flight. Before you start an agent, write its full prompt to `.tempo/<task-id>/prompts/<label>.md`. Right after it starts, run `<state> agent <dir> start <agent id> --label "<label>" --output <its output path> --prompt <prompt file>`. When it replies, run `<state> agent <dir> done <agent id>`. Section 7 uses this list after a restart.
@@ -60,7 +62,7 @@ Nothing travels between agents except files in `.tempo/<task-id>/`.
 Run the stages the Task Card's ROUTE lists, in this order.
 
 ### 3.1 TRIAGE (all flows)
-- Call `triage` with: Jorge's request verbatim, the flow hint (feature or bug), the task folder, the template path, the rubric path, and whether autopilot is ON.
+- Call `triage` with: Jorge's request verbatim, the flow hint (feature or bug), the task folder, the template path, the rubric path, the sources list (1.3.3), and whether autopilot is ON.
 - Output: `task.md`.
 - IF §6 QUESTIONS FOR JORGE is not NIL, THEN raise GATE-CLARIFY (section 4). On the answer, call `triage` again to amend `task.md`. On autopilot, follow 4.5: ask only the questions marked NEEDS-JORGE, and take the recommendation for the rest.
 
@@ -210,10 +212,12 @@ A review that arrives after GATE-PR (an automated reviewer on the PR or the issu
 | LOOP-LIMIT | review or QA passes the round limit | the open findings, how many were introduced by fixes, and the options: (a) one extension round, only while `limits.review_extensions` allows; (b) ship them as known risks (3.10.6) |
 | FIX-CHAIN | two rounds in a row each have a finding introduced by the last fix, in the same area; or one round has 2 or more findings introduced by the last fix (3.10.5.1.1) | the chain of findings, and the options: (a) re-spec that area: architect AMEND on Spec §8 for it, HANDOFF, BUILD, then a FULL round; (b) ship as known risks (3.10.6); (c) revert the last fix and ship its finding as a known risk |
 | HARD-TO-UNDO | new dependency, migration on real data, secrets, deploys, force-push, deleting branches | the action and its effect |
+| MISSING-SOURCE | a source of truth the request or ticket names (1.3.3, 2.4) cannot be opened, and the work depends on it | what is missing, where it is named, which items depend on it, what was tried; options: (a) Jorge shares it, (b) Jorge names the stand-in per item, (c) drop those items from scope |
 
 4.2 To raise one:
 1. Write `esc-N.md` from the template. It SHALL include a recommended option.
 1.1 LOOP-LIMIT and FIX-CHAIN: "the fix is small" is not a reason to recommend another round. Each of the last fix rounds was small too. Recommend re-spec when findings were introduced by fixes; otherwise recommend shipping known risks unless a HIGH finding is open.
+1.1.1 MISSING-SOURCE: recommend (a). A stand-in TEMPO picked (an older version, another brand's asset, a drawing of its own) is never the recommendation.
 1.2 GATE-PR: IF review has reached the hard stop, THEN the options do not include a fix round. A fix after the PR is open is a review round (3.10.1).
 2. Run `<state> wait <dir> esc-N.md`.
 3. Send Jorge one message: the question, the options, the recommendation, and "Reply yes to accept, or /tempo:resume <task-id> <answer> later."
@@ -229,14 +233,17 @@ When autopilot is ON (1.0.2, or `state.json` `autopilot` on resume), TEMPO answe
 
 | Kind | Why it still needs Jorge |
 |---|---|
-| GATE-CLARIFY, only for a question marked NEEDS-JORGE | the Outcome is missing, or no option can be found in the code: there is nothing to recommend from |
+| GATE-CLARIFY, only for a question marked NEEDS-JORGE | the Outcome is missing, no option can be found in the code, or the only options are stand-ins for a missing source: there is nothing to recommend from |
 | NO-REPRO | the next step needs details only Jorge or the user has |
 | BEHAVIOUR-CHANGE | it changes what users get; that is Jorge's call |
 | OUT-OF-ORDER-DECISION | it changes the goal |
 | HARD-TO-UNDO | a new dependency, a migration on real data, secrets, deploys, force-push, deleting branches |
+| MISSING-SOURCE | only Jorge has the source; a stand-in builds something other than what it says, and nothing in the code can tell |
 | FIX-CHAIN, the second one in a task | the first re-spec did not hold; another automatic loop would hide that |
 | Any option without a recommendation | an escalation, Spec §1 or `plan.md` open decision that names no recommended option |
 | GATE-PR | the end of the run, not a question: Jorge reviews the decisions and merges |
+
+4.5.1.1 A stand-in is not a recommendation. "An option exists" is not enough to accept a stop. IF the only options replace something Jorge, the ticket or a linked doc named as the source (an asset, a design or its version, copy text, a linked ticket's content, a product choice the ticket leaves to that source), THEN it is MISSING-SOURCE or NEEDS-JORGE, not a decision. Never record one with `<state> decide`: the script refuses the kinds in 4.5.1 and questions that read like a missing source.
 
 4.5.2 These no longer stop. Accept the recommendation, record it (4.5.3) and continue at once:
 

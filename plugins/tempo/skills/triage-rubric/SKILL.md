@@ -27,6 +27,7 @@ Ask the four questions in order. Only questions 1 and 2 can send the task back t
 2.6 Before asking, run a quick scan (Grep and Glob, 5 searches or fewer) so each question offers choices found in the code.
 2.7 Ask 1 to 3 questions. Each question SHALL list options and one recommended option.
 2.8 IF triage can pick a reading with high confidence, THEN record it in §5 ASSUMPTIONS and do not ask.
+2.9 Sources. IF the request or ticket says the work follows another source (a linked ticket, its attachments, a design file or a named version of it, a doc, an asset) and that source is MISSING, THEN the Outcome is not PRESENT for the items that depend on it: ask Jorge (NEEDS-JORGE MISSING-SOURCE), even on autopilot. 2.8 does not apply: no reading of a source you cannot open is high confidence.
 
 ### Examples
 

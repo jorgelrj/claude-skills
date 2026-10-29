@@ -91,7 +91,7 @@ See `skills/config/SKILL.md` for every key and subcommand. A legacy `.tempo/conf
 ## Where Jorge is needed
 
 Three gates: clarify a vague task, approve the spec (L lane, or M with open decisions), review and merge the PR.
-Six escalations: bug won't reproduce, fix changes intended behaviour, a builder decision that changes the goal, a review or QA loop past 3 rounds, a fix chain (two review rounds in a row whose findings were caused by the last fix), anything hard to undo.
+Seven escalations: bug won't reproduce, fix changes intended behaviour, a builder decision that changes the goal, a review or QA loop past 3 rounds, a fix chain (two review rounds in a row whose findings were caused by the last fix), anything hard to undo, a missing source (the ticket says to follow a linked ticket, attachment, design or asset TEMPO cannot open).
 Every stop comes with a recommended answer, so "yes" is always enough.
 
 ### Autopilot (`--auto`, 0.9.0)
@@ -101,6 +101,7 @@ With `--auto` on a command (or `task.autopilot: true` in config), TEMPO says "ye
 - a clarify question triage marks NEEDS-JORGE (the outcome is missing, or nothing in the code gives an option to recommend);
 - a bug that won't reproduce, a fix that changes intended behaviour, a builder decision that changes the goal;
 - anything hard to undo (new dependency, data migration, secrets, deploys, force-push, deleting branches);
+- a missing source (0.13.0): the request or ticket says to follow something TEMPO cannot open (a linked ticket, its attachments, a design or prototype version, a doc, an asset). A stand-in it could pick (an older version, another brand's file, a drawing of its own) is not a recommendation;
 - a second fix chain in the same task, and any open decision with no recommended option;
 - the PR, which Jorge reviews and merges as always.
 
@@ -222,6 +223,14 @@ SHIP used `git branch -d` on the work-order and repro branches. `-d` compares wi
 - It never deletes the task or base branch, a branch checked out in a worktree, a branch with an upstream or a same-named remote branch, or a branch with commits the task branch lacks; those print `KEPT` with the reason. Remote branches are never touched.
 - `/tempo:cleanup` sweeps leftovers from earlier runs for every task at DONE: a dry run first, then deletes after Jorge says yes.
 
+### Autopilot stops for missing sources (0.13.0)
+
+AV-6033 in xipp ran with `--auto`. The ticket said every item follows AV-6018's descriptions, images and assets, and the C6 v25 and +Família v14 prototypes. AV-6018 returned 404 to TEMPO's Jira account and v14 was nowhere on disk. Autopilot logged "use the older local +Família prototype and the C6 extracts" as decision D-3 before triage and carried on, and the architect was told every open decision must name a recommendation. Jorge had to step in. Autopilot stopped only when no option existed, and a stand-in is always an option. 0.13.0:
+- Orchestrator 1.3.3: before triage, list every source the request and ticket name and try to open each. Another version or brand's file counts as MISSING. Triage writes them in Task Card §4 Sources and turns each MISSING one the work depends on into a `NEEDS-JORGE MISSING-SOURCE` question (rubric 2.9), so GATE-CLARIFY stops, on autopilot too.
+- New escalation MISSING-SOURCE (4.1, 4.5.1) for sources found missing later: scouts report `MISSING SOURCE:` lines, the architect writes `Recommended: NIL. MISSING-SOURCE <source>` instead of choosing a stand-in (orchestrator 2.4). Options: Jorge shares it, names the stand-in per item, or drops those items.
+- 4.5.1.1: an option existing is not enough to accept a stop; a stand-in for a named source is never a decision.
+- `tempo_state.py decide` refuses the kinds autopilot never accepts and a question that reads like a missing source ("not found", "404", "no access", "only an older version"). `--not-a-source "<why>"` lets through a missing local file that is not a source of truth, such as a git-ignored SDK link.
+
 ## How it runs inside Claude Code
 
 - The main session is the orchestrator. Subagents cannot start other subagents, so the orchestrator starts every agent, including the parallel scouts, builders and reviewers.
@@ -251,4 +260,5 @@ SHIP used `git branch -d` on the work-order and repro branches. `-d` compares wi
 - How often FOLD is skipped for a conflict; fixups that touch the same lines as a later commit cannot squash cleanly.
 - Stage log minutes for parallel builders: each log starts the next stage clock, so read per-order minutes in state §5 for build time. An order issued for PREFLIGHT starts its clock early.
 - PLAN-ONLY together with a split (plan.md slices per group of orders) has not run yet.
+- Whether MISSING-SOURCE (0.13.0) stops for things Jorge would rather TEMPO stand in for, and whether the `decide` text check refuses real decisions; both show in the run's esc files and stderr.
 - Whether slugs (0.11.0) read well as branch names, and whether outward text still names a local id; `git log --all | grep -E 'T-[0-9]+'` finds leftovers.

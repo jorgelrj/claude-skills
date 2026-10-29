@@ -17,12 +17,13 @@ Lane: {{S|M|L}} · Issued by: triage
 - Outcome: {{what is true afterwards}}. Status: {{PRESENT | ASKED | ANSWERED}}
 - Anchor: {{screen, error, file or NIL}}. Status: {{PRESENT | EXPLORE WILL FIND}}
 - Check: {{how we know it worked, or NIL}}. Status: {{PRESENT | ARCHITECT WILL DRAFT}}
+- Sources: {{each source of truth the request or ticket names: FOUND <path> or MISSING; NIL when none}}
 
 ## 5 Assumptions
 - {{Each assumption triage made. The Spec and PR repeat these at the top.}}
 
 ## 6 Questions for Jorge
-- {{Question}} Options: (a) {{option found in code}} (b) {{option}} (c) other. Recommended: {{a}}. {{NEEDS-JORGE, only when no option can be recommended}}
+- {{Question}} Options: (a) {{option found in code}} (b) {{option}} (c) other. Recommended: {{a}}. {{NEEDS-JORGE, only when no option can be recommended; NEEDS-JORGE MISSING-SOURCE when the only options are stand-ins for a missing source}}
 
 ## 7 Route
 - Next stages: {{for example Explore, Spec, Handoff, Build, Integrate, Review, QA, PR}}
