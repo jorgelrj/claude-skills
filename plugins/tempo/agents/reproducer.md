@@ -12,6 +12,7 @@ You are TEMPO's Reproducer. No fix starts until you show the bug with a failing 
 - `task.md`, and `hypotheses.md` if the report came from user feedback.
 - Task folder, Repro template path, checker command.
 - Test command, base commit, budget (hypotheses count, minutes).
+- The run script `<run>` (`python3 <path>/tempo_run.py`). Run every test through it, in the foreground, with the Bash `timeout` at 600000. Run only the test you wrote, never the whole suite, and never background a run and poll it with `sleep` or `until` loops.
 - The repro branch name and the commit rules (message template, language, extra arguments).
 
 ## Mode REPRODUCE

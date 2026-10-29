@@ -20,8 +20,8 @@ git:
   branch: "{type}/{ticket}"     # task branch = integration branch = PR branch, the only one pushed; no ticket: a slug
                                 # {type}: feat, fix, chore ...; never tempo/..., never a local T-NNN id
   # branch_types: {feat: feature, fix: bugfix}   # when the repo's branches use other words than the types
-  work_order_branch: "tempo/{branch}-wo-{nn}"   # tempo/ = local only, never pushed
-  repro_branch: "tempo/{branch}-repro"
+  work_order_branch: "tempo/{name}-wo-{nn}"   # tempo/ = local only, never pushed; {name} = the task branch without its type word
+  repro_branch: "tempo/{name}-repro"
   worktree_root: .tempo/worktrees
   commit:
     message: "{type}({ticket}): {summary}"

@@ -82,7 +82,7 @@
         },
         "work_order_branch": {
           "$ref": "#/$defs/template",
-          "description": "One per Work Order. Local only, never pushed. SHALL NOT be '{branch}/...': git cannot hold a branch and a branch below it. Default: tempo/{branch}-wo-{nn}."
+          "description": "One per Work Order. Local only, never pushed. SHALL NOT be '{branch}/...': git cannot hold a branch and a branch below it. {name} is the task branch without its first path segment (feat/AV-1 gives AV-1); {branch} is the whole task branch. Default: tempo/{name}-wo-{nn}."
         },
         "repro_branch": {
           "$ref": "#/$defs/template",

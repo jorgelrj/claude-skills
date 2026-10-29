@@ -13,8 +13,8 @@ git:
   base_branch: main
   branch: "{type}/{ticket}"    # pushed, opens the PR: feat/AV-1, fix/fix-safari-export. {ticket} is the key, else a slug
   branch_types: {}             # type -> the repo's branch word, e.g. {feat: feature, fix: bugfix}; empty: read from remote branches
-  work_order_branch: "tempo/{branch}-wo-{nn}"   # tempo/ = local only, never pushed
-  repro_branch: "tempo/{branch}-repro"
+  work_order_branch: "tempo/{name}-wo-{nn}"   # tempo/ = local only, never pushed; {name} = the task branch without its type word
+  repro_branch: "tempo/{name}-repro"
   worktree_root: .tempo/worktrees
   delete_merged_local_branches: true
   fold_fixes: true        # fixes before the PR become fixup! commits, squashed into their owner commit at SHIP

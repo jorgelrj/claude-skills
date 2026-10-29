@@ -131,6 +131,7 @@ skills/
   orchestrator/              the stage machine the commands run (gates, loops, worktrees, PR, workspaces)
     scripts/tempo_state.py   the only writer of state.json / state.md; tracker for workspace tasks
     scripts/tempo_branches.py  deletes local work-order and repro branches the task branch already holds
+    scripts/tempo_run.py       runs one test, build or lint command; prints a summary, waits for a heavy slot
   document-standard/         the document shape + scripts/check_doc.py (structure check)
   artifact-templates/        one template per artifact in templates/
   triage-rubric/             clarity questions, task types, S/M/L lanes, routes
@@ -241,10 +242,23 @@ Up to 0.13.0 the task branch defaulted to `tempo/{ticket}`, and it is the branch
 - A task started before 0.14.0 with a `tempo/` task branch is renamed before its first push (orchestrator 3.12); if already pushed it keeps the name and Jorge is told.
 - `tempo_branches.py prune` and `sweep` match the new `tempo/...` names and the pre-0.14 ones; new `pushed` lists `tempo/` branches already on a remote (report only). `/tempo:cleanup` shows them.
 
+### Less waiting on tests (0.15.0)
+
+On 2026-10-29, pod1um #64 ran 10.5 hours in 8 slices. Builders spent 4.5 of their 7 active hours inside tool calls, almost all of it running or waiting on tests; in xipp AV-6033, QA spent 1.8 of 1.9 hours the same way. The builder chain is the critical path, so that is where a task feels slow. Causes: every Work Order listed the whole client suite and the advisory Chrome target; Chrome was re-baselined for every slice (S-7's integrate spent 56 of 66 minutes on it); long commands passed the Bash tool's 2-minute default, went to the background and were polled in 3-minute `sleep` loops; agents waited on each other's suites with `pgrep`; and every fix round re-ran the full bars. Jorge also had to stop scope creep mid-spec, asked "Still going?" during a 97-minute QA, and #64 met a 210-file develop drift only at its last rebase. 0.15.0:
+- Builders run scoped tests only. The architect never puts the full test command or an advisory target in an order (architect HANDOFF 7, 7.1), the orchestrator returns an order that has one (3.7), and builders do not get the full test command (5.2.1). The whole suite is the integrator's and QA's.
+- New `tempo_run.py`: every test, build and lint command runs through it, in the foreground, with the Bash `timeout` at 10 minutes. It prints exit, time, failure lines and the tail, and keeps the output in a private log. `--heavy` (whole suites, targets, app builds) waits for one of `TEMPO_HEAVY_SLOTS` (default 1) machine-wide slots itself. Agents never background a run and poll it, never wait on `pgrep`, and never write fixed `/tmp` paths.
+- Advisory targets run once per task, at the FULL integrate after the last wave or the parent integrate of a split task, against one baseline on the task's base commit (orchestrator 3.9, 9.6). Not in slices, earlier waves, orders, fix rounds or QA.
+- Fix rounds integrate with NARROW bars: the fixed packages' tests, build and lint (integrator 5.0.1). A task whose last integrate was NARROW and that has no QA gets one FULL integrate before SHIP.
+- Ticket scope by default: a criterion cites the request, ticket or named source it comes from, or what it is needed for; what the code merely suggests goes to Spec §7 as a follow-up (architect 5.1). The spec pre-check raises MEDIUM for anything untraceable (reviewer 4.0.4).
+- Before an agent likely to run 20 minutes or more, the orchestrator tells Jorge what it does and roughly how long (2.6.1). QA writes `qa/progress.md` per criterion, which answers status questions (2.6.2).
+- Base drift: before the last-wave integrate and each slice's integrate, the orchestrator fetches the base; when it changed files the task changed, the new integrator mode REBASE moves the unpushed task branch onto it then, not at the end (3.9, 9.4.1).
+- State: a split parent sits in stage SLICES while the slices run, so HANDOFF no longer absorbs their time; each child line in §9 shows its time; BUILD is logged per wave and per slice; `log` closes every scout at EXPLORE and the round's reviewers at REVIEW, and warns when the logged stage is not the current one; `agent start` refuses a label or output with an unfilled part (`scout-`, `explore/.md`).
+- Smaller: reviewers read with `git show`/`diff`/`grep` and run at most one test file, never a suite or a new worktree; QA makes worktrees only under `git.worktree_root`; the integrator reuses its `-int` worktree and skips the bootstrap unless a lockfile changed; work-order and repro branches default to `tempo/{name}-wo-{nn}` (`{name}` = the task branch without its type word), and prune matches both the new and old names. `/tempo:init` offers to raise `BASH_MAX_TIMEOUT_MS` when one command needs more than 10 minutes.
+
 ## How it runs inside Claude Code
 
 - The main session is the orchestrator. Subagents cannot start other subagents, so the orchestrator starts every agent, including the parallel scouts, builders and reviewers.
-- Each builder gets its own git worktree at `.tempo/worktrees/<task-id>-wo-NN` on the work-order branch (default `tempo/{branch}-wo-{nn}`, local only), prepared by the config's `worktree:` steps. The integrator merges them into the task branch (`git.branch`, default `{type}/{ticket}` or the repo's own convention), which becomes the PR branch and is the only branch pushed.
+- Each builder gets its own git worktree at `.tempo/worktrees/<task-id>-wo-NN` on the work-order branch (default `tempo/{name}-wo-{nn}`, `tempo/AV-1-wo-01` for `feat/AV-1`, local only), prepared by the config's `worktree:` steps. The integrator merges them into the task branch (`git.branch`, default `{type}/{ticket}` or the repo's own convention), which becomes the PR branch and is the only branch pushed.
 - Models are set per agent in the frontmatter (`opus` for architect, investigator, reproducer, reviewer, verifier; `sonnet` for the rest). That is the L-lane default; the orchestrator passes `sonnet` for S and M stages (orchestrator §5.8).
 
 ## How review converges

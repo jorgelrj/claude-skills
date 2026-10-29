@@ -18,8 +18,8 @@ Spec: {{absolute path of spec.md, repro.md or the plan slice}}. Read its Terms s
 1. {{One instruction per step. Cite the spec (for example "spec §4, bullet 3") instead of copying it.}}
 
 ## 5 Verification
-- `{{exact command}}` passes.
-- `{{platform target command, when the order touches its paths}}` passes.
+- `{{exact command, scoped to this order's test files or packages; never the full suite}}` passes.
+- `{{non-advisory platform target, scoped to this order's tests, when the order touches its paths}}` passes.
 
 ## 6 Stop conditions
 Stop before the first edit, or as soon as one of these holds, and write the report with Result BLOCKED:

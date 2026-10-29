@@ -17,14 +17,17 @@ Usage: tempo_state.py <command> <task-dir> [args]
                                                   Refuses the stop kinds of orchestrator 4.5.1, and a question
                                                   that reads like a missing source unless --not-a-source)
   log       <dir> STAGE ARTIFACT PASS|FAIL|BLOCKED   (logging findings-rN.md raises the review count to N;
-                                                   records start and end, closes the agent that wrote ARTIFACT;
-                                                   the same stage and artifact again right after extends that entry)
+                                                   records start and end, closes the agent that wrote ARTIFACT
+                                                   (EXPLORE also closes the scouts, REVIEW the round's reviewers);
+                                                   the same stage and artifact again right after extends that entry;
+                                                   warns when STAGE is not the current stage)
   bump      <dir> review|qa|reissue               (exit 1: past the limit, raise LOOP-LIMIT;
                                                    exit 2: past limit + extensions, HARD STOP)
   wo        <dir> WO-NN [--worktree P] [--branch B] [--status S]
                                                  (an order issued again after DONE starts a new timed run)
   wait      <dir> ESC-FILE | --clear
   agent     <dir> start ID --label L --output PATH [--prompt FILE]
+                                                 (refuses a label or output with an unfilled placeholder)
   agent     <dir> done ID
   child     <dir> NAME --folder DIR            (register a child task: a repo of a workspace task, or a slice S-n)
   tracker   <dir>                              (refresh children from their state.json, write tracker.md)
@@ -40,10 +43,12 @@ import sys
 from pathlib import Path
 
 STAGES = ["TRIAGE", "EXPLORE", "INVESTIGATE", "REPRODUCE", "ROOT-CAUSE", "SPEC", "HANDOFF", "PLAN",
-          "PLANNED", "BUILD", "INTEGRATE", "REVIEW", "QA", "SHIP", "REPOS", "JOINT-QA", "DONE"]
+          "PLANNED", "SLICES", "BUILD", "INTEGRATE", "REVIEW", "QA", "SHIP", "REPOS", "JOINT-QA", "DONE"]
 STATUSES = ["RUNNING", "WAITING-ON-JORGE", "FAILED", "DONE"]
 RESULTS = ["PASS", "FAIL", "BLOCKED"]
 WO_STATUSES = ["ISSUED", "BUILDING", "DONE", "BLOCKED"]
+# A label or output left with a template hole: "scout-", "explore/.md", "<LENS>".
+UNFILLED = re.compile(r"<[A-Za-z_-]+>|\{[A-Za-z_]+\}|[-_/]$|(^|/)\.md$|[-_]\.md$")
 # Stops autopilot never accepts (orchestrator 4.5.1). decide refuses them, and refuses a question
 # that reads like a source the ticket names could not be opened: a stand-in for it is not a decision.
 STOP_KINDS = {"NO-REPRO", "BEHAVIOUR-CHANGE", "OUT-OF-ORDER-DECISION", "HARD-TO-UNDO", "MISSING-SOURCE", "GATE-PR"}
@@ -130,8 +135,16 @@ def render(s):
     section(8, "Agents in flight", [f"{k} | {v['label']} | {v['output']} | {v.get('prompt') or 'NIL'} | started {v['started']}"
                                     for k, v in s["agents"].items()])
     section(9, "Child tasks", [f"{k} | {v['folder']} | {v.get('stage') or 'TBD'} | {v.get('status') or 'TBD'} | {v.get('pr') or 'NIL'}"
-                               for k, v in s["children"].items()])
+                               + child_time(v) for k, v in s["children"].items()])
     return "\n".join(L).rstrip() + "\n"
+
+
+def child_time(v):
+    if not v.get("started"):
+        return ""
+    end = v.get("ended") or now()
+    m = minutes(v["started"], end)
+    return f" | {v['started'][11:]} → {end[11:]} ({m} min{'' if v.get('status') == 'DONE' else ' so far'})" if m is not None else ""
 
 
 def render_decisions(s):
@@ -159,7 +172,9 @@ def tracker(d, s):
         else:
             cs = None
         if cs:
-            ch.update(stage=cs["stage"], status=cs["status"], pr=cs.get("pr"), next=cs.get("next"))
+            ends = [e[-4] for e in cs.get("log", []) if len(e) == 5]
+            ch.update(stage=cs["stage"], status=cs["status"], pr=cs.get("pr"), next=cs.get("next"),
+                      started=cs.get("started"), ended=(ends[-1] if ends and cs["status"] == "DONE" else None))
         rows.append(f"| {repo} | {ch.get('stage') or 'NOT STARTED'} | {ch.get('status') or '-'} | {ch.get('pr') or '-'} | {ch.get('next') or '-'} |")
     (Path(d) / "tracker.md").write_text("\n".join(rows) + "\n", encoding="utf-8")
 
@@ -271,6 +286,10 @@ def main(argv=None):
                 print(f"CLEARED: {len(st['agents'])} agent(s) still listed in flight: {', '.join(v['label'] for v in st['agents'].values())}")
             st["agents"] = {}
     elif a.cmd == "log":
+        if a.stage != st["stage"]:
+            print(f"WARNING: logging {a.stage} while the current stage is {st['stage']}. Its start time is when "
+                  f"{st['stage']} began. Run `set --stage {a.stage}` when that stage starts, so its time is its own.",
+                  file=sys.stderr)
         prev = st["log"][-1][-4] if st["log"] else st["started"]  # end of the previous entry
         last = st["log"][-1] if st["log"] else None
         if last and len(last) == 5 and last[2] == a.stage and last[3] == a.artifact and st.get("stage_since") == last[1]:
@@ -279,7 +298,18 @@ def main(argv=None):
             st["log"].append([st.get("stage_since") or prev, now(), a.stage, a.artifact, a.result])
         st["stage_since"] = now()
         name = Path(a.artifact).name
-        for aid in [k for k, v in st["agents"].items() if Path(v.get("output") or "").name == name]:
+        rnd = re.search(r"-r(\d+)\.md$", a.artifact)
+
+        def done_with(out):
+            o = Path(out or "")
+            if o.name == name:
+                return True
+            if a.stage == "EXPLORE" and o.parent.name == "explore":  # context.md merges every scout
+                return True
+            if a.stage == "REVIEW" and rnd and o.parent.name == "review" and o.name.endswith(f"-r{rnd.group(1)}.md"):
+                return True  # the round's findings close its reviewers
+            return False
+        for aid in [k for k, v in st["agents"].items() if done_with(v.get("output"))]:
             st["agents"].pop(aid)  # its output is logged, so it is no longer in flight
         st["next"] = None  # the caller sets the next step; a stale one never survives a log
         m = re.search(r"findings-r(\d+)\.md$", a.artifact)
@@ -331,6 +361,11 @@ def main(argv=None):
         if a.action == "start":
             if not (a.label and a.output):
                 sys.exit("tempo_state: agent start needs --label and --output")
+            hole = [x for x in (a.label, a.output) if UNFILLED.search(x)]
+            if hole:
+                sys.exit(f"tempo_state: agent start: '{hole[0]}' has an unfilled part (a lens, a number). "
+                         "Pass the agent's real label and output path, e.g. --label scout-CODE-PATHS "
+                         "--output .tempo/T-001/explore/CODE-PATHS.md")
             st["agents"][a.id] = {"label": a.label, "output": a.output, "prompt": a.prompt, "started": now()}
         else:
             st["agents"].pop(a.id, None)

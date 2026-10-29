@@ -21,10 +21,11 @@ Usage: tempo_branches.py <command> [args]
   prune  --repo R --task-branch B [--base-branch X] [--branch NAME ...] [--glob PATTERN ...]
          [--from SHA ...] [--dry-run]
          check and delete the named branches and the ones matching the globs
-         (default globs: tempo/B-wo-*, tempo/B-repro, and the pre-0.14 B-wo-*, B-repro)
+         (default globs: tempo/N-wo-*, tempo/N-repro with N = B without its type word, the 0.14
+         tempo/B-wo-*, tempo/B-repro, and the pre-0.14 B-wo-*, B-repro; --glob takes {branch}, {name})
   sweep  --repo R [--wo-pattern P ...] [--repro-pattern P ...] [--dry-run]
-         prune for every task in R/.tempo/ whose stage is DONE; patterns take {branch}
-         (defaults: the four globs above with {branch} for B)
+         prune for every task in R/.tempo/ whose stage is DONE; patterns take {branch} and {name}
+         (defaults: the globs above)
   pushed --repo R
          list remote branches under tempo/. Those names are TEMPO's local work branches and
          should never have been pushed; the script only reports them, it never touches a remote
@@ -163,9 +164,15 @@ def prune(repo, task, base, names, globs, extra, dry):
                 print(f"DELETED {n} {tip[:10]} ({why})")
 
 
-# tempo/ names are local work branches (0.14.0); before that work orders were <task>-wo-NN.
-WO_PATTERNS = ["tempo/{branch}-wo-*", "{branch}-wo-*"]
-REPRO_PATTERNS = ["tempo/{branch}-repro", "{branch}-repro"]
+# tempo/{name} since 0.15.0 ({name}: the task branch without its type word), tempo/{branch} in 0.14.0,
+# <task>-wo-NN before that.
+WO_PATTERNS = ["tempo/{name}-wo-*", "tempo/{branch}-wo-*", "{branch}-wo-*"]
+REPRO_PATTERNS = ["tempo/{name}-repro", "tempo/{branch}-repro", "{branch}-repro"]
+
+
+def fill(pattern, task):
+    name = task.split("/", 1)[1] if "/" in task else task
+    return pattern.replace("{branch}", task).replace("{name}", name)
 LOCAL_PREFIX = "tempo/"
 
 
@@ -198,7 +205,7 @@ def main():
     repo = Path(a.repo)
     try:
         if a.cmd == "prune":
-            globs = a.glob or ([] if a.branch else [g.replace("{branch}", a.task_branch) for g in WO_PATTERNS + REPRO_PATTERNS])
+            globs = [fill(g, a.task_branch) for g in a.glob] or ([] if a.branch else [fill(g, a.task_branch) for g in WO_PATTERNS + REPRO_PATTERNS])
             prune(repo, a.task_branch, a.base_branch, a.branch, globs, a.extra, a.dry_run)
         elif a.cmd == "pushed":
             pushed_local(repo)
@@ -211,7 +218,7 @@ def main():
                 if s.get("stage") != "DONE" or not task:
                     continue
                 print(f"# {f.parent.name} {task}")
-                globs = [g.replace("{branch}", task) for g in patterns]
+                globs = list(dict.fromkeys(fill(g, task) for g in patterns))
                 prune(repo, task, s.get("base_branch"), [], globs, [], a.dry_run)
     except RuntimeError as e:
         print(f"ERROR {e}", file=sys.stderr)

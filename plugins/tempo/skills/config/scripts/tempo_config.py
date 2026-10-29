@@ -765,6 +765,7 @@ def main(argv=None):
                 while branch_taken(info.get("repo") or a.repo, branch):
                     branch, n = f"{base}-{n}", n + 1
             vals["branch"] = branch
+            vals["name"] = branch.split("/", 1)[1] if "/" in branch else branch  # feat/AV-1 -> AV-1
             text = {"ticket": ticket or "", "task": ticket or "", "slug": slug or ""}
             out = {"type": a.type, "ticket": ticket, "slug": slug, "branch": branch, "integration_branch": branch,
                    "branch_convention": convention,
