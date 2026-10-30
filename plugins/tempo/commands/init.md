@@ -26,5 +26,5 @@ Set up TEMPO config here: $ARGUMENTS
 6. Write the file from the skill's template (`templates/config.yaml` or `templates/workspace.yaml`). Replace `{{schema-path}}` with the absolute path of the schema. Keep the comments. Delete keys that equal the defaults, except `commands` and `git`.
 7. Make sure `.tempo/` is in `.git/info/exclude` of every repo in scope.
 8. Run `<cfg> check` (and `<cfg> check --repo <path>` for each workspace repo). Fix every finding before you finish.
-8.1 Long commands. TEMPO's agents run tests through `tempo_run.py` in the foreground with the Bash tool's 10-minute maximum. IF this repo has a single test or target command that takes longer (a whole Chrome suite, an app build), THEN tell me, and offer once to raise the ceiling in `~/.claude/settings.json` under `env`: `"BASH_MAX_TIMEOUT_MS": "1800000"`. Change the file only with my yes.
+8.1 Full bars. Default `gates.full_bars` to `on_demand`. IF the repo has no PR CI that runs the full suite, THEN tell me that a routine task will ship without it, and that `/tempo:verify` runs it. A target that is slow or red on the base gets `run: critical`.
 9. Show me the file and every guess you made (marked as guesses). IF a `REVIEW.md` is absent, THEN offer once to copy the starter from the `review-rules` skill's `templates/` folder.

@@ -23,6 +23,7 @@ description: How TEMPO finds and applies a project's rules files (CLAUDE.md, REV
 | QUICK | S | correctness | read the diff and the files it touches |
 | STANDARD | M | correctness, spec; security only when 2.2 applies | diff, touched files, direct callers |
 | DEEP | L | correctness, security, spec | diff, touched files, callers, tests, data flow from input to storage |
+| SLICE | a slice of a split task | correctness | diff, touched files, direct callers |
 | ORDER | M, L (each order) | order (3.4) | the order's diff and touched files |
 
 2.2 Security lens in M. Add it when the diff touches an entry point's authentication or authorization, parses external input into a query, command, path or template, handles secrets or tokens, moves money, or adds a dependency.

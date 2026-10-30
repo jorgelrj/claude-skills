@@ -11,7 +11,8 @@ Usage: tempo_state.py <command> <task-dir> [args]
             [--review-extensions N] [--autopilot]
   set       <dir> [--lane L] [--stage S] [--status S] [--next TEXT] [--mode M] [--title T]
             [--task-branch B] [--base-commit H] [--pr URL] [--review-limit N] [--review-extensions N]
-            [--autopilot on|off]                  (DONE clears the agents still listed in flight)
+            [--autopilot on|off] [--critical on|off] [--pattern on|off]
+                                                 (DONE clears the agents still listed in flight)
   decide    <dir> KIND --question Q --choice C --why W [--from FILE] [--not-a-source WHY]
                                                  (record a decision autopilot accepted; writes decisions.md.
                                                   Refuses the stop kinds of orchestrator 4.5.1, and a question
@@ -107,7 +108,8 @@ def save(d, s):
 def render(s):
     L = [f"# Task State: {s['task']}",
          f"Flow: {s['flow']} · Lane: {s.get('lane') or 'TBD'} · Mode: {s.get('mode', 'FULL')}"
-         f"{' · Autopilot: ON' if s.get('autopilot') else ''} · Owner: orchestrator",
+         f"{' · Autopilot: ON' if s.get('autopilot') else ''}{' · Critical' if s.get('critical') else ''}"
+         f"{' · Pattern' if s.get('pattern') else ''} · Owner: orchestrator",
          "Rendered by tempo_state.py from state.json. Do not edit.", ""]
 
     def section(n, title, items):
@@ -236,6 +238,7 @@ def main(argv=None):
     s_.add_argument("--title"); s_.add_argument("--task-branch"); s_.add_argument("--base-commit"); s_.add_argument("--pr")
     s_.add_argument("--review-limit", type=int); s_.add_argument("--review-extensions", type=int)
     s_.add_argument("--autopilot", choices=["on", "off"])
+    s_.add_argument("--critical", choices=["on", "off"]); s_.add_argument("--pattern", choices=["on", "off"])
     dc = sp.add_parser("decide"); dc.add_argument("dir"); dc.add_argument("kind")
     for x in ("--question", "--choice", "--why"):
         dc.add_argument(x, required=True)
@@ -280,6 +283,8 @@ def main(argv=None):
         if a.review_limit is not None: st["counters"]["review_limit"] = a.review_limit
         if a.review_extensions is not None: st["counters"]["review_extensions"] = a.review_extensions
         if a.autopilot: st["autopilot"] = a.autopilot == "on"
+        if a.critical: st["critical"] = a.critical == "on"
+        if a.pattern: st["pattern"] = a.pattern == "on"
         if a.status == "DONE" or a.stage == "DONE":
             st["stage"], st["status"] = "DONE", "DONE"
             if st["agents"]:

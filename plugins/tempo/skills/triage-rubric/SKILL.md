@@ -53,6 +53,8 @@ Count production files only. Test files, fixtures and docs do not count toward t
 3.7 A workspace task is not sized by its repo count. Each slice is sized on its own repo's change. "Work across several repos" is never by itself a reason for L.
 3.7.1 A large single-repo task is split at Handoff into stacked slices of 1 to 3 Work Orders when it passes `limits.split_orders` orders or `limits.split_criteria` criteria (orchestrator §9). Size it L as usual; do not shrink a task to avoid the split.
 3.8 Time estimate. Record in §3.3 the expected wall-clock time of the chosen lane: S about 10 minutes, M about 25 minutes, L 60 minutes or more. Add 10 minutes per review fix round.
+3.9 Pattern task. An M feature that copies a sibling feature already in the code, with no schema, design or dependency change, is a pattern task. The orchestrator sets it after Explore, from the scouts' `SIBLING:` line. It skips the order check, reviews at QUICK depth, and QA checks only the criteria no test covers. It keeps M's spec, because the spec is what says which sibling to copy.
+3.10 Critical. A change is critical when the request or ticket says so, or it touches authentication, money, data migration or a toolchain pin, or the repo's docs define it as critical. Record it in the Task Card §3. A critical change runs FULL bars and critical targets.
 
 ## 4 Routes
 

@@ -180,10 +180,33 @@
           "items": {
             "type": "string"
           },
-          "description": "Commands run in order inside the new worktree after copy and link."
+          "description": "Commands run in order inside the new worktree after copy and link. {worktree} is the worktree's name as a safe identifier, for a per-task database such as app_{worktree}."
+        },
+        "teardown": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Commands run inside a worktree before SHIP removes it, for what setup created. {worktree} as in setup."
         },
         "env": {
           "$ref": "#/$defs/env"
+        }
+      }
+    },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "full_bars": {
+          "type": "string",
+          "enum": ["on_demand", "integrate"],
+          "description": "When TEMPO runs the full suite. on_demand: Integrate runs NARROW bars; the full suite runs for critical changes and on /tempo:verify. integrate: every task's final integrate runs it."
+        },
+        "full_paths": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Globs. A change to a matching file runs FULL bars even when full_bars is on_demand."
         }
       }
     },
@@ -320,6 +343,9 @@
         "worktree": {
           "$ref": "#/$defs/worktree"
         },
+        "gates": {
+          "$ref": "#/$defs/gates"
+        },
         "limits": {
           "$ref": "#/$defs/limits"
         },
@@ -395,6 +421,9 @@
         "worktree": {
           "$ref": "#/$defs/worktree"
         },
+        "gates": {
+          "$ref": "#/$defs/gates"
+        },
         "limits": {
           "$ref": "#/$defs/limits"
         },
@@ -457,6 +486,9 @@
             },
             "worktree": {
               "$ref": "#/$defs/worktree"
+            },
+            "gates": {
+              "$ref": "#/$defs/gates"
             },
             "limits": {
               "$ref": "#/$defs/limits"
@@ -576,6 +608,11 @@
           "scoped_command": {
             "$ref": "#/$defs/command",
             "description": "The same run limited to some test files, used whenever the changed files map to tests. {package} is the package directory relative to the repo root ('.' for the root), {tests} the test files relative to it. Example: cd {package} && flutter test --platform chrome {tests}. Without it the full command runs."
+          },
+          "run": {
+            "type": "string",
+            "enum": ["routine", "critical"],
+            "description": "routine: runs at every integrate, scoped. critical: runs only for critical changes and on /tempo:verify. Default: critical for an advisory target, routine otherwise."
           },
           "advisory": {
             "type": "boolean",

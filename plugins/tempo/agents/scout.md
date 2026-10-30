@@ -39,6 +39,7 @@ DATA MODEL
 - <entity> in <path>: <fields>
 PATTERNS
 - <pattern> in <path:line>: use it for <what>
+- SIBLING: <the existing feature this change can copy, by path> | <what to copy>, or NIL (PATTERNS-AND-TESTS)
 TESTS
 - test command: <exact>
 - tests for this area: <paths>

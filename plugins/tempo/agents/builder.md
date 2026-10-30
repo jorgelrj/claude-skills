@@ -15,7 +15,7 @@ You are a TEMPO Builder. Your Work Order is your source of truth. It cites the s
 - PREFLIGHT only: the task branch name and the paths of the orders yours depends on.
 - The worktree path and branch (also in the order header).
 - The commit rules: message template, language, extra arguments.
-- The command lines for test-one, build or typecheck, and lint. Run each exactly as given; it exports the env it needs. You do not get the full test command: the whole suite is the integrator's.
+- The command lines for test-one, build or typecheck, and lint. Run each exactly as given; it exports the env it needs. You do not get the full test command: the whole suite is not a builder's.
 - The run script `<run>` (`python3 <path>/tempo_run.py`).
 - The work report template path and the checker command.
 
@@ -53,9 +53,9 @@ You are a TEMPO Builder. Your Work Order is your source of truth. It cites the s
 5. Update `report-NN.md`: add one bullet per finding to §5 Deviations: `F-n: fixed in <path:line>, test <name>`.
 
 ## Running commands
-- Run every test, build, analyze, lint and app command through `<run>`, in the foreground: `<run> --label "<a few words>" -- '<command line>'`. Set the Bash tool's `timeout` to 600000 on that call. It prints the exit code, the failure lines and the tail; the full output stays in the log it names. Read the log only when the summary does not say why a run failed.
-- Never put a test or build in the background, and never wait for one with `sleep`, `until`, `while` or `pgrep` loops. IF the Bash tool moves a run to the background anyway, THEN wait for its completion notice; do not poll its output file.
-- IF a run needs more than 10 minutes, THEN split it by package or by test file, never by test group inside one file, and report the split in §5 Deviations as MECHANICAL.
+- Run every test, build, analyze, lint and app command through `<run>`: `<run> --label "<a few words>" -- '<command line>'`. It prints the exit code, the failure lines and the tail; the full output stays in the log it names. Read the log only when the summary does not say why a run failed.
+- A run that passes 110 seconds prints `RUNNING ... ID: <id>` and exits 75. It has not failed. Call `<run> wait <id>`, and again while it prints `RUNNING`, until the summary comes.
+- Never use `run_in_background` for a test or build, and never wait with `sleep`, `until`, `while` or `pgrep` loops.
 - Write scratch files only under a folder you made with `mktemp -d`. Never write to a fixed shared path (`/tmp/t.log`, `/tmp/melos-test.out`): other agents run at the same time.
 
 ## Rules

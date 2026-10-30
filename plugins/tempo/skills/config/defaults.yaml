@@ -8,7 +8,20 @@ commands:
   typecheck: null
   lint: null
   run_app: null
-targets: []        # extra platform test runs: [{name, command, paths, scoped_command?, advisory?}]
+targets: []        # extra platform test runs: [{name, command, paths, scoped_command?, advisory?, run?}]
+gates:
+  full_bars: on_demand    # on_demand: Integrate runs NARROW bars; the full suite runs for critical changes and on /tempo:verify. integrate: every task's final integrate runs it
+  full_paths:             # a change to one of these is wide enough to run FULL bars
+    - "**/pubspec.lock"
+    - "**/melos.yaml"
+    - "**/pnpm-lock.yaml"
+    - "**/package-lock.json"
+    - "**/yarn.lock"
+    - "**/poetry.lock"
+    - "**/uv.lock"
+    - "**/Cargo.lock"
+    - "**/go.sum"
+    - "**/.fvmrc"
 git:
   base_branch: main
   branch: "{type}/{ticket}"    # pushed, opens the PR: feat/AV-1, fix/fix-safari-export. {ticket} is the key, else a slug
@@ -31,6 +44,7 @@ worktree:
   copy: []
   link: []
   setup: []
+  teardown: []
   env: {}
 limits:
   max_parallel_builders: 3

@@ -39,12 +39,18 @@ pr:
 #     command: cd app && flutter test --platform chrome            # the whole suite (rarely run)
 #     scoped_command: cd {package} && flutter test --platform chrome {tests}   # just the tests a change touches
 #     advisory: true              # red on the base branch: only failures the base lacks block
+#     run: critical               # critical changes and /tempo:verify only (default for advisory); routine: every integrate
 #     paths: [app/lib/**, app/test/**]
+
+gates:
+  full_bars: on_demand          # on_demand: full suite for critical changes and /tempo:verify; integrate: every task
+  # full_paths: []              # files whose change forces full bars (default: lockfiles and toolchain pins)
 
 worktree:                       # a new worktree has only tracked files
   copy: []                      # gitignored files to copy, e.g. [.env.local]
   link: []                      # big gitignored folders to symlink, e.g. [node_modules, app/.fvm]
-  setup: []                     # commands run inside the new worktree, in order
+  setup: []                     # commands run inside the new worktree, in order; {worktree} is a safe name
+  teardown: []                  # commands run before SHIP removes the worktree, e.g. dropdb app_{worktree}
   env: {}
 
 docs:                           # the project's own docs; agents read them before searching the code

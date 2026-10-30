@@ -63,7 +63,7 @@ Only blocks-start orders the work; see `skills/triage-rubric/SKILL.md` §5.
 | Lane | Production files | Stages | Rough time |
 |---|---|---|---|
 | S | 1–3 | Work Order from the Task Card → Build → correctness review → PR | ~10 min |
-| M | 4–8, one area | 2 scouts → spec (+ Work Orders in one architect call) → Build → correctness + spec review → QA → PR | ~25 min |
+| M | 4–8, one area | 2 scouts → spec (+ Work Orders in one architect call) → Build → correctness + spec review → QA → PR. A pattern task, one that copies a sibling feature, skips the order check, gets the correctness review only, and QA checks what no test covers | ~25 min |
 | L | more than 8, new design, schema or dependency | 3 scouts → spec → pre-check → spec gate → parallel Build → 3-lens review → QA → PR | 60+ min |
 
 Triage sizes from the request; Explore re-sizes from the files it actually found. In S and M the architect runs on Sonnet, and so do reviewers on diffs of 150 lines or fewer and the verifier on 3 candidates or fewer; L keeps Opus. The spec pre-check runs in L, and in M only when the spec has a state model. The verifier is skipped when reviewers found nothing (or only LOW items). A small MEDIUM/LOW fix goes straight back to the builder (mode FIX) without re-amending the spec.
@@ -113,7 +113,7 @@ Spec approval, the workspace plan, clarify questions with a recommendation, loop
 .claude-plugin/
   plugin.json                 plugin manifest (listed in the repo root's marketplace.json)
 commands/
-  feature.md  bug.md  plan.md  resume.md  init.md  cleanup.md
+  feature.md  bug.md  plan.md  resume.md  init.md  cleanup.md  verify.md
 agents/
   triage.md        classify, clarity check, size, route → task.md
   scout.md         read-only explorer, one lens per instance → merged into context.md
@@ -254,6 +254,19 @@ On 2026-10-29, pod1um #64 ran 10.5 hours in 8 slices. Builders spent 4.5 of thei
 - Base drift: before the last-wave integrate and each slice's integrate, the orchestrator fetches the base; when it changed files the task changed, the new integrator mode REBASE moves the unpushed task branch onto it then, not at the end (3.9, 9.4.1).
 - State: a split parent sits in stage SLICES while the slices run, so HANDOFF no longer absorbs their time; each child line in §9 shows its time; BUILD is logged per wave and per slice; `log` closes every scout at EXPLORE and the round's reviewers at REVIEW, and warns when the logged stage is not the current one; `agent start` refuses a label or output with an unfilled part (`scout-`, `explore/.md`).
 - Smaller: reviewers read with `git show`/`diff`/`grep` and run at most one test file, never a suite or a new worktree; QA makes worktrees only under `git.worktree_root`; the integrator reuses its `-int` worktree and skips the bootstrap unless a lockfile changed; work-order and repro branches default to `tempo/{name}-wo-{nn}` (`{name}` = the task branch without its type word), and prune matches both the new and old names. `/tempo:init` offers to raise `BASH_MAX_TIMEOUT_MS` when one command needs more than 10 minutes.
+
+### Unit tests per change, full runs when chosen (0.16.0)
+
+On 2026-10-29, after 0.15.0, five tasks ran at once and Integrate took 45 to 96 minutes against 6 to 70 of Build. Integrate had logged 67 rounds with no failure across both projects, and the Chrome target no real catch in its kept reports, while review failed 28 of 86 rounds. Subagent commands were still moved to the background at 3 minutes, a harness cap that no `timeout` lifts, so agents kept polling. AV-6004 showed the other cost: review rounds, not tests. Report: https://claude.ai/artifact/XEVu3g95UqrL9CwpZGbJCB. 0.16.0:
+
+- Full bars at a chosen point. `gates.full_bars: on_demand` (the default): Integrate runs NARROW bars, the touched packages' tests, build and lint. The full suite runs for a critical change, for a change to `gates.full_paths` (lockfiles, toolchain pins), and on the new `/tempo:verify`. The PR body says when it did not run. `<cfg> bars` decides. `full_bars: integrate` restores the old behaviour.
+- Targets take `run: routine|critical`; an advisory target defaults to critical, so a routine task starts no Chrome and no base comparison.
+- `tempo_run.py` runs the command in a detached worker. Each call blocks up to 110 seconds; a longer run returns `RUNNING` with an ID for `tempo_run.py wait`.
+- QA no longer runs the full suite: it cites the head Integrate proved.
+- Heavy slots default to CPUs / 4. `worktree.setup` and the new `worktree.teardown` take `{worktree}`, for a per-task test database.
+- Split tasks: each slice gets the order check and the correctness lens; the other lenses run once on the parent.
+- Pattern tasks (triage-rubric §3.9): an M feature that copies a sibling skips the order check, reviews at QUICK depth, and QA skips what tests assert.
+- State: workspace tasks log the children's time as REPOS, so JOINT-QA holds only QA.
 
 ## How it runs inside Claude Code
 

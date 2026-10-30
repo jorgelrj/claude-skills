@@ -11,6 +11,7 @@ Lane: {{S|M|L}} · Issued by: triage
 - Type: {{FEATURE | BUG-KNOWN | BUG-FEEDBACK}}
 - Size: {{S | M | L}}
 - Reason for size: {{files in scope, new design yes/no, data change yes/no}}
+- Critical: {{NO | YES, with the rubric §3.10 reason}}
 
 ## 4 Clarity
 - Target: {{the thing that changes}}. Status: {{PRESENT | ASKED | ANSWERED}}

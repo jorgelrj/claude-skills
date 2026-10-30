@@ -9,7 +9,7 @@ Inputs: {{spec.md | repro.md}}, integration.md · Issued by: qa
 - {{AC tag}}: {{PASS | FAIL | BLOCKED}}. Method: {{TEST | COMMAND | RUN APP}}. Evidence: {{test name, command and exit code, or screenshot path}}
 
 ## 3 Regression check
-- `{{full test command}}`: exit {{code}}. {{pass and fail counts}}
+- Integrate at {{head}}, bars {{FULL | NARROW}}: {{result}}. {{Commands run for commits after that head, or NIL}}
 
 ## 4 Failures returned to build
 - {{AC tag}} to WO-{{nn}}: {{evidence}}. NIL if none.

@@ -25,10 +25,14 @@ Commands:
                                          prefixes of its remote branches, else {type}/{ticket}); tempo/ names
                                          are local work branches only and never name the task branch
   cmd     NAME [--var k=v ...]           print one command as a shell line, env exported first
-  targets [--paths P ...] [--ref REF] [--full]
+  targets [--paths P ...] [--ref REF] [--full] [--critical]
                                          print the platform test runs for the changed paths: scoped to the
-                                         tests those paths touch or mirror when a target has scoped_command
+                                         tests those paths touch or mirror when a target has scoped_command.
+                                         Targets with run: critical (advisory targets by default) print only
+                                         with --critical or --full
+  bars    [--paths P ...] [--critical]   print the bars an integrate runs: BARS: FULL|NARROW and why
   setup   --worktree PATH                print the shell steps that prepare a new worktree
+  teardown --worktree PATH               print the shell steps that release a worktree's resources
   repos                                  list workspace repos in dependency order
   docs    [--format list|json]           list the project's doc files (config docs:), index files first
   migrate FILE                           convert a legacy .tempo/config.md to YAML on stdout
@@ -688,7 +692,10 @@ def main(argv=None):
     t = add("targets"); t.add_argument("--paths", nargs="*")
     t.add_argument("--ref", help="find test files in this commit (default: the files git tracks in the checkout)")
     t.add_argument("--full", action="store_true", help="print each target's full command, never the scoped one")
+    t.add_argument("--critical", action="store_true", help="include the targets that run for critical changes only")
+    bs = add("bars"); bs.add_argument("--paths", nargs="*", default=[]); bs.add_argument("--critical", action="store_true")
     s = add("setup"); s.add_argument("--worktree", required=True)
+    td = add("teardown"); td.add_argument("--worktree", required=True)
     add("repos")
     dc = add("docs"); dc.add_argument("--format", choices=["list", "json"], default="list")
     g = add("migrate"); g.add_argument("file")
@@ -790,6 +797,8 @@ def main(argv=None):
         if a.cmd == "targets":
             files = None
             for tg in cfg.get("targets") or []:
+                if not (a.critical or a.full) and tg.get("run", "critical" if tg.get("advisory") else "routine") == "critical":
+                    continue
                 tail = "\tadvisory" if tg.get("advisory") else ""
                 full = f"{tg['name']}\t{env_prefix(cfg.get('env'))}{tg['command']}{tail}"
                 if a.paths is None:
@@ -810,6 +819,27 @@ def main(argv=None):
                           f"{' ...' if len(unmapped) > 10 else ''}{tail}")
             return 0
 
+        if a.cmd == "bars":
+            gates = cfg.get("gates") or {}
+            hit = [f for f in a.paths if any(_matches(f, pat) for pat in gates.get("full_paths") or [])]
+            if gates.get("full_bars") == "integrate":
+                print("BARS: FULL  WHY: gates.full_bars is integrate")
+            elif a.critical:
+                print("BARS: FULL  WHY: critical change")
+            elif hit:
+                print(f"BARS: FULL  WHY: gates.full_paths matches {' '.join(hit[:5])}")
+            else:
+                print("BARS: NARROW  WHY: routine change")
+            return 0
+
+        if a.cmd == "teardown":
+            wt = Path(a.worktree)
+            w = cfg.get("worktree") or {}
+            env = {**(cfg.get("env") or {}), **(w.get("env") or {})}
+            name = re.sub(r"[^a-z0-9]+", "_", wt.name.lower()).strip("_")
+            print("\n".join(f"(cd {shlex.quote(str(wt))} && {env_prefix(env)}{fill(c, {'worktree': name})})"
+                            for c in w.get("teardown", [])) or "# no worktree teardown configured"); return 0
+
         if a.cmd == "setup":
             wt, repo = Path(a.worktree), Path(info["repo"] or ".")
             w = cfg.get("worktree") or {}
@@ -819,8 +849,9 @@ def main(argv=None):
             for f in w.get("link", []):
                 steps.append(f"mkdir -p {shlex.quote(str((wt / f).parent))} && ln -sfn {shlex.quote(str(repo / f))} {shlex.quote(str(wt / f))}")
             env = {**(cfg.get("env") or {}), **(w.get("env") or {})}
+            name = re.sub(r"[^a-z0-9]+", "_", wt.name.lower()).strip("_")
             for cmd in w.get("setup", []):
-                steps.append(f"(cd {shlex.quote(str(wt))} && {env_prefix(env)}{cmd})")
+                steps.append(f"(cd {shlex.quote(str(wt))} && {env_prefix(env)}{fill(cmd, {'worktree': name})})")
             print("\n".join(steps) if steps else "# no worktree setup configured"); return 0
 
         if a.cmd == "docs":
