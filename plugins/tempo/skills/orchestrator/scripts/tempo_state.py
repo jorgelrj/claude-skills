@@ -12,7 +12,9 @@ Usage: tempo_state.py <command> <task-dir> [args]
   set       <dir> [--lane L] [--stage S] [--status S] [--next TEXT] [--mode M] [--title T]
             [--task-branch B] [--base-commit H] [--pr URL] [--review-limit N] [--review-extensions N]
             [--autopilot on|off] [--critical on|off] [--pattern on|off]
-                                                 (DONE clears the agents still listed in flight)
+                                                 (DONE clears the agents still listed in flight. Stage DONE and
+                                                  status DONE, FAILED or ABORTED tear the task down: every process
+                                                  it started stops, see tempo_procs.py)
   decide    <dir> KIND --question Q --choice C --why W [--from FILE] [--not-a-source WHY]
                                                  (record a decision autopilot accepted; writes decisions.md.
                                                   Refuses the stop kinds of orchestrator 4.5.1, and a question
@@ -26,7 +28,7 @@ Usage: tempo_state.py <command> <task-dir> [args]
                                                    exit 2: past limit + extensions, HARD STOP)
   wo        <dir> WO-NN [--worktree P] [--branch B] [--status S]
                                                  (an order issued again after DONE starts a new timed run)
-  wait      <dir> ESC-FILE | --clear
+  wait      <dir> ESC-FILE | --clear            (a wait stops the task's services: tempo_procs.py teardown --services-only)
   agent     <dir> start ID --label L --output PATH [--prompt FILE]
                                                  (refuses a label or output with an unfilled placeholder)
   agent     <dir> done ID
@@ -39,13 +41,30 @@ Exit 0 ok, 1 error.
 import argparse
 import datetime as dt
 import json
+import os
 import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import tempo_procs  # noqa: E402
+
+
+def teardown(d, services_only):
+    """Stop what the task started (orchestrator section 10). Never fails the state change."""
+    try:
+        lines, bad = tempo_procs.teardown(d, services_only=services_only, quiet=True)
+        for line in lines:
+            print(line)
+        if bad:
+            print(f"TEARDOWN: {bad} process(es) could not be stopped; run /tempo:sweep", file=sys.stderr)
+    except Exception as e:
+        print(f"TEARDOWN: error {e}; run /tempo:sweep", file=sys.stderr)
+
 STAGES = ["TRIAGE", "EXPLORE", "INVESTIGATE", "REPRODUCE", "ROOT-CAUSE", "SPEC", "HANDOFF", "PLAN",
           "PLANNED", "SLICES", "BUILD", "INTEGRATE", "REVIEW", "QA", "SHIP", "REPOS", "JOINT-QA", "DONE"]
-STATUSES = ["RUNNING", "WAITING-ON-JORGE", "FAILED", "DONE"]
+STATUSES = ["RUNNING", "WAITING-ON-JORGE", "FAILED", "ABORTED", "DONE"]
+ENDED = ("DONE", "FAILED", "ABORTED")
 RESULTS = ["PASS", "FAIL", "BLOCKED"]
 WO_STATUSES = ["ISSUED", "BUILDING", "DONE", "BLOCKED"]
 # A label or output left with a template hole: "scout-", "explore/.md", "<LENS>".
@@ -257,6 +276,7 @@ def main(argv=None):
     ad = sp.add_parser("adopt"); ad.add_argument("dir")
     a = p.parse_args(argv)
     d = Path(a.dir)
+    tempo_procs.register(d, tempo_procs.find_owner())  # marks this session as a TEMPO session for the hooks
 
     if a.cmd == "init":
         if (d / "state.json").exists():
@@ -287,6 +307,7 @@ def main(argv=None):
         if a.pattern: st["pattern"] = a.pattern == "on"
         if a.status == "DONE" or a.stage == "DONE":
             st["stage"], st["status"] = "DONE", "DONE"
+        if st["status"] in ENDED:
             if st["agents"]:
                 print(f"CLEARED: {len(st['agents'])} agent(s) still listed in flight: {', '.join(v['label'] for v in st['agents'].values())}")
             st["agents"] = {}
@@ -387,6 +408,10 @@ def main(argv=None):
         return 0
     save(d, st)
     print(f"STATE: {d}/state.md  STAGE: {st['stage']}  STATUS: {st['status']}")
+    if a.cmd == "set" and st["status"] in ENDED:
+        teardown(d, services_only=False)
+    elif a.cmd == "wait" and a.file:
+        teardown(d, services_only=True)
     return 0
 
 

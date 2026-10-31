@@ -13,5 +13,5 @@ Run the full bars on: $ARGUMENTS
    - `<cfg> cmd lint`
    - each line of `<cfg> targets --full`
 4. A failing advisory target: compare with the baseline as integrator 5.1 says. Only failures the base lacks count.
-5. Run the `<cfg> teardown` lines, and remove the worktree.
+5. Run the `<cfg> teardown` lines, and remove the worktree. Use `<run>` without `--task` here: each run stops what its command left running. A server or emulator a target needs starts with `<procs> start --task <worktree>/.tempo-verify --label <name> -- '<command>'`; stop it with `<procs> teardown --task <worktree>/.tempo-verify` before you remove the worktree.
 6. Tell me in one line per command: exit, time, failure count. Name each failing test. Fix nothing. A failure goes to me: I decide whether it becomes a `/tempo:bug` task.

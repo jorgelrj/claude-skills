@@ -16,5 +16,6 @@ Resume TEMPO task: $ARGUMENTS
 5.1 IF the words after the ID are `review-limit <N>`, THEN I raise the review round limit: run `<state> set <dir> --review-limit <N>` and continue. This is the only way past the review hard stop (orchestrator 3.10.6).
    - IF no answer is given and autopilot is ON and orchestrator 4.5.2 lists the open stop, THEN accept its recommendation as 4.5.3 says and continue.
    - IF no answer is given otherwise, THEN show me the open escalation's question, options and recommendation again, and stop.
+5.2 IF the status is ABORTED or FAILED, THEN run `<state> set <dir> --status RUNNING` first. Teardown (orchestrator section 10) stopped the task's services at the wait, abort or failure; the agents that need a server or emulator start it again with `<procs> start`.
 6. IF a worktree listed in `state.md` §5 is missing, THEN recreate it from its branch with `git worktree add`.
 7. Continue from §7 Next action. Stop only at the gates and escalations in orchestrator §4 (on autopilot, only those in 4.5.1).

@@ -14,9 +14,18 @@ and app builds: too many at once run slower than a queue. The wait happens insid
 worker and is reported as WAITED. Scoped runs (one package, a few test files) do not
 take a slot.
 
-Usage: tempo_run.py [--heavy] [--slots N] [--label L] [--log-dir DIR] [--tail N]
+Leftovers. Every process a run starts carries TEMPO_RUN=<id> (and the task's
+TEMPO_TAG and TEMPO_OWNER, see tempo_procs.py). When the command ends, anything it
+left running (a test's emulator, chromedriver, a server it forgot) is stopped and
+named in the summary as LEFTOVERS. Build daemons that make the next build faster
+(Gradle, Kotlin) stay until the task's teardown; TEMPO_KEEP_DAEMONS sets that
+pattern, and an empty value keeps nothing. A long-lived process that should outlive the
+command (a dev server, an emulator for QA) is started with `tempo_procs.py start`.
+
+Usage: tempo_run.py [--task DIR] [--heavy] [--slots N] [--label L] [--log-dir DIR] [--tail N]
                     [--timeout SECONDS] [--max SECONDS] -- COMMAND [ARG ...]
-       tempo_run.py wait ID [--max SECONDS]
+       tempo_run.py [--task DIR] wait ID [--max SECONDS]
+  --task names the task folder (.tempo/<task-id>), so teardown and sweep find what the run left.
   One COMMAND argument runs through bash -c (a command line from `tempo_config.py cmd`);
   several run as an argument list. --max defaults to 110, inside the Bash tool's default 2-minute timeout; 0 blocks until the run ends.
 Prints:
@@ -41,12 +50,16 @@ import tempfile
 import time
 from pathlib import Path
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import tempo_procs  # noqa: E402
+
 LOCK_DIR = Path(os.environ.get("TEMPO_LOCK_DIR") or Path.home() / ".cache" / "tempo" / "locks")
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 FAILURE = re.compile(
     r"\[E\]|\bFAIL(ED|URE)?\b|\bfailed\b|Some tests failed|\bError:|error •|\bERROR\b|Exception|✗|✘|"
     r"Test failed|AssertionError|Expected:|panicked at|BUILD FAILED|exit code [1-9]",
     re.IGNORECASE)
+KEEP_DAEMONS = re.compile(os.environ.get("TEMPO_KEEP_DAEMONS", r"GradleDaemon|KotlinCompileDaemon|kotlin-daemon") or "(?!x)x")
 NOISE = re.compile(r"^\s*$|^\d+:\d+ \+\d+(?: ~\d+)?: (?:loading|All tests passed)", re.IGNORECASE)
 
 
@@ -124,6 +137,7 @@ def worker(run, opts, cmd):
         if lock:
             lock.seek(0); lock.truncate(); lock.close()
     took = time.monotonic() - start
+    stopped, kept = reap_leftovers(run.name, locals().get("proc"))
 
     fails, total, tail = summary(log, opts["tail"])
     rows = [f"RUN: {opts['label']}  EXIT: {code}  TIME: {clock(took)}  WAITED: {clock(waited)}  LOG: {log}"]
@@ -134,12 +148,32 @@ def worker(run, opts, cmd):
         rows += fails
     else:
         rows.append("FAILURES: NIL")
+    if stopped:
+        rows.append(f"LEFTOVERS: stopped {len(stopped)} the command left running: " + "; ".join(stopped)[:400])
+    if kept:
+        rows.append(f"KEPT: {len(kept)} build daemon(s) until the task's teardown")
     rows.append("TAIL:")
     rows += tail
     tmp = run / "result.tmp"
     tmp.write_text("\n".join(rows) + "\n", encoding="utf-8")
     (run / "code").write_text(str(code))
     tmp.rename(run / "result.txt")  # last: its presence means the run is over
+
+
+def reap_leftovers(run_id, proc):
+    """Stop what the command left running: processes marked with this run, or in its process group."""
+    try:
+        table = tempo_procs.snapshot()
+        mine = tempo_procs.protected(table)
+        group = proc.pid if proc is not None else None
+        hits = [p for p in table.values() if p["pid"] not in mine and
+                (tempo_procs.marks(p)["run"] == run_id or (group and p["pgid"] == group))]
+        kept = [p for p in hits if KEEP_DAEMONS.search(p["command"])]
+        gone = [p for p in hits if p not in kept]
+        tempo_procs.kill_all([p["pid"] for p in gone], grace=5)
+        return [f"{p['command'][:60]} ({tempo_procs.mb(p['rss_kb'])})" for p in gone], kept
+    except Exception as e:  # cleanup never fails the run
+        return [f"cleanup error: {e}"], []
 
 
 def wait(run, max_seconds):
@@ -172,6 +206,9 @@ def alive(pid):
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    task = None
+    if argv[:1] == ["--task"] and len(argv) > 1:
+        task, argv = argv[1], argv[2:]
     if argv[:1] == ["--worker"]:
         run = Path(argv[1])
         opts = json.loads((run / "opts.json").read_text())
@@ -186,6 +223,7 @@ def main(argv=None):
     p = argparse.ArgumentParser(prog="tempo_run.py", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--heavy", action="store_true", help="take a machine-wide slot first")
+    p.add_argument("--task", help="the task folder, .tempo/<task-id>")
     p.add_argument("--slots", type=int, default=default_slots())
     p.add_argument("--label", help="a few words naming the run (default: the command)")
     p.add_argument("--log-dir", help="folder for the log (default: a new private temp folder)")
@@ -197,6 +235,7 @@ def main(argv=None):
     cmd = a.command[1:] if a.command[:1] == ["--"] else a.command
     if not cmd:
         p.print_usage(sys.stderr); return 2
+    task = task or a.task
     label = a.label or " ".join(cmd)[:80]
     run = Path(tempfile.mkdtemp(prefix="tempo-run-"))
     log_dir = Path(a.log_dir) if a.log_dir else run
@@ -206,8 +245,12 @@ def main(argv=None):
     opts = {"label": label, "log": str(log), "heavy": a.heavy, "slots": a.slots, "tail": a.tail,
             "timeout": a.timeout, "cmd": cmd, "cwd": os.getcwd(), "started": time.time()}
     (run / "opts.json").write_text(json.dumps(opts))
+    owner = tempo_procs.find_owner()
+    if task:
+        tempo_procs.register(task, owner)
+    env = tempo_procs.task_env(task, owner, run=run.name)
     w = subprocess.Popen([sys.executable, os.path.abspath(__file__), "--worker", str(run)],
-                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, env=env,
                          stderr=open(run / "worker.err", "w"), start_new_session=True)
     opts["pid"] = w.pid
     (run / "opts.json").write_text(json.dumps(opts))

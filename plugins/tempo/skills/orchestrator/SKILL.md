@@ -21,6 +21,8 @@ Nothing travels between agents except files in `.tempo/<task-id>/`.
 0.9 Baseline script: `<bl>` is `python3 <orch>/scripts/tempo_baseline.py`. Standard library only. It records which platform-target tests already fail on a base commit (`.tempo/baselines/`) and compares a run with them by name. Its docstring lists every subcommand.
 0.10 Branch script: `<br>` is `python3 <orch>/scripts/tempo_branches.py`. Standard library only. It deletes local work-order and repro branches whose work the task branch already holds, and keeps everything else. Its docstring lists the checks.
 0.11 Run script: `<run>` is `python3 <orch>/scripts/tempo_run.py`. Standard library only. Agents run every test, build, lint and target command through it: the command runs in a detached worker, each call blocks up to 110 seconds, and a longer run returns `RUNNING` (exit 75) with an ID for `<run> wait <ID>`. That stays under the 3-minute cap Claude Code puts on commands in async subagents, which no `timeout` lifts. The summary holds exit, time, failure lines and tail, and the output stays in a log. `--heavy` takes one of a few machine-wide slots. Pass it to every agent that runs code (5.2.1). Its docstring has the flags.
+0.11.1 Always define `<run>` with the task folder: `python3 <orch>/scripts/tempo_run.py --task <abs task dir>`. Every process a run starts is then marked with the task, and what the command leaves running (a test's emulator, chromedriver) is stopped when it ends and named as LEFTOVERS in the summary.
+0.12 Process script: `<procs>` is `python3 <orch>/scripts/tempo_procs.py`. Standard library only. Anything that must keep running past one command (a dev server, the app for QA, an emulator or simulator, a watcher, a docker stack) starts with `<procs> start --task <abs task dir> --label <name> [--ready <regex>] [--stop <cmd>] -- '<command>'` and stops with `<procs> stop --task <dir> --label <name>`. It records the process in `<task dir>/procs.json` and marks it and all its children with the task. Section 10 says when TEMPO tears a task down. Pass `<procs>` to every agent that runs code (5.2.1).
 
 ## 1 Start of every run
 
@@ -197,6 +199,7 @@ A review that arrives after GATE-PR (an automated reviewer on the PR or the issu
 - Task branch name. IF the task branch starts with `tempo/` (a task started before 0.14.0), THEN before the first push run `names` again with `--type`, `--ticket` and `--slug` (no `--branch`), `git branch -m <old> <new>`, and `<state> set <dir> --task-branch <new>`. IF the old name is already on a remote, THEN keep pushing it there (renaming would orphan the PR) and tell Jorge once in the GATE-PR message.
 - Push the task branch and open a pull request against `pr.base`. Push nothing else: work-order and repro branches stay local (1.7.2). Draft when `pr.draft` is true. IF `pr.tool` is `none`, THEN push nothing and give Jorge the exact commands.
 - IF pushing or `gh` fails, THEN stop, keep the branch local, and give Jorge the exact commands.
+- Teardown first (section 10): `<procs> teardown --task <dir>`, so nothing still runs inside a worktree you remove.
 - Remove the task's worktrees: run the lines `<cfg> teardown --worktree <path>` prints for each, then `git worktree remove`.
 - IF `git.delete_merged_local_branches` is true, THEN run `<br> prune --repo <repo> --task-branch <task branch> --base-branch <git.base_branch> --glob "<git.work_order_branch with {branch} and {name} filled and {nn} as *>" --branch <repro branch>` (with the work-order and repro names as the state recorded them), adding `--from <FROM hash>` when FOLD ran. Never use `git branch -d` for this: it compares with the base branch, which never has these commits, and always refuses. The script deletes a branch only when the task branch holds its work (merged, same patches, or folded) and keeps the task branch, the base branch, any branch checked out, pushed or tracking a remote, and any branch with commits the task branch lacks. Report the KEPT lines to Jorge in the GATE-PR message only when one says commits are missing; that is work that did not ship.
 - Raise GATE-PR: give Jorge the PR link and a 3-line summary. On autopilot, add one line: "<n> decisions made on autopilot, listed in the PR body." Jorge merges. TEMPO never merges.
@@ -236,7 +239,7 @@ A review that arrives after GATE-PR (an automated reviewer on the PR or the issu
 1.1 LOOP-LIMIT and FIX-CHAIN: "the fix is small" is not a reason to recommend another round. Each of the last fix rounds was small too. Recommend re-spec when findings were introduced by fixes; otherwise recommend shipping known risks unless a HIGH finding is open.
 1.1.1 MISSING-SOURCE: recommend (a). A stand-in TEMPO picked (an older version, another brand's asset, a drawing of its own) is never the recommendation.
 1.2 GATE-PR: IF review has reached the hard stop, THEN the options do not include a fix round. A fix after the PR is open is a review round (3.10.1).
-2. Run `<state> wait <dir> esc-N.md`.
+2. Run `<state> wait <dir> esc-N.md`. It stops the task's services (section 10): Jorge may answer hours later, and an emulator or a server must not run while the question waits. Start them again when the task continues.
 3. Send Jorge one message: the question, the options, the recommendation, and "Reply yes to accept, or /tempo:resume <task-id> <answer> later."
 4. End your turn. Do not continue other stages of this task while waiting, except read-only work.
 4.3 On Jorge's answer, record it in `esc-N.md` §6 Answer, run `<state> wait <dir> --clear` and continue from `state.md` §7 Next action.
@@ -277,13 +280,14 @@ When autopilot is ON (1.0.2, or `state.json` `autopilot` on resume), TEMPO answe
 4.5.4 Progress stays one line per milestone (2.6). Do not message Jorge about an accepted stop. The GATE-PR message counts them.
 4.5.5 PLAN-ONLY mode still ends at GATE-PLAN: the plan is the deliverable. Autopilot stays recorded in the state, so `/tempo:resume <task-id> build` continues on autopilot and accepts the plan's recommendations there.
 4.5.6 Child tasks and split slices (sections 6 and 9) inherit the parent's autopilot: pass `--autopilot` to their `init`.
+4.5.6.1 An accepted stop does not run `<state> wait`, so it tears nothing down.
 4.5.7 Autopilot never widens what TEMPO may do. 5.6 holds: never merge, never push to the base branch, never force-push.
 
 ## 5 Rules for the orchestrator
 
 5.1 Give each agent only the files its stage reads (see the index in the artifact-templates skill). Do not paste conversation history into an agent prompt.
 5.2 Every agent prompt SHALL state: task ID, mode or lens, the absolute path of each input, the absolute path of each output, the template path, and the checker command.
-5.2.1 Agents that run code also get: the command lines from §1.8, the run script `<run>` (0.11), the branch names from §1.7, and the commit rules (`git.commit.message`, `git.commit.language`, `git.commit.extra_args`). Builders get the test-one, build or typecheck and lint commands, not the full test command: the whole suite is the integrator's and QA's.
+5.2.1 Agents that run code also get: the command lines from §1.8, the run script `<run>` (0.11, with `--task`), the process script `<procs>` with the task folder (0.12), the branch names from §1.7, and the commit rules (`git.commit.message`, `git.commit.language`, `git.commit.extra_args`). Builders get the test-one, build or typecheck and lint commands, not the full test command: the whole suite is the integrator's and QA's.
 5.2.2 Every output path SHALL be the final path in `.tempo/<task-id>/`. No agent writes an artifact to a temp folder first.
 5.3 Run independent agents in parallel, in one message.
 5.4 Do not write production code yourself. Builders write code. You MAY fix a document's structure (§2.2).
@@ -340,3 +344,23 @@ When autopilot is ON (1.0.2, or `state.json` `autopilot` on resume), TEMPO answe
 9.4.1 Base drift (3.9) is checked before each slice's integrate. A REBASE there moves the slice's branch, which holds every earlier slice, onto the new base; record the new base in the parent and in the slice (`<state> set --base-commit`). Later slices start from the rebased branch.
 9.5 Run `<state> tracker <dir>` after every child stage.
 9.6 When the last slice passes review, fast-forward the parent task branch to it. Check base drift (3.9) once more. Call the integrator once on the parent with the bars 3.9 chooses, on the whole task diff. Then run one REVIEW round (3.10) over the whole diff at the task's lane depth. Its fixes go to the owning order's builder on the parent branch, then NARROW bars. Run QA (3.11) against all of Spec §3, then SHIP (3.12) one PR whose commits keep the slice order. Fixups from every slice fold at that SHIP.
+
+## 10 Teardown
+
+10.1 A task cleans up after itself. Every process it started for building or testing stops when the task stops, and nothing it did not start is touched. A leftover emulator, Java stack and two watchers once held 13 GB on Jorge's Mac for up to 42 hours.
+10.2 What TEMPO started is known, not guessed. `<run>` and `<procs> start` mark each process with the task (`TEMPO_TAG`) and the session (`TEMPO_OWNER`), and every child inherits the marks, even one a helper script starts with nohup. `<procs> start` also records each service in `procs.json`. Teardown stops exactly the marked processes and the ledger's process groups, and runs each ledger `--stop` command (a `docker compose down`, an `adb emu kill`).
+10.3 When it runs. `<state>` runs it, so no path forgets it:
+| Event | What stops |
+|---|---|
+| `<state> wait <dir> <file>` (a gate or escalation waits on Jorge) | services only (`--services-only`); runs in flight finish on their own |
+| `<state> set <dir> --stage DONE` or `--status DONE` (shipped, or a plan delivered and closed) | everything the task started, children and slices included |
+| `<state> set <dir> --status FAILED` (the run cannot go on) | everything |
+| `<state> set <dir> --status ABORTED` (Jorge stops or drops the task) | everything |
+| The Claude Code session ends (SessionEnd hook) | everything this session's tasks started |
+10.4 Abort and failure. IF Jorge says to stop, cancel or drop a task, THEN run `<state> set <dir> --status ABORTED --next "Aborted by Jorge"`. IF the run ends on an error you cannot get past, THEN `<state> set <dir> --status FAILED --next "<what failed>"` before you tell Jorge. Resume clears either with `set --status RUNNING`.
+10.5 SHIP calls `<procs> teardown --task <dir>` before it removes worktrees (3.12).
+10.6 Report. Teardown prints one STOPPED line per process and a RAN line per stop command, and appends them to `procs.log`. Do not relay them to Jorge. Tell Jorge only a FAILED line (a process that would not stop), with `/tempo:sweep`.
+10.7 Agents never detach. In a TEMPO session the plugin's spawn guard denies `nohup`, `setsid`, `disown`, a trailing `&` and `run_in_background` in Bash, and names the `<procs> start` line instead. Prompts SHALL NOT tell an agent to background anything.
+10.8 Shared stacks. A stack that was already running when the task started (Jorge's own dev stack) is not the task's: use it, do not `<procs> adopt` it, and do not stop it. Adopt only what this task launched another way.
+10.9 Leftovers from before 0.17.0, a crash, or a session killed without its hook: `/tempo:sweep` lists them; Jorge decides.
+

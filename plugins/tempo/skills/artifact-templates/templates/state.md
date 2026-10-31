@@ -11,7 +11,7 @@ Rendered by tempo_state.py from state.json. Do not edit.
 
 ## 2 Stage
 - Current: {{TRIAGE | EXPLORE | INVESTIGATE | REPRODUCE | ROOT-CAUSE | SPEC | HANDOFF | PLAN | PLANNED | BUILD | INTEGRATE | REVIEW | QA | SHIP | REPOS | JOINT-QA | DONE}}
-- Status: {{RUNNING | WAITING-ON-JORGE | FAILED | DONE}}
+- Status: {{RUNNING | WAITING-ON-JORGE | FAILED | ABORTED | DONE}}
 
 ## 3 Stage log
 - {{start YYYY-MM-DD HH:MM}} → {{end HH:MM}} ({{minutes}} min) | {{stage}} | {{artifact}} | {{PASS | FAIL | BLOCKED}}

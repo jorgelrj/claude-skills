@@ -38,6 +38,7 @@ After editing files here, restart Claude Code (Option A) or run `/plugin marketp
 | `/tempo:plan <request>` | Plan only: Triage → Explore → Spec → Work Orders (or the cross-repo plan), then stop at GATE-PLAN. Also `/tempo:feature --plan-only ...` |
 | `/tempo:feature --auto <request>` | Autopilot: TEMPO takes its own recommendation at every gate and escalation and stops only where Jorge is truly needed (see below). Works on `/tempo:bug`, `/tempo:plan` and `/tempo:resume` too; `--no-auto` turns it off |
 | `/tempo:resume <task-id> [build \| answer]` | Continue a task from its last artifact, answer the question it is waiting on, or `build` a planned task |
+| `/tempo:sweep [--yes] [task-id]` | List processes TEMPO or a coding session left running (emulators, servers, watchers, Java stacks), with memory and age, and stop the ones you pick (0.17.0) |
 | `/tempo:init [repo\|workspace] [notes]` | Write or update the TEMPO config for a repo or a multi-repo workspace, detected from the code |
 
 Everything for a task lives in `.tempo/<task-id>/` in the target repo. The task ID is the ticket key when the request names one (`AV-5696`), else `T-NNN`. A `T-NNN` id is local: each machine numbers its own tasks, so it never appears in a branch, commit, PR, issue or tracker (0.11.0). TEMPO adds `.tempo/` to `.git/info/exclude`, so artifacts and config never show up in the diff.
@@ -57,6 +58,10 @@ Only blocks-start orders the work; see `skills/triage-rubric/SKILL.md` §5.
 ## Task state
 
 `skills/orchestrator/scripts/tempo_state.py` is the only writer of `.tempo/<task-id>/state.json` and the `state.md` rendered from it. It stamps the stage log with this machine's clock, keeps loop counters and work orders, and records agents in flight with their saved prompts, so `/tempo:resume` can restart them after a session restart. Tasks started before 0.3.0 are converted with `tempo_state.py adopt <task-dir>`.
+
+## Teardown (0.17.0)
+
+A task cleans up after itself. Every process TEMPO starts, through `tempo_run.py` (tests, builds, targets) or `tempo_procs.py start` (dev servers, the app for QA, emulators, watchers, docker stacks), is marked with the task and the session in its environment, so its children are found too, even ones a helper starts with nohup. `tempo_state.py` tears the task down by itself: services stop when the task waits on Jorge, and everything stops when the task is DONE, FAILED or ABORTED. A SessionEnd hook stops what a closed session's tasks started. When a run's command ends, anything it left running is stopped and named in its summary (Gradle and Kotlin daemons stay until teardown). In a TEMPO session the `guard_spawn.py` hook denies `nohup`, `setsid`, `disown`, a trailing `&` and `run_in_background`, and names the `tempo_procs.py start` line instead. Only marked processes and the ones recorded in `procs.json` are ever stopped. `/tempo:sweep` finds leftovers machine-wide, including unmarked orphans that look like dev tooling, and stops only what you pick.
 
 ## Lanes
 
@@ -113,7 +118,7 @@ Spec approval, the workspace plan, clarify questions with a recommendation, loop
 .claude-plugin/
   plugin.json                 plugin manifest (listed in the repo root's marketplace.json)
 commands/
-  feature.md  bug.md  plan.md  resume.md  init.md  cleanup.md  verify.md
+  feature.md  bug.md  plan.md  resume.md  init.md  cleanup.md  verify.md  sweep.md
 agents/
   triage.md        classify, clarity check, size, route → task.md
   scout.md         read-only explorer, one lens per instance → merged into context.md
@@ -127,11 +132,15 @@ agents/
   qa.md            per acceptance criterion, with evidence → qa-rN.md
 hooks/
   guard_rm.py      refuses rm outside the project and temp folders, never prompts
+  guard_push.py    refuses pushes of local tempo/ branches
+  guard_spawn.py   in a TEMPO session, refuses detached starts (nohup, &, setsid, run_in_background)
+  hooks.json       the hooks above, plus SessionEnd teardown
 skills/
   orchestrator/              the stage machine the commands run (gates, loops, worktrees, PR, workspaces)
     scripts/tempo_state.py   the only writer of state.json / state.md; tracker for workspace tasks
     scripts/tempo_branches.py  deletes local work-order and repro branches the task branch already holds
-    scripts/tempo_run.py       runs one test, build or lint command; prints a summary, waits for a heavy slot
+    scripts/tempo_run.py       runs one test, build or lint command; prints a summary, waits for a heavy slot, stops what it left
+    scripts/tempo_procs.py     starts and tracks long-lived processes, tears a task down, sweeps for leftovers
   document-standard/         the document shape + scripts/check_doc.py (structure check)
   artifact-templates/        one template per artifact in templates/
   triage-rubric/             clarity questions, task types, S/M/L lanes, routes
@@ -267,6 +276,10 @@ On 2026-10-29, after 0.15.0, five tasks ran at once and Integrate took 45 to 96 
 - Split tasks: each slice gets the order check and the correctness lens; the other lenses run once on the parent.
 - Pattern tasks (triage-rubric §3.9): an M feature that copies a sibling skips the order check, reviews at QUICK depth, and QA skips what tests assert.
 - State: workspace tasks log the children's time as REPOS, so JOINT-QA holds only QA.
+
+### Teardown (0.17.0)
+
+On 2026-10-30 Jorge's Mac reached 11.4 of 12.3 GB swap and a load of 48. The memory sat in orphans of coding sessions: a headless Android emulator a TEMPO QA agent started with nohup (8.3 GB, 17 h), five Java services (3 GB), two `nest --watch` (1.9 GB, 42 h), and `tail -f /dev/null` keep-alives whose worktree was gone. `qa.md` already said to stop what it started, and nothing enforced it. 0.17.0 adds the teardown described above: marks on every process TEMPO starts, a `procs.json` ledger with stop commands, teardown run by `tempo_state.py` at every wait and every end (DONE, FAILED, the new ABORTED), a SessionEnd hook, per-run leftover cleanup in `tempo_run.py`, the `guard_spawn.py` hook, and `/tempo:sweep`. Orchestrator section 10.
 
 ## How it runs inside Claude Code
 
