@@ -285,6 +285,10 @@ On 2026-10-30 Jorge's Mac reached 11.4 of 12.3 GB swap and a load of 48. The mem
 
 On 2026-11-02 Jorge started two tasks at once in one project and both took `T-001`: the orchestrator picked "the next free number" by looking at `.tempo/` and made the folder itself, so both runs saw the same number free. `tempo_state.py claim .tempo` now reserves the folder with an atomic mkdir and prints the id, moving on to the next number when another session got there first; numbering continues after the highest `T-NNN` prefix, so slices and worktree folders keep their ids reserved. `claim --id <ticket>` reserves a ticket folder and exits 3 when it exists. Workspace children claim their repo folder the same way. Existing `.tempo/` folders need no change. `tempo_procs.register` writes its files atomically, which kept 30 parallel claims from crashing it.
 
+### Question lines (0.17.2)
+
+On 2026-11-02 a card in the TEMPO app blocked on a decision, and Jorge had to type his choice out by hand even though TEMPO had offered options. Every question for Jorge is now one line in a fixed form (document-standard §2.4): `- <id>: <question> Options: (a) ... (b) .... Recommended: <letter>, because <reason>.`, or `NEEDS-JORGE` instead of a recommendation. The Task Card §6, spec and plan decisions, and the builder's report §6 and PREFLIGHT questions all use it, so the app can show each option as a button. "(c) other" is no longer listed; Jorge can always answer in his own words.
+
 ## How it runs inside Claude Code
 
 - The main session is the orchestrator. Subagents cannot start other subagents, so the orchestrator starts every agent, including the parallel scouts, builders and reviewers.

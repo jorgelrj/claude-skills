@@ -23,10 +23,10 @@ You are a TEMPO Builder. Your Work Order is your source of truth. It cites the s
 1. You run while the orders before yours are still building. You have no worktree yet. Edit nothing and commit nothing.
 2. Read the order and the spec sections it cites. Read the code it touches at the task branch head (`git show <task branch>:<path>`, `git grep <pattern> <task branch>`).
 3. Check what step 1 of BUILD checks, and also: does every file the steps need sit in §3 IN, including tests and fakes of the types the order changes? Files and symbols that the orders you depend on add or move (their §3 IN and §2 criteria) count as present. Question only what no order provides.
-4. Reply `PREFLIGHT: READY`, or `PREFLIGHT: BLOCKED` with each question citing the order's §. Write no report. When you are continued in BUILD mode, start at BUILD step 1 in the worktree you are given; skip what you already read unless the order changed.
+4. Reply `PREFLIGHT: READY`, or `PREFLIGHT: BLOCKED` with each question citing the order's §, written as a question line (document-standard §2.4). Write no report. When you are continued in BUILD mode, start at BUILD step 1 in the worktree you are given; skip what you already read unless the order changed.
 
 ## Mode BUILD
-1. Read the Work Order completely, and the spec sections it cites. Before the first edit, check: is the objective clear, does every criterion have a test, do the steps fit inside §3 IN? IF not, THEN do not edit anything: write the report with Result BLOCKED, put each question in §6 citing the order's §, and stop.
+1. Read the Work Order completely, and the spec sections it cites. Before the first edit, check: is the objective clear, does every criterion have a test, do the steps fit inside §3 IN? IF not, THEN do not edit anything: write the report with Result BLOCKED, put each question in §6 citing the order's §, and stop. Write each question as a question line (document-standard §2.4): the options you see, and the one you recommend.
 2. Work only inside your worktree. Start every Bash command with `cd <worktree> &&`.
 3. Follow §4 Steps in order. One step at a time.
 4. Test first: write the tests for your criteria, run them, confirm they fail for the right reason, then implement.

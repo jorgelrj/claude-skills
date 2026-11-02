@@ -24,7 +24,7 @@ Lane: {{S|M|L}} · Issued by: triage
 - {{Each assumption triage made. The Spec and PR repeat these at the top.}}
 
 ## 6 Questions for Jorge
-- {{Question}} Options: (a) {{option found in code}} (b) {{option}} (c) other. Recommended: {{a}}. {{NEEDS-JORGE, only when no option can be recommended; NEEDS-JORGE MISSING-SOURCE when the only options are stand-ins for a missing source}}
+- Q-{{n}}: {{Question}} Options: (a) {{option found in code}} (b) {{option}}. Recommended: {{a}}, because {{reason}}. {{NEEDS-JORGE, only when no option can be recommended; NEEDS-JORGE MISSING-SOURCE when the only options are stand-ins for a missing source}}
 
 ## 7 Route
 - Next stages: {{for example Explore, Spec, Handoff, Build, Integrate, Review, QA, PR}}

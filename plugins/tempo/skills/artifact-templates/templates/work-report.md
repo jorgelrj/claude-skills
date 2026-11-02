@@ -18,7 +18,7 @@ Issued by: builder
 - {{MECHANICAL | SCOPE | CRITERION | CONTENT | CUT}} §{{n}}: {{each departure from the Work Order, or NIL}}
 
 ## 6 Questions
-- {{Question that blocked the work, citing the order's §, or NIL}}
+- Q-{{n}}: {{Question that blocked the work, citing the order's §}} Options: (a) {{option}} (b) {{option}}. Recommended: {{a}}, because {{reason}}. Or NIL
 
 ## 7 Commits
 - {{hash}} {{subject}}
