@@ -41,7 +41,7 @@ After editing files here, restart Claude Code (Option A) or run `/plugin marketp
 | `/tempo:sweep [--yes] [task-id]` | List processes TEMPO or a coding session left running (emulators, servers, watchers, Java stacks), with memory and age, and stop the ones you pick (0.17.0) |
 | `/tempo:init [repo\|workspace] [notes]` | Write or update the TEMPO config for a repo or a multi-repo workspace, detected from the code |
 
-Everything for a task lives in `.tempo/<task-id>/` in the target repo. The task ID is the ticket key when the request names one (`AV-5696`), else `T-NNN`. A `T-NNN` id is local: each machine numbers its own tasks, so it never appears in a branch, commit, PR, issue or tracker (0.11.0). TEMPO adds `.tempo/` to `.git/info/exclude`, so artifacts and config never show up in the diff.
+Everything for a task lives in `.tempo/<task-id>/` in the target repo. The task ID is the ticket key when the request names one (`AV-5696`), else `T-NNN`. A `T-NNN` id is local: each machine numbers its own tasks, so it never appears in a branch, commit, PR, issue or tracker (0.11.0). `tempo_state.py claim` hands out the id with an atomic mkdir, so tasks started in parallel never share one (0.17.1). TEMPO adds `.tempo/` to `.git/info/exclude`, so artifacts and config never show up in the diff.
 
 ## Several repos (workspace tasks)
 
@@ -280,6 +280,10 @@ On 2026-10-29, after 0.15.0, five tasks ran at once and Integrate took 45 to 96 
 ### Teardown (0.17.0)
 
 On 2026-10-30 Jorge's Mac reached 11.4 of 12.3 GB swap and a load of 48. The memory sat in orphans of coding sessions: a headless Android emulator a TEMPO QA agent started with nohup (8.3 GB, 17 h), five Java services (3 GB), two `nest --watch` (1.9 GB, 42 h), and `tail -f /dev/null` keep-alives whose worktree was gone. `qa.md` already said to stop what it started, and nothing enforced it. 0.17.0 adds the teardown described above: marks on every process TEMPO starts, a `procs.json` ledger with stop commands, teardown run by `tempo_state.py` at every wait and every end (DONE, FAILED, the new ABORTED), a SessionEnd hook, per-run leftover cleanup in `tempo_run.py`, the `guard_spawn.py` hook, and `/tempo:sweep`. Orchestrator section 10.
+
+### Parallel task ids (0.17.1)
+
+On 2026-11-02 Jorge started two tasks at once in one project and both took `T-001`: the orchestrator picked "the next free number" by looking at `.tempo/` and made the folder itself, so both runs saw the same number free. `tempo_state.py claim .tempo` now reserves the folder with an atomic mkdir and prints the id, moving on to the next number when another session got there first; numbering continues after the highest `T-NNN` prefix, so slices and worktree folders keep their ids reserved. `claim --id <ticket>` reserves a ticket folder and exits 3 when it exists. Workspace children claim their repo folder the same way. Existing `.tempo/` folders need no change. `tempo_procs.register` writes its files atomically, which kept 30 parallel claims from crashing it.
 
 ## How it runs inside Claude Code
 

@@ -221,15 +221,25 @@ def register(task_dir, owner=0):
     d = Path(task_dir).resolve()
     try:
         REGISTRY.mkdir(parents=True, exist_ok=True)
-        (REGISTRY / f"{tag(d)}.json").write_text(json.dumps({"dir": str(d), "task": d.name}))
+        _write(REGISTRY / f"{tag(d)}.json", json.dumps({"dir": str(d), "task": d.name}))
         if owner:
             SESSIONS.mkdir(parents=True, exist_ok=True)
             f = SESSIONS / f"{owner}.json"
-            cur = json.loads(f.read_text()) if f.exists() else []
+            try:
+                cur = json.loads(f.read_text()) if f.exists() else []
+            except ValueError:
+                cur = []  # an older, non-atomic writer left it half written
             if str(d) not in cur:
-                f.write_text(json.dumps(cur + [str(d)]))
+                _write(f, json.dumps(cur + [str(d)]))
     except OSError:
         pass
+
+
+def _write(path, text):
+    """Write via a temp file and rename, so a parallel reader never sees a half-written file."""
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
 
 
 def registry():

@@ -6,6 +6,10 @@ change, in the layout of the state template, for Jorge and /tempo:resume.
 Times come from this machine's clock, never from the caller.
 
 Usage: tempo_state.py <command> <task-dir> [args]
+  claim     <tempo-root> [--id KEY]          (reserve a task folder atomically and print its ID. Without --id: the
+                                              next T-NNN after the highest one in <tempo-root>, safe when tasks
+                                              start in parallel. With --id: that folder; exit 3 and EXISTS when it
+                                              is already there, so the caller resumes it)
   init      <dir> --task ID --flow FEATURE|BUG|WORKSPACE --title T --base-branch B --base-commit H
             [--task-branch NAME] [--mode FULL|PLAN-ONLY] [--parent DIR] [--review-limit N] [--qa-limit N]
             [--review-extensions N] [--autopilot]
@@ -36,7 +40,7 @@ Usage: tempo_state.py <command> <task-dir> [args]
   tracker   <dir>                              (refresh children from their state.json, write tracker.md)
   show      <dir> [--json]
   adopt     <dir>                              (build state.json from a hand-written state.md)
-Exit 0 ok, 1 error.
+Exit 0 ok, 1 error, 3 claim: the folder exists.
 """
 import argparse
 import datetime as dt
@@ -240,9 +244,43 @@ def new_state(task, flow, title, base_branch, base_commit, task_branch=None, mod
             "autopilot": autopilot, "decisions": []}
 
 
+LOCAL_ID = re.compile(r"^T-(\d+)")
+
+
+def claim(root, key=None, owner=0):
+    """Reserve <root>/<id>/ with an atomic mkdir. Returns (id, created).
+
+    Two sessions that scan .tempo/ at the same moment both see T-004 as free; only one
+    mkdir of T-004 succeeds, and the other moves on to T-005. Folders with any T-NNN
+    prefix (a T-003-s1 slice, a T-002-wo-01 worktree) count as taken, so no old id comes back.
+    """
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    note = json.dumps({"claimed": now(), "pid": os.getpid(), "owner": owner}) + "\n"
+    if key:
+        try:
+            (root / key).mkdir()
+        except FileExistsError:
+            return key, False
+        (root / key / ".claim").write_text(note)
+        return key, True
+    used = [int(m.group(1)) for e in root.iterdir() if (m := LOCAL_ID.match(e.name))]
+    n = max(used, default=0)
+    while True:
+        n += 1
+        tid = f"T-{n:03d}"
+        try:
+            (root / tid).mkdir()
+        except FileExistsError:
+            continue
+        (root / tid / ".claim").write_text(note)
+        return tid, True
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="tempo_state.py", description="TEMPO task state")
     sp = p.add_subparsers(dest="cmd", required=True)
+    cl = sp.add_parser("claim"); cl.add_argument("dir"); cl.add_argument("--id", dest="key")
     i = sp.add_parser("init"); i.add_argument("dir")
     for a in ("--task", "--title", "--base-branch", "--base-commit"):
         i.add_argument(a, required=True)
@@ -276,6 +314,13 @@ def main(argv=None):
     ad = sp.add_parser("adopt"); ad.add_argument("dir")
     a = p.parse_args(argv)
     d = Path(a.dir)
+    if a.cmd == "claim":
+        owner = tempo_procs.find_owner()
+        tid, created = claim(d, a.key, owner)
+        if not created:
+            print(f"EXISTS: {d / tid}  TASK: {tid}  (resume it, or pick another ID)"); return 3
+        tempo_procs.register(d / tid, owner)
+        print(f"TASK: {tid}  DIR: {d / tid}"); return 0
     tempo_procs.register(d, tempo_procs.find_owner())  # marks this session as a TEMPO session for the hooks
 
     if a.cmd == "init":
