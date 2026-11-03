@@ -37,6 +37,7 @@ After editing files here, restart Claude Code (Option A) or run `/plugin marketp
 | `/tempo:bug <report>` | Bug flow: [Investigate] → Reproduce (failing test) → Root cause → Fix → Integrate → Review + sibling sweep → QA → PR |
 | `/tempo:plan <request>` | Plan only: Triage → Explore → Spec → Work Orders (or the cross-repo plan), then stop at GATE-PLAN. Also `/tempo:feature --plan-only ...` |
 | `/tempo:feature --auto <request>` | Autopilot: TEMPO takes its own recommendation at every gate and escalation and stops only where Jorge is truly needed (see below). Works on `/tempo:bug`, `/tempo:plan` and `/tempo:resume` too; `--no-auto` turns it off |
+| `/tempo:plan --offline <request>` | Skip the base fetch and use the local base branch as it is. Without it every command first fetches the base and fast-forwards it, or stops (0.20.0). Works on `/tempo:feature` and `/tempo:bug` too |
 | `/tempo:resume <task-id> [build \| answer]` | Continue a task from its last artifact, answer the question it is waiting on, or `build` a planned task |
 | `/tempo:sweep [--yes] [task-id]` | List processes TEMPO or a coding session left running (emulators, servers, watchers, Java stacks), with memory and age, and stop the ones you pick (0.17.0) |
 | `/tempo:report [--task <id>] [--dry-run] <what went wrong>` | File a GitHub issue on the TEMPO repo about something TEMPO just did wrong, with the run's state, artifacts and transcript path attached; the task keeps going (0.19.0) |
@@ -303,6 +304,15 @@ The server is a small bridge (`mcp/tempo_app_bridge.py`, python3) that passes me
 ### Report a TEMPO problem from a run (0.19.0)
 
 When TEMPO does something it should not mid-run, `/tempo:report <what went wrong>` files an issue on this repo (the `repository` in `plugin.json`, or `$TEMPO_REPORT_REPO`) labelled `tempo` and `bug`. With no words it takes the latest misstep in the session. The issue holds what happened with quoted lines, what was expected, the command, agent or skill section that governs it, the impact, a guessed fix, and the context `tempo_report.py context` collects: plugin version, machine, repo and branch, the task's state and `state.md`, its artifact list, other recent tasks and the session transcript path. The task folder's documents are copied to `~/.cache/tempo/reports/<stamp>/` so the evidence outlives `/tempo:cleanup`. It files with `gh issue create`; when gh is missing, signed out or fails, it saves the body and prints a prefilled new-issue link. `--dry-run` shows the body without filing. Reporting is not a gate: the task carries on.
+
+### Fresh base before every run (0.20.0)
+
+On 2026-11-03 a `/tempo:plan --auto` in xipp (AV-5703) scouted and planned on the local `develop`, which sat at a commit from 2026-10-29, 51 commits behind `origin/develop`; 18 of the files the plan relied on had changed. Nothing fetched before Explore (the only fetch was the base-drift check at Integrate), so the plan was thrown away. 0.20.0:
+- New `skills/orchestrator/scripts/tempo_base.py sync --repo R --branch B`: fetches the base from its remote and fast-forwards the local branch (moves the ref, or `merge --ff-only` in the worktree that has it checked out). It never resets, rebases, stashes, merges or pushes. It stops with the reason when the fetch fails, the local base has unpushed commits (ahead or diverged), or the checkout cannot fast-forward. A repo with no remote uses its local branch.
+- Orchestrator 1.3.0: every run syncs the base before triage and before claiming a task folder; a STOP ends the run there, on autopilot too, and Jorge is told what to do. The recorded base commit is the synced head. Workspace tasks sync every repo first (6.1.1), report every STOP at once, and write `bases.txt` for the scouts; each child syncs again when it starts (6.6.4).
+- When the repo's checkout is not the base head (another branch checked out), scouts, the investigator and the architect read a detached base worktree instead of the checkout (1.3.0.3). Jorge's checkout is never switched.
+- `/tempo:resume` syncs before continuing and records a new base for a task that has not reached BUILD; resume-to-build (3.14) and `/tempo:verify` on the base branch sync too.
+- `--offline` on `/tempo:plan`, `/tempo:feature` and `/tempo:bug` skips the fetch on purpose.
 
 ## How it runs inside Claude Code
 

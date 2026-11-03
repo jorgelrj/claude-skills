@@ -6,7 +6,7 @@ argument-hint: [branch, default the base branch]
 Run the full bars on: $ARGUMENTS
 
 1. Load the TEMPO `orchestrator` skill (listed as `tempo:orchestrator` when installed as a plugin) for its paths (section 0). `<cfg>` and `<run>` are its scripts.
-2. The branch is the argument, else `git.base_branch`. Make a worktree for it at `<git.worktree_root>/verify-<short hash>`, detached, and run the lines `<cfg> setup --worktree <path>` prints. Do not touch my checkout.
+2. The branch is the argument, else `git.base_branch`. IF it is the base branch, THEN run `python3 <orch>/scripts/tempo_base.py sync --repo <repo> --branch <it>` first and use its `HEAD:`; on `BASE: STOP`, tell me why and stop. Make a worktree for it at `<git.worktree_root>/verify-<short hash>`, detached, and run the lines `<cfg> setup --worktree <path>` prints. Do not touch my checkout.
 3. Run these from the worktree, one after another, each with `<run> --heavy --max 0` and the Bash tool's `timeout` at 600000. This session is not capped at 3 minutes the way an agent is. IF a run outlives the timeout, THEN call `<run> wait <id> --max 0` with its ID.
    - `<cfg> cmd test`
    - `<cfg> cmd build`, or `typecheck`
