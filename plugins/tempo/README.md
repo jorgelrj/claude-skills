@@ -39,6 +39,7 @@ After editing files here, restart Claude Code (Option A) or run `/plugin marketp
 | `/tempo:feature --auto <request>` | Autopilot: TEMPO takes its own recommendation at every gate and escalation and stops only where Jorge is truly needed (see below). Works on `/tempo:bug`, `/tempo:plan` and `/tempo:resume` too; `--no-auto` turns it off |
 | `/tempo:resume <task-id> [build \| answer]` | Continue a task from its last artifact, answer the question it is waiting on, or `build` a planned task |
 | `/tempo:sweep [--yes] [task-id]` | List processes TEMPO or a coding session left running (emulators, servers, watchers, Java stacks), with memory and age, and stop the ones you pick (0.17.0) |
+| `/tempo:report [--task <id>] [--dry-run] <what went wrong>` | File a GitHub issue on the TEMPO repo about something TEMPO just did wrong, with the run's state, artifacts and transcript path attached; the task keeps going (0.19.0) |
 | `/tempo:init [repo\|workspace] [notes]` | Write or update the TEMPO config for a repo or a multi-repo workspace, detected from the code |
 
 Everything for a task lives in `.tempo/<task-id>/` in the target repo. The task ID is the ticket key when the request names one (`AV-5696`), else `T-NNN`. A `T-NNN` id is local: each machine numbers its own tasks, so it never appears in a branch, commit, PR, issue or tracker (0.11.0). `tempo_state.py claim` hands out the id with an atomic mkdir, so tasks started in parallel never share one (0.17.1). TEMPO adds `.tempo/` to `.git/info/exclude`, so artifacts and config never show up in the diff.
@@ -118,7 +119,7 @@ Spec approval, the workspace plan, clarify questions with a recommendation, loop
 .claude-plugin/
   plugin.json                 plugin manifest (listed in the repo root's marketplace.json)
 commands/
-  feature.md  bug.md  plan.md  resume.md  init.md  cleanup.md  verify.md  sweep.md
+  feature.md  bug.md  plan.md  resume.md  init.md  cleanup.md  verify.md  sweep.md  report.md
 agents/
   triage.md        classify, clarity check, size, route → task.md
   scout.md         read-only explorer, one lens per instance → merged into context.md
@@ -141,6 +142,7 @@ skills/
     scripts/tempo_branches.py  deletes local work-order and repro branches the task branch already holds
     scripts/tempo_run.py       runs one test, build or lint command; prints a summary, waits for a heavy slot, stops what it left
     scripts/tempo_procs.py     starts and tracks long-lived processes, tears a task down, sweeps for leftovers
+    scripts/tempo_report.py    collects a run's context and files a TEMPO issue (gh, or a prefilled link)
   document-standard/         the document shape + scripts/check_doc.py (structure check)
   artifact-templates/        one template per artifact in templates/
   triage-rubric/             clarity questions, task types, S/M/L lanes, routes
@@ -297,6 +299,10 @@ The plugin now brings the TEMPO platform app's MCP server, `tempo-app`, so a Cla
 - `TEMPO_APP_URL` (optional): the app's address without `/mcp`, default `http://127.0.0.1:4310`; use the Tailscale `https://<mac>.<tailnet>.ts.net` address from another machine.
 
 The server is a small bridge (`mcp/tempo_app_bridge.py`, python3) that passes messages to the app. Without a token, or when the app does not answer when Claude Code starts, it starts with no tools, so nothing shows as an error and the rest of the plugin works as before (0.18.1; 0.18.0 errored when the token was missing).
+
+### Report a TEMPO problem from a run (0.19.0)
+
+When TEMPO does something it should not mid-run, `/tempo:report <what went wrong>` files an issue on this repo (the `repository` in `plugin.json`, or `$TEMPO_REPORT_REPO`) labelled `tempo` and `bug`. With no words it takes the latest misstep in the session. The issue holds what happened with quoted lines, what was expected, the command, agent or skill section that governs it, the impact, a guessed fix, and the context `tempo_report.py context` collects: plugin version, machine, repo and branch, the task's state and `state.md`, its artifact list, other recent tasks and the session transcript path. The task folder's documents are copied to `~/.cache/tempo/reports/<stamp>/` so the evidence outlives `/tempo:cleanup`. It files with `gh issue create`; when gh is missing, signed out or fails, it saves the body and prints a prefilled new-issue link. `--dry-run` shows the body without filing. Reporting is not a gate: the task carries on.
 
 ## How it runs inside Claude Code
 
