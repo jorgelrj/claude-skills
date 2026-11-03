@@ -49,6 +49,22 @@ plugins/<plugin>/commands/, agents/             # slash commands and subagents, 
 Bump a plugin's `version` in `plugin.json` when you change it. Installed copies
 only update when the version changes.
 
+## Versions and tags
+
+Each plugin release is an annotated git tag `<plugin>-v<version>`
+(`tempo-v0.17.2`, `atlassian-multi-v0.1.0`), on the commit that set that
+version. Tools that need a fixed copy of a plugin (the TEMPO app pins its skill
+folder this way) clone the repo at one of these tags instead of following a
+working tree.
+
+The `Tag plugin versions` workflow tags new versions when a `plugin.json`
+change lands on `main`. To tag by hand:
+
+```sh
+scripts/tag-plugin-versions.sh          # tag locally
+scripts/tag-plugin-versions.sh --push   # tag and push the new tags
+```
+
 ## Developing
 
 Load a plugin straight from the working tree, with no install:
