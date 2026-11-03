@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "tempo-app": {
+      "type": "http",
+      "url": "${TEMPO_APP_URL:-http://127.0.0.1:4310}/mcp",
+      "headers": {
+        "Authorization": "Bearer ${TEMPO_APP_TOKEN}"
+      }
+    }
+  }
+}

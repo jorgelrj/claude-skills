@@ -289,6 +289,15 @@ On 2026-11-02 Jorge started two tasks at once in one project and both took `T-00
 
 On 2026-11-02 a card in the TEMPO app blocked on a decision, and Jorge had to type his choice out by hand even though TEMPO had offered options. Every question for Jorge is now one line in a fixed form (document-standard §2.4): `- <id>: <question> Options: (a) ... (b) .... Recommended: <letter>, because <reason>.`, or `NEEDS-JORGE` instead of a recommendation. The Task Card §6, spec and plan decisions, and the builder's report §6 and PREFLIGHT questions all use it, so the app can show each option as a button. "(c) other" is no longer listed; Jorge can always answer in his own words.
 
+### The TEMPO app over MCP (0.18.0)
+
+The plugin now brings the TEMPO platform app's MCP server, `tempo-app`, so a Claude Code session can read boards and cards, see what needs Jorge, create cards and answer a blocked card's questions (app 0.7.0 or later). Set two environment variables where Claude Code starts, then restart it:
+
+- `TEMPO_APP_TOKEN`: a token from the app's **Settings, API tokens**.
+- `TEMPO_APP_URL` (optional): the app's address without `/mcp`, default `http://127.0.0.1:4310`; use the Tailscale `https://<mac>.<tailnet>.ts.net` address from another machine.
+
+Without a token the server shows as failed in `/mcp` and the rest of the plugin works as before.
+
 ## How it runs inside Claude Code
 
 - The main session is the orchestrator. Subagents cannot start other subagents, so the orchestrator starts every agent, including the parallel scouts, builders and reviewers.
