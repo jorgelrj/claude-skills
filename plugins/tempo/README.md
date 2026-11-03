@@ -296,7 +296,7 @@ The plugin now brings the TEMPO platform app's MCP server, `tempo-app`, so a Cla
 - `TEMPO_APP_TOKEN`: a token from the app's **Settings, API tokens**.
 - `TEMPO_APP_URL` (optional): the app's address without `/mcp`, default `http://127.0.0.1:4310`; use the Tailscale `https://<mac>.<tailnet>.ts.net` address from another machine.
 
-Without a token the server shows as failed in `/mcp` and the rest of the plugin works as before.
+The server is a small bridge (`mcp/tempo_app_bridge.py`, python3) that passes messages to the app. Without a token, or when the app does not answer when Claude Code starts, it starts with no tools, so nothing shows as an error and the rest of the plugin works as before (0.18.1; 0.18.0 errored when the token was missing).
 
 ## How it runs inside Claude Code
 
