@@ -1,6 +1,6 @@
 {
   "name": "tempo",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "description": "Task Execution & Multi-agent Pipeline Orchestrator: feature and bug-fix flows that run Triage, Explore, Spec, Work Orders, parallel Build, Integrate, Review, QA and PR, with structured markdown handoff documents.",
   "author": {
     "name": "Jorge",

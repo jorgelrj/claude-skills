@@ -19,7 +19,7 @@ Handoff documents are plain markdown with a fixed shape. The shape is what lets 
 1. Acceptance criteria carry a stable tag `[AC-n]` and name the test or command that proves them. Tags are never renumbered or reused.
 2. Other stable tags: `D-n` decisions, `TASK-n`, `S-n` slices, `H-n` hypotheses, `C-n` candidate findings, `F-n` confirmed findings.
 3. Cite by section number and tag: "spec §3 AC-4", "WO-02 §3 IN", "findings-r1 F-2". Section numbers come from the headings.
-4. A question for Jorge is one line in this form, so a person (or the TEMPO app, which turns it into buttons) can answer by picking an option:
+4. A question for Jorge is one line in this form, so a person can answer by picking an option:
    `- <id>: <question, citing the §> Options: (a) <option> (b) <option>. Recommended: <letter>, because <reason>.`
    - The id is the document's tag (`D-n` in a spec or plan) or `Q-n` elsewhere. Each option is a full answer that stands on its own.
    - Offer two to four real options. Do not list "other" as an option: Jorge can always answer in his own words.

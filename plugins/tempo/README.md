@@ -133,7 +133,6 @@ agents/
   verifier.md      drop, dedupe, rank, assign → findings-rN.md
   qa.md            per acceptance criterion, with evidence → qa-rN.md
 hooks/
-  guard_rm.py      refuses rm outside the project and temp folders, never prompts
   guard_push.py    refuses pushes of local tempo/ branches
   guard_spawn.py   in a TEMPO session, refuses detached starts (nohup, &, setsid, run_in_background)
   hooks.json       the hooks above, plus SessionEnd teardown
@@ -178,7 +177,7 @@ Measured on pod1um T-007 (27 Oct 2026, 0.6.0): 8 Work Orders chained one after a
 - **State.** The stage log records start, end and minutes; work orders show their build time; logging an artifact clears the agent that wrote it and the Next action.
 - **Explore.** Each scout reply is saved to `explore/<LENS>.md` when it arrives; a failed scout is retried once.
 - **Standing decisions.** `task.standing_decisions` in config are answers Jorge has already given; triage applies them instead of asking.
-- **Safety.** A plugin hook (`hooks/guard_rm.py`) guards `rm` (0.9.1: it refuses instead of asking, see below). Builders delete only what they made, and the orchestrator writes prompts with the Write tool, never a heredoc.
+- **Safety.** Builders delete only what they made, and the orchestrator writes prompts with the Write tool, never a heredoc.
 
 Known cost: a builder's test-file allowance means two parallel orders may touch the same fake. The integrator resolves the conflict, or returns it to an order.
 
@@ -195,7 +194,7 @@ Measured on pod1um PR #203 (T-007, 0.6.0): 7 feature commits, then 12 fix and 2 
 
 Known cost: the order check adds about 5 to 10 minutes per order. On T-007 that is about 1 to 1.5 hours against the 1h45m its two fix rounds took.
 
-### The rm guard stops asking (0.9.1)
+### The rm guard stops asking (0.9.1; removed in 0.21.0)
 
 Up to 0.8.0 the guard turned every `rm` outside the session's working directory into a permission prompt. That caught Claude scratchpads (`/private/tmp/claude-501/...`), `/var/folders` temp files that were not `tmp.*`, `.tempo/<task>` files removed from inside a worktree, and every non-TEMPO session with the plugin installed, so Jorge had to step in far more than the risk warranted. Now it never prompts:
 
@@ -292,7 +291,7 @@ On 2026-11-02 Jorge started two tasks at once in one project and both took `T-00
 
 On 2026-11-02 a card in the TEMPO app blocked on a decision, and Jorge had to type his choice out by hand even though TEMPO had offered options. Every question for Jorge is now one line in a fixed form (document-standard §2.4): `- <id>: <question> Options: (a) ... (b) .... Recommended: <letter>, because <reason>.`, or `NEEDS-JORGE` instead of a recommendation. The Task Card §6, spec and plan decisions, and the builder's report §6 and PREFLIGHT questions all use it, so the app can show each option as a button. "(c) other" is no longer listed; Jorge can always answer in his own words.
 
-### The TEMPO app over MCP (0.18.0)
+### The TEMPO app over MCP (0.18.0; removed in 0.21.0)
 
 The plugin now brings the TEMPO platform app's MCP server, `tempo-app`, so a Claude Code session can read boards and cards, see what needs Jorge, create cards and answer a blocked card's questions (app 0.7.0 or later). Set two environment variables where Claude Code starts, then restart it:
 
@@ -313,6 +312,11 @@ On 2026-11-03 a `/tempo:plan --auto` in xipp (AV-5703) scouted and planned on th
 - When the repo's checkout is not the base head (another branch checked out), scouts, the investigator and the architect read a detached base worktree instead of the checkout (1.3.0.3). Jorge's checkout is never switched.
 - `/tempo:resume` syncs before continuing and records a new base for a task that has not reached BUILD; resume-to-build (3.14) and `/tempo:verify` on the base branch sync too.
 - `--offline` on `/tempo:plan`, `/tempo:feature` and `/tempo:bug` skips the fetch on purpose.
+
+### No app MCP, no rm guard (0.21.0)
+
+- The `tempo-app` MCP server (`.mcp.json`, `mcp/tempo_app_bridge.py`) is gone: the TEMPO app's board no longer exists, and TEMPO runs from the plugin's commands and skills only. `TEMPO_APP_TOKEN` and `TEMPO_APP_URL` are no longer read.
+- The `guard_rm.py` hook is gone. It refused deletes runs needed far more often than it caught a delete that mattered, and no stray delete was ever unrecoverable. Builders still delete only what they made (`agents/builder.md`). The push and spawn guards stay.
 
 ## How it runs inside Claude Code
 
@@ -336,7 +340,6 @@ On 2026-11-03 a `/tempo:plan --auto` in xipp (AV-5703) scouted and planned on th
 - Whether S-lane features need QA (currently skipped).
 - Dropping the readback pass (0.6.0): T-007 had no misreadings; its stops were scope-list gaps, which 0.7.0 addresses at Handoff.
 - The split thresholds (`limits.split_orders`, `limits.split_criteria`) and `limits.spec_slice_kb`, after the first split runs.
-- Whether the rm guard (0.9.1) refuses a delete the run needed; refusals show in the agent's report or final message.
 - Whether the order check (0.8.0) pays for its time; turn it off with `limits.order_check: false`.
 - Whether scoped targets (0.10.0) miss failures a whole-suite run would catch; compare once a base is green and `advisory` is dropped.
 - The fix-of-fix threshold (2 introduced findings in one round) and how often verifiers tag STATE.
