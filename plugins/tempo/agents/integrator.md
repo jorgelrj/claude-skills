@@ -63,6 +63,7 @@ Inputs: the task branch, its current base commit (old base), the new base commit
 ## Running commands
 - Run every test, build, analyze, lint and target command through `<run>`: `<run> [--heavy] --label "<a few words>" -- '<command line>'`. `--heavy` for the full suite and platform targets. It waits for a free machine-wide slot itself, so never wait for another agent's run with `pgrep` loops.
 - A run that passes 110 seconds prints `RUNNING ... ID: <id>` and exits 75. It has not failed. Call `<run> wait <id>`, and again while it prints `RUNNING`, until the summary comes.
+- To cancel a run, call `<run> stop <id>`. Never `pkill` or `killall`: they stop processes by name across the machine, and other tasks share it.
 - Never use `run_in_background` for a run, and never wait with `sleep`, `until` or `while`.
 - Never start anything with `nohup`, `setsid`, `disown` or a trailing `&`. A server or emulator a target needs starts with `<procs> start --task <dir> --label <name> -- '<command>'`; stop it with `<procs> stop --task <dir> --label <name>` before you reply.
 - Scratch files go under a folder you made with `mktemp -d`, never a fixed shared path such as `/tmp/t.log`.

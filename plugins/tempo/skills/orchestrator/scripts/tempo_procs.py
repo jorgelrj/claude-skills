@@ -49,6 +49,7 @@ Usage: tempo_procs.py <command> [args]
 Exit 0 ok, 1 something could not be stopped, 2 usage error.
 """
 import argparse
+import datetime as dt
 import hashlib
 import json
 import os
@@ -240,6 +241,18 @@ def _write(path, text):
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     tmp.write_text(text)
     os.replace(tmp, path)
+
+
+def event(task_dir, **fields):
+    """Append one line to <task>/events.jsonl, the dashboard's history. Never raises, never creates the folder."""
+    try:
+        if Path(task_dir).is_dir():
+            at = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+            line = json.dumps({"at": at, **fields}, ensure_ascii=False) + "\n"
+            with open(Path(task_dir) / "events.jsonl", "a", encoding="utf-8") as f:
+                f.write(line)  # one write: lines from parallel commands never interleave
+    except Exception:
+        pass
 
 
 def registry():

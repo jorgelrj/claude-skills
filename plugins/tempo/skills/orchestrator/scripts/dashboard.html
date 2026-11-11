@@ -1,0 +1,720 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TEMPO</title>
+<link rel="icon" href="data:,">
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0d1117; --panel: #161b22; --card: #1c2128; --line: #30363d; --fg: #e6edf3; --dim: #9198a1;
+  --ok: #3fb950; --warn: #e3a13a; --bad: #ff7b72; --info: #6cb6ff; --glow: rgba(255, 123, 114, .45);
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg: #f3f4f6; --panel: #ffffff; --card: #ffffff; --line: #d0d7de; --fg: #1f2328; --dim: #57606a;
+    --ok: #1a7f37; --warn: #8a5a00; --bad: #c62828; --info: #0b5cad; --glow: rgba(198, 40, 40, .35);
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; overflow-x: hidden; }
+code, pre, .mono, .id, .meta, .cmd { font-family: var(--mono); font-size: 12px; }
+a, .lnk { color: var(--info); }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+.dim { color: var(--dim); }
+.ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+
+header { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: 4px 18px; align-items: baseline;
+  padding: 10px 16px; background: var(--bg); border-bottom: 1px solid var(--line); }
+h1 { margin: 0; font-size: 14px; letter-spacing: .08em; }
+h1 span { font-weight: 400; letter-spacing: 0; }
+#status { margin-left: auto; font-family: var(--mono); font-size: 12px; }
+#filters { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 16px 4px; }
+#filters .gap { flex: 1; }
+#board { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; padding: 6px 16px 24px; align-items: start; }
+.empty { grid-column: 1 / -1; text-align: center; color: var(--dim); padding: 18vh 0; }
+.col { min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+.col h2 { display: flex; justify-content: space-between; margin: 0 2px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+.col > p { margin: 8px 2px 0; }
+
+.card { display: grid; gap: 5px; min-width: 0; margin-top: 8px; padding: 8px; background: var(--card); border: 1px solid var(--line);
+  border-radius: 6px; cursor: pointer; overflow-wrap: anywhere; }
+.card:hover { border-color: var(--dim); }
+.card.wait { border-color: var(--bad); box-shadow: 0 0 0 1px var(--bad), 0 0 12px var(--glow); }
+.card.fail { border-left: 3px solid var(--bad); }
+.card.done { background: none; }  /* dimmed by colour, not opacity: the chips keep their contrast */
+.card.done .id, .card.done .title { color: var(--dim); font-weight: 400; }
+.hd, .chips, .vr, .kid { display: flex; flex-wrap: wrap; gap: 3px 6px; align-items: center; }
+.id { font-weight: 600; font-size: 13px; }
+.title { font-weight: 500; }
+.vl { min-width: 26px; font-family: var(--mono); font-size: 11px; color: var(--dim); }
+.ln { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meta { color: var(--dim); font-size: 11px; }
+.wt { margin: 0; padding: 6px; max-height: 7.5em; overflow: hidden; white-space: pre-wrap; font-size: 11px; background: var(--bg); border-radius: 4px; }
+.cmd { padding: 1px 5px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; user-select: all; }
+.kids { display: grid; gap: 3px; padding-top: 5px; border-top: 1px solid var(--line); }
+.kid button { display: flex; flex-wrap: wrap; gap: 3px 6px; align-items: center; flex: 1; min-width: 0; padding: 2px 4px; text-align: left;
+  background: none; border: 1px solid transparent; border-radius: 4px; cursor: pointer; }
+.kid button:hover { border-color: var(--line); }
+
+.dot { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); animation: pulse 1.6s ease-in-out infinite; }
+.dot.off { background: none; border: 1px solid var(--dim); animation: none; }
+@keyframes pulse { 50% { opacity: .35; transform: scale(.75); } }
+.chip { display: inline-block; max-width: 100%; padding: 0 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle;
+  font-size: 11px; line-height: 17px; color: var(--dim); background: none; border: 1px solid var(--line); border-radius: 9px; }
+.chip.ok { color: var(--ok); border-color: currentColor; }
+.chip.warn { color: var(--warn); border-color: currentColor; }
+.chip.bad, .chip.need { color: var(--bad); border-color: currentColor; }
+.chip.need { font-weight: 600; }
+.chip.info { color: var(--info); }
+.chip.stage { color: var(--fg); font-family: var(--mono); border-radius: 4px; }
+.chip.off { border-style: dashed; }
+.chip.run { color: var(--info); border-color: var(--info); animation: breathe 2.6s ease-in-out infinite; }
+@keyframes breathe { 50% { border-color: transparent; } }
+#fhead .chip { padding: 1px 10px; font-size: 12px; font-weight: 600; }
+.tog { cursor: pointer; line-height: 20px; }
+.tog[aria-pressed="true"] { color: var(--fg); border-color: var(--fg); font-weight: 600; }
+
+#scrim { position: fixed; inset: 0; z-index: 9; background: rgba(0, 0, 0, .45); }
+#drawer { position: fixed; top: 0; right: 0; bottom: 0; z-index: 10; width: min(1280px, 94vw); display: grid; grid-template-rows: auto minmax(0, 1fr);
+  background: var(--panel); border-left: 1px solid var(--line); transform: translateX(100%); visibility: hidden;
+  transition: transform .18s ease, visibility .18s; }
+#drawer.open { transform: none; visibility: visible; }
+#dhead { display: grid; gap: 5px; padding: 12px 52px 10px 16px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+#dhead .title { font-size: 15px; }
+#close { position: absolute; top: 8px; right: 10px; width: 30px; height: 30px; font-size: 18px; line-height: 1; cursor: pointer;
+  background: none; border: 1px solid var(--line); border-radius: 6px; }
+#dbody { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); min-height: 0; }
+#side { overflow-y: auto; padding: 4px 16px 24px; border-right: 1px solid var(--line); overflow-wrap: anywhere; }
+#pane { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; }
+#fhead { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 16px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+#fhead:empty { display: none; }
+#fbody { overflow: auto; padding: 8px 16px 24px; }
+#side h3 { margin: 16px 0 6px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+#side table { width: 100%; border-collapse: collapse; }
+#side th { font-size: 11px; font-weight: 400; color: var(--dim); }
+#side th, #side td { padding: 2px 10px 2px 0; text-align: left; vertical-align: top; }
+/* a long path in the last column must wrap there, not squeeze the label column to one word per line */
+#side td { overflow-wrap: normal; }
+#side td:last-child { overflow-wrap: anywhere; }
+#side p { margin: 4px 0; }
+#side .wt { max-height: none; font-size: 12px; }
+.lnk { padding: 0; text-align: left; text-decoration: underline; font-family: var(--mono); font-size: 12px; background: none; border: 0; cursor: pointer; }
+.dec { margin: 0 0 8px; padding-left: 8px; border-left: 2px solid var(--line); }
+.fg { margin-bottom: 8px; }
+.file { display: flex; gap: 6px; width: 100%; padding: 1px 4px; text-align: left; font-family: var(--mono); font-size: 12px;
+  background: none; border: 0; border-radius: 4px; cursor: pointer; }
+.file:hover { background: var(--card); }
+.file.sel { background: var(--card); box-shadow: inset 2px 0 0 var(--info); font-weight: 600; }
+.vd { flex: none; width: 12px; text-align: center; }
+
+.raw { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.md { max-width: 90ch; overflow-wrap: anywhere; }
+.md h1 { font-size: 18px; } .md h2 { font-size: 15px; padding-bottom: 3px; border-bottom: 1px solid var(--line); }
+.md h3, .md h4, .md h5, .md h6 { font-size: 13px; }
+.md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { margin: 18px 0 6px; }
+.md p, .md ul, .md ol, .md pre, .md blockquote, .md .tw { margin: 6px 0; }
+.md ul, .md ol { padding-left: 22px; }
+.md code { padding: 0 3px; background: var(--bg); border-radius: 3px; }
+.md pre { padding: 8px; overflow-x: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
+.md pre code { padding: 0; background: none; }
+.md blockquote { padding: 1px 10px; color: var(--dim); border-left: 3px solid var(--line); }
+.md hr { border: 0; border-top: 1px solid var(--line); }
+.md .tw { overflow-x: auto; }
+.md table { border-collapse: collapse; }
+.md th, .md td { padding: 3px 8px; text-align: left; vertical-align: top; border: 1px solid var(--line); }
+
+@media (max-width: 900px) {
+  #drawer { width: 100vw; }
+  #dbody { grid-template-columns: minmax(0, 1fr); overflow-y: auto; }
+  #side { overflow: visible; border-right: 0; }
+  #pane { border-top: 1px solid var(--line); }
+  #fbody { overflow: visible; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body>
+<div id="page">
+  <header>
+    <h1>TEMPO <span id="host" class="dim"></span></h1>
+    <span id="counts"></span>
+    <span id="status" class="dim">connecting…</span>
+  </header>
+  <nav id="filters" aria-label="Filters"></nav>
+  <main id="board"><p class="empty">Loading…</p></main>
+</div>
+<div id="scrim" data-close hidden></div>
+<aside id="drawer" role="dialog" aria-label="Task details">
+  <div id="dhead"></div>
+  <button id="close" type="button" data-close aria-label="Close">×</button>
+  <div id="dbody">
+    <div id="side"></div>
+    <div id="pane"><div id="fhead"></div><div id="fbody"></div></div>
+  </div>
+</aside>
+<script>
+'use strict';
+// Part 1: pure functions (data in, HTML string out), free of the DOM so Node can load and test them.
+
+const COLS = [
+  ['plan', 'Plan', ['TRIAGE', 'EXPLORE', 'INVESTIGATE', 'REPRODUCE', 'ROOT-CAUSE', 'SPEC', 'HANDOFF', 'PLAN', 'SLICES']],
+  ['build', 'Build', ['BUILD', 'REPOS']],
+  ['integrate', 'Integrate', ['INTEGRATE']],
+  ['review', 'Review', ['REVIEW']],
+  ['qa', 'QA', ['QA', 'JOINT-QA']],
+  ['ship', 'Ship', ['SHIP']],
+  ['needs', 'Needs Jorge', []],
+  ['done', 'Done', []],
+];
+const ENDED = ['DONE', 'FAILED', 'ABORTED'];
+const WAIT = 'WAITING-ON-JORGE';
+const SYM = {ok: '✓', bad: '✗', warn: '△', need: '!', run: '◌', off: '○'};
+const WO = {DONE: 'ok', BUILDING: 'run', BLOCKED: 'bad'};
+const RUN = {'waiting for a slot': 'warn', running: 'run', gone: 'off'};
+const GOOD = ['PASS', 'DONE', 'REPRODUCED'], BAD = ['FAIL', 'BLOCKED', 'FAILED', 'ABORTED', 'NOT REPRODUCED'];
+const COARSE = /^\d{4}-\d\d-\d\d \d\d:\d\d$/;
+
+const HTML = {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'};
+function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, c => HTML[c]); }
+// API values are used as map keys: never let "constructor" or "__proto__" reach the prototype.
+function pick(map, key, fallback) { return Object.prototype.hasOwnProperty.call(map || {}, key) ? map[key] : fallback; }
+function safeUrl(u) { return /^https?:\/\/[^\s]+$/i.test(String(u || '')) ? String(u) : null; }
+const st = t => t.state || {};
+const norm = p => String(p || '').replace(/\/+$/, '');
+
+// UTC offset in minutes of an ISO time ("…-03:00"); the browser's own when there is none.
+function offsetOf(iso) {
+  const m = /([+-])(\d\d):?(\d\d)$/.exec(iso || '');
+  return m ? (m[1] === '-' ? -1 : 1) * (m[2] * 60 + +m[3]) : /Z$/.test(iso || '') ? 0 : -new Date().getTimezoneOffset();
+}
+// "YYYY-MM-DD HH:MM" is the server's local time, so it needs the server's offset; ISO strings carry their own.
+function parseTime(s, off) {
+  if (typeof s === 'number') return s;
+  if (typeof s !== 'string') return NaN;
+  const m = /^(\d{4})-(\d\d)-(\d\d)[ T](\d\d):(\d\d)(?::(\d\d))?$/.exec(s.trim());
+  return m ? Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)) - (off || 0) * 60000 : Date.parse(s);
+}
+function fmtDur(ms, coarse) {
+  if (!isFinite(ms)) return '–';
+  const s = Math.max(0, Math.floor(ms / 1000)), m = Math.floor(s / 60);
+  return m >= 60 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : m >= 1 || coarse ? m + 'm' : s + 's';
+}
+const shortTime = s => String(s || '').slice(5, 16).replace('T', ' ');
+// A duration: fixed text when it ended; otherwise an empty span that tick() fills every second, so the
+// HTML depends on the data only and an unchanged section is never replaced.
+function clock(start, end, ctx) {
+  const a = parseTime(start, ctx.off), coarse = COARSE.test(start);
+  if (!isFinite(a)) return '';
+  if (end == null) return `<span data-since="${a}"${coarse ? ' data-coarse' : ''}></span>`;
+  return esc(fmtDur(parseTime(end, ctx.off) - a, coarse));
+}
+
+function columnOf(t) {
+  const s = st(t);
+  if (s.status === WAIT) return 'needs';
+  if (ENDED.includes(s.status) || s.stage === 'DONE' || s.stage === 'PLANNED') return 'done';
+  const c = COLS.find(c => c[2].includes(s.stage));
+  return c ? c[0] : 'plan';  // an unknown stage keeps its card
+}
+function endMs(t, ctx) {
+  const log = st(t).log || [], e = log[log.length - 1], v = e ? parseTime(e[e.length - 4], ctx.off) : NaN;
+  return isFinite(v) ? v : (t.mtime || 0) * 1000;
+}
+const total = (t, ctx) => clock(st(t).started, columnOf(t) === 'done' ? endMs(t, ctx) : null, ctx);
+
+// Children are matched by exact folder, and everything is keyed by tag: a parent and its child share a task name.
+function nest(tasks) {
+  const byDir = new Map(tasks.map(t => [norm(t.dir), t])), kids = new Map(), parentOf = new Map();
+  for (const t of tasks) {
+    kids.set(t.tag, Object.entries(st(t).children || {}).map(([name, info]) => {
+      const c = byDir.get(norm(info && info.folder));
+      if (c && c !== t) parentOf.set(c.tag, t);
+      return {name, info: info || {}, task: c && c !== t ? c : null};
+    }));
+  }
+  return {top: tasks.filter(t => !parentOf.has(t.tag)), kids, parentOf};
+}
+function counts(tasks, n) {
+  return {running: n.top.filter(t => st(t).status === 'RUNNING' && columnOf(t) !== 'done' && t.alive !== false).length,  // a task whose session is gone is not running
+          waiting: tasks.filter(t => st(t).status === WAIT).length,
+          finished: n.top.filter(t => columnOf(t) === 'done').length};
+}
+
+// A path as the task folder knows it: agents record ".tempo/<task>/x.md" or an absolute path.
+function rel(t, p) {
+  p = String(p || '');
+  const d = norm(t.dir) + '/', mark = '.tempo/' + t.task + '/';
+  return p.startsWith(d) ? p.slice(d.length) : p.includes(mark) ? p.slice(p.lastIndexOf(mark) + mark.length) : p;
+}
+function relPath(t, p) { p = rel(t, p); return p && (t.files || []).includes(p) ? p : null; }
+function defaultFile(t) {
+  const log = st(t).log || [], e = log[log.length - 1];
+  return relPath(t, st(t).waiting) || (e && relPath(t, e[e.length - 2])) || relPath(t, 'task.md') || (t.files || [])[0] || null;
+}
+
+function vClass(v) {
+  v = String(v || '').toUpperCase();
+  return GOOD.includes(v) ? 'ok' : BAD.includes(v) ? 'bad' : 'warn';
+}
+// cls is always a literal from this file; text is data; html is trusted markup from clock().
+function chip(cls, text, title, html) {
+  return `<span class="chip ${cls}"${title ? ` title="${esc(title)}"` : ''}>${SYM[cls] ? SYM[cls] + ' ' : ''}${esc(text)}${html ? ' ' + html : ''}</span>`;
+}
+function statusChip(x) {
+  return !x ? '' : x === 'RUNNING' ? chip('run', 'running') : x === WAIT ? chip('need', 'waiting on Jorge') : x === 'DONE' ? chip('ok', 'done') : chip('bad', x);
+}
+function prLink(u) {
+  if (!u) return '';
+  const url = safeUrl(u), m = /\/pull\/(\d+)/.exec(u);
+  return url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${m ? 'PR #' + m[1] : 'PR'}</a>` : `<span class="dim">${esc(u)}</span>`;
+}
+function tags(s) {
+  return (s.flow ? chip('plain', s.flow) : '') + (s.lane ? chip('plain', 'lane ' + s.lane) : '') + (s.critical ? chip('warn', 'Critical') : '') +
+    (s.autopilot ? chip('info', 'Autopilot') : '') + (s.mode === 'PLAN-ONLY' ? chip('plain', 'Plan-only') : '');
+}
+function fileBtn(p, label, key) {
+  return p ? `<button type="button" class="lnk" data-file="${esc(p)}" data-f="${esc(key)}">${esc(label)}</button>` : `<span class="mono">${esc(label)}</span>`;
+}
+
+// Review rounds and QA come from the files that exist ("results", "files", agents in flight). The counters only
+// add a round that has no file yet: they lag (qa) and skip numbers (a double bump) in real runs.
+function verdicts(t) {
+  const s = st(t), running = s.status === 'RUNNING', R = new Map(), results = t.results || {};
+  const round = n => R.get(n) || R.set(n, {n, lenses: [], verdict: null, run: false}).get(n);
+  const lens = (p, flying) => {
+    const m = /^review\/(.+)-r(\d+)\.md$/.exec(p || '');
+    if (!m) return;
+    const ls = round(+m[2]).lenses, cur = ls.find(l => l.name === m[1]) || ls[ls.push({name: m[1], verdict: pick(results, p, null), run: false}) - 1];
+    if (flying) cur.run = true;
+  };
+  (t.files || []).forEach(f => lens(f));
+  Object.keys(results).forEach(k => { lens(k); const m = /^findings-r(\d+)\.md$/.exec(k); if (m) round(+m[1]).verdict = results[k]; });
+  (t.agents || []).forEach(a => {
+    if (a.ended) return;
+    const p = rel(t, a.output), m = /^findings-r(\d+)\.md$/.exec(p);
+    lens(p, true);
+    if (m) round(+m[1]).run = true;
+  });
+  const bumped = +(s.counters || {}).review || 0;
+  if (bumped > Math.max(0, ...R.keys())) round(bumped);
+  const todo = columnOf(t) !== 'done' && s.mode !== 'PLAN-ONLY' && s.flow !== 'WORKSPACE';
+  if (!R.size && todo) round(1);
+  const rounds = [...R.values()].sort((a, b) => a.n - b.n), last = rounds[rounds.length - 1];
+  if (last && running && s.stage === 'REVIEW') last.run = true;
+  const qa = Object.keys(results).map(k => /^qa(?:-joint)?-r(\d+)\.md$/.exec(k)).filter(Boolean)
+    .map(m => ({n: +m[1], verdict: results[m[0]]})).sort((a, b) => a.n - b.n);
+  return {int: pick(results, 'integration.md', null), intRun: running && s.stage === 'INTEGRATE', rounds, qa,
+          qaRun: running && (s.stage === 'QA' || s.stage === 'JOINT-QA'), todo};
+}
+function verdictRows(t) {
+  const v = verdicts(t), row = (k, chips) => `<div class="vr"><span class="vl">${k}</span>${chips}</div>`;
+  let h = '';
+  if (v.int || v.intRun) h += row('INT', v.intRun ? chip('run', 'integrating') : chip(vClass(v.int), v.int));
+  for (const r of v.rounds) {
+    h += row('R' + r.n, r.lenses.map(l => chip(l.run ? 'run' : l.verdict ? vClass(l.verdict) : 'plain', l.name, l.verdict || (l.run ? 'in progress' : 'written'))).join('') +
+      (r.verdict ? chip(vClass(r.verdict), r.verdict) : r.run ? chip('run', 'reviewing') : chip('off', r.lenses.length ? 'no verdict' : 'not started')));
+  }
+  if (v.qa.length || v.qaRun || v.todo) {
+    h += row('QA', v.qa.map(q => chip(vClass(q.verdict), 'r' + q.n + ' ' + q.verdict)).join('') +
+      (v.qaRun ? chip('run', 'running', t.qa_progress) : v.qa.length ? '' : chip('off', 'not started')));
+  }
+  return h;
+}
+function newestRun(t) {
+  const runs = t.runs || [], last = s => runs.filter(r => r.state === s).pop();
+  return last('running') || last('waiting for a slot') || null;
+}
+
+function renderCard(t, n, ctx) {
+  const s = st(t), fin = columnOf(t) === 'done', waiting = s.status === WAIT, failed = s.status === 'FAILED' || s.status === 'ABORTED';
+  const kids = n.kids.get(t.tag) || [], kidState = k => k.task ? st(k.task) : k.info;
+  const fly = (t.agents || []).filter(a => !a.ended), run = newestRun(t), wos = s.work_orders || {};
+  const cls = 'card' + (waiting || kids.some(k => kidState(k).status === WAIT) ? ' wait' : '') + (failed ? ' fail' : fin ? ' done' : '');
+  const woRow = Object.keys(wos).sort().map(k => {
+    const w = wos[k] || {}, x = w.status || 'ISSUED';
+    return chip(pick(WO, x, 'off'), k + (x === 'BLOCKED' ? ' blocked' : ''), x.toLowerCase(), clock(w.started, w.finished || (fin ? endMs(t, ctx) : null), ctx));
+  }).join('');
+  const kidRows = kids.map(k => {
+    const c = k.task, cs = kidState(k);
+    const inner = `<span class="mono">${esc(k.name)}</span><span class="chip stage">${esc(cs.stage || 'NOT STARTED')}</span>${statusChip(cs.status)}<span class="meta">` +
+      (c ? total(c, ctx) : cs.ended ? clock(cs.started, cs.ended, ctx) : ENDED.includes(cs.status) ? '' : clock(cs.started, null, ctx)) + '</span>';
+    return `<div class="kid">${c ? `<button type="button" data-open="${esc(c.tag)}" data-f="k${esc(t.tag + c.tag)}">${inner}</button>` : inner}${prLink(cs.pr)}</div>`;
+  }).join('');
+  const lines = String(t.waiting_text || s.waiting || '').split('\n').filter(l => l.trim()).slice(0, 5).join('\n');
+  return `<div class="${cls}" tabindex="0" role="group" aria-label="${esc(t.task + ': ' + (s.title || ''))}" data-open="${esc(t.tag)}" data-f="c${esc(t.tag)}">` +
+    `<div class="hd">${s.status === 'RUNNING' && t.alive !== false ? '<span class="dot" role="img" aria-label="running"></span>' : ''}` +
+    `<span class="id">${esc(t.task)}</span><span class="dim">${esc(t.checkout)}</span>${t.alive === false && !fin ? chip('plain', 'session gone') : ''}</div>` +
+    `<div class="title">${esc(s.title)}</div>` +
+    `<div class="chips">${tags(s)}<span class="chip stage">${esc(s.stage)}</span>${failed ? chip('bad', s.status) : ''}${prLink(s.pr)}</div>` +
+    (woRow ? `<div class="chips">${woRow}</div>` : '') + verdictRows(t) +
+    (fly.length ? `<div class="ln">${fly.length} agent${fly.length > 1 ? 's' : ''} · <span class="mono">${esc(fly[fly.length - 1].label)}</span></div>` : '') +
+    (run ? `<div class="ln">test: <span class="mono">${esc(run.label)}</span>${run.state === 'running' ? '' : ' ' + chip('warn', run.state)}</div>` : '') +
+    (t.qa_progress && !fin && (s.stage === 'QA' || s.stage === 'JOINT-QA') ? `<div class="ln dim">${esc(t.qa_progress)}</div>` : '') +
+    (waiting ? `${lines ? `<pre class="wt">${esc(lines)}</pre>` : ''}<div><code class="cmd">/tempo:resume ${esc(t.task)}</code></div>` : '') +
+    (kidRows ? `<div class="kids">${kidRows}</div>` : '') +
+    `<div class="meta">${fin ? '' : `${esc(s.stage)} ${clock(s.stage_since, null, ctx)} · `}total ${total(t, ctx)}</div></div>`;
+}
+
+function renderFilters(tasks, ui) {
+  const cos = [...new Set(tasks.map(t => t.checkout).filter(Boolean))].sort(), sel = ui.checkouts.filter(c => cos.includes(c));
+  const b = (on, attr, text, key) => `<button type="button" class="chip tog" aria-pressed="${on}" ${attr} data-f="${esc(key)}">${on ? '✓ ' : ''}${esc(text)}</button>`;
+  return b(!sel.length, 'data-filter=""', 'All', 'fa') + cos.map(c => b(sel.includes(c), `data-filter="${esc(c)}"`, c, 'fc' + c)).join('') +
+    '<span class="gap"></span>' + b(ui.finished, 'data-finished', 'show finished', 'ff');
+}
+function renderBoard(tasks, n, ui, ctx) {
+  const present = new Set(tasks.map(t => t.checkout)), sel = ui.checkouts.filter(c => present.has(c));  // a checkout that left the list filters nothing
+  const kids = t => (n.kids.get(t.tag) || []).map(k => k.task).filter(Boolean);
+  const shown = n.top.filter(t => !sel.length || [t].concat(kids(t)).some(x => sel.includes(x.checkout)));
+  const act = t => Math.max(t.mtime || 0, ...kids(t).map(c => c.mtime || 0));
+  const needs = t => +(st(t).status === WAIT || kids(t).some(c => st(c).status === WAIT));
+  return COLS.map(([key, name]) => {
+    const cards = shown.filter(t => columnOf(t) === key).sort((a, b) => needs(b) - needs(a) || act(b) - act(a));
+    const hide = key === 'done' && !ui.finished;
+    return `<section class="col" aria-label="${name}"><h2><span>${name}</span><span>${cards.length}</span></h2>` +
+      (hide ? (cards.length ? '<p class="dim">hidden</p>' : '') : cards.map(t => renderCard(t, n, ctx)).join('')) + '</section>';
+  }).join('');
+}
+
+function renderHead(t, n, ctx) {
+  const s = st(t), par = n.parentOf.get(t.tag);
+  return `<div class="hd"><span class="id">${esc(t.task)}</span><span class="dim">${esc(t.checkout)}</span>` +
+    (t.alive === false && columnOf(t) !== 'done' ? chip('plain', 'session gone') : '') +
+    (par ? `<button type="button" class="lnk" data-open="${esc(par.tag)}" data-f="up">↑ parent ${esc(par.task)} (${esc(par.checkout)})</button>` : '') + '</div>' +
+    `<div class="title">${esc(s.title)}</div>` +
+    `<div class="chips">${tags(s)}<span class="chip stage">${esc(s.stage)}</span>${statusChip(s.status)}${prLink(s.pr)}</div>` +
+    `<div class="meta">mode ${esc(s.mode || 'FULL')} · base ${esc(s.base_branch || '–')}@${esc(String(s.base_commit || '').slice(0, 9))} · ` +
+    `branch ${esc(s.task_branch || '–')} · started ${esc(shortTime(s.started))} · elapsed ${total(t, ctx)}</div>`;
+}
+
+function renderSide(t, n, file, ctx) {
+  const s = st(t), fin = columnOf(t) === 'done', waiting = s.status === WAIT, end = fin ? endMs(t, ctx) : null;
+  const sec = (title, body) => body ? `<section><h3>${title}</h3>${body}</section>` : '';
+  const table = (head, rows) => rows.length ? `<table><thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>` : '';
+  const fb = (p, key) => p ? fileBtn(relPath(t, p), rel(t, p), key) : '';
+  const td = (...cells) => '<tr>' + cells.map(c => `<td>${c}</td>`).join('') + '</tr>';
+  const mono = v => `<span class="mono">${esc(v)}</span>`;
+
+  const log = (s.log || []).map((e, i) => {
+    const [start, stop, stage, art, result] = e.length >= 5 ? e : [null].concat(e);  // before 0.7.0: end time only
+    return td(esc(stage), fb(art, 't' + i), mono(shortTime(start || stop)), start ? clock(start, stop, ctx) : '', chip(vClass(result), result));
+  });
+  if (!fin && s.stage) log.push(td(esc(s.stage), '', mono(shortTime(s.stage_since)), clock(s.stage_since, null, ctx), statusChip(s.status)));
+
+  const wos = Object.keys(s.work_orders || {}).sort().map(k => {
+    const w = s.work_orders[k] || {}, x = w.status || 'ISSUED';
+    const earlier = (w.runs || []).map(r => fmtDur(parseTime(r[1], ctx.off) - parseTime(r[0], ctx.off), true));
+    return td(mono(k), chip(pick(WO, x, 'off'), x.toLowerCase()), mono(w.branch || '–'), clock(w.started, w.finished || end, ctx) +
+      (earlier.length ? ` <span class="dim">(run ${earlier.length + 1}; earlier ${esc(earlier.join(' + '))})</span>` : ''));
+  });
+
+  const all = t.agents || [];
+  const agents = all.filter(a => !a.ended).concat(all.filter(a => a.ended).reverse()).map(a =>
+    td(mono(a.label) + (a.ended ? '' : ' ' + chip('run', 'running')), mono(a.model || '–'), clock(a.started, a.ended || end, ctx),
+       [fb(a.output, 'ao' + a.id), fb(a.prompt, 'ap' + a.id)].filter(Boolean).join('<br>')));
+
+  const runs = (t.runs || []).slice().reverse().map(r => {
+    const live = r.state === 'running' || r.state === 'waiting for a slot';
+    return td(mono(r.label) + (r.heavy ? ' ' + chip('plain', 'heavy') : ''), chip(pick(RUN, r.state, 'plain'), r.state), live ? clock(r.started, null, ctx) : mono(r.result || '–'));
+  });
+
+  const procs = (t.procs || []).map((p, i) => td(mono(p.label), mono(p.pid),
+    p.alive ? '<span class="dot"></span> alive' : '<span class="dot off"></span> stopped',
+    p.alive ? clock(p.started * 1000, null, ctx) : p.stopped ? clock(p.started * 1000, p.stopped * 1000, ctx) : '–', mono(p.log || '–')));  // not a link: the server never serves process logs, they hold command lines
+
+  const wait = (waiting || s.waiting ? (s.waiting ? `<p>${fb(s.waiting, 'w')}</p>` : '') + (t.waiting_text ? `<pre class="wt">${esc(t.waiting_text)}</pre>` : '') +
+    `<p>Answer with <code class="cmd">/tempo:resume ${esc(t.task)}</code></p>` : '') + (s.next ? `<p><span class="dim">Next:</span> ${esc(s.next)}</p>` : '');
+
+  const decisions = (s.decisions || []).map(d => `<div class="dec"><div>${chip('plain', d.kind)} ${esc(d.question)}</div>` +
+    `<div>→ ${esc(d.choice)}</div><div class="dim">${esc(d.why)}</div></div>`).join('');
+
+  const kids = (n.kids.get(t.tag) || []).map(k => {
+    const c = k.task, cs = c ? st(c) : k.info;
+    return td(c ? `<button type="button" class="lnk" data-open="${esc(c.tag)}" data-f="d${esc(c.tag)}">${esc(k.name)}</button>` : mono(k.name),
+              `<span class="chip stage">${esc(cs.stage || 'NOT STARTED')}</span>`, statusChip(cs.status), prLink(cs.pr));
+  });
+
+  const groups = new Map();
+  for (const f of t.files || []) {
+    const d = f.lastIndexOf('/') < 0 ? '' : f.slice(0, f.lastIndexOf('/'));
+    (groups.get(d) || groups.set(d, []).get(d)).push(f);
+  }
+  const files = [...groups.keys()].sort().map(d => `<div class="fg"><div class="dim mono">${esc(d || '.')}/</div>` + groups.get(d).map(f => {
+    const v = pick(t.results, f, null);
+    return `<button type="button" class="file${f === file ? ' sel' : ''}" data-file="${esc(f)}" data-f="f${esc(f)}"${f === file ? ' aria-current="true"' : ''}>` +
+      `<span class="vd ${v ? vClass(v) : ''}"${v ? ` title="${esc(v)}"` : ''}>${v ? SYM[vClass(v)] : ''}</span><span>${esc(d ? f.slice(d.length + 1) : f)}</span></button>`;
+  }).join('') + '</div>').join('');
+
+  return sec('Stage timeline', table(['Stage', 'Artifact', 'Start', 'Took', 'Result'], log)) +
+    sec('Work orders', table(['Order', 'Status', 'Branch', 'Took'], wos)) +
+    sec('Agents', table(['Agent', 'Model', 'Took', 'Output, prompt'], agents)) +
+    sec('Test runs', table(['Run', 'State', 'Elapsed or result'], runs)) +
+    sec('Processes', table(['Process', 'PID', 'State', 'Uptime', 'Log'], procs)) +
+    sec(waiting ? 'Waiting on Jorge' : 'Next action', wait) +
+    sec('Autopilot decisions', decisions) +
+    sec('Children', table(['Task', 'Stage', 'Status', 'PR'], kids)) +
+    sec('Files', files);
+}
+function renderFileHead(t, file) {
+  const v = file && pick(t.results, file, null);
+  return file ? `<span class="mono">${esc(file)}</span>${v ? chip(vClass(v), v) : ''}` : '';
+}
+function renderFile(path, text) {
+  return /\.md$/i.test(path) ? `<div class="md">${md(text)}</div>` : `<pre class="raw">${esc(text)}</pre>`;
+}
+
+// Markdown: every piece of text is escaped first, then markup is added, so no tag from a file survives.
+const ITEM = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
+const indent = s => s.replace(/\t/g, '    ').length;
+const isHr = l => /^ {0,3}([-*_])(?:\s*\1){2,}\s*$/.test(l);
+const isSep = l => l.includes('|') && /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/.test(l);
+const startsBlock = (L, i) => /^\s*(#{1,6}\s|>|`{3}|~{3})/.test(L[i]) || isHr(L[i]) || ITEM.test(L[i]) || (L[i].includes('|') && i + 1 < L.length && isSep(L[i + 1]));
+
+function emph(s) {
+  return s.replace(/\*\*([^\s*](?:[^*]*[^\s*])?)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^\w*])\*([^\s*](?:[^*]*[^\s*])?)\*(?![\w*])/g, '$1<em>$2</em>')
+    // "_" marks emphasis only at word edges: update_food_nutrient stays as it is
+    .replace(/(^|[^\w_])__([^\s_](?:[^_]*[^\s_])?)__(?![\w_])/g, '$1<strong>$2</strong>')
+    .replace(/(^|[^\w_])_([^\s_](?:[^_]*[^\s_])?)_(?![\w_])/g, '$1<em>$2</em>');
+}
+function mdInline(raw) {
+  const keep = [], stash = h => '\u0000' + (keep.push(h) - 1) + '\u0000';  // code and links wait here so emphasis never touches them
+  const a = (url, text) => stash(`<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`);
+  let s = esc(String(raw).replace(/\u0000/g, ''));
+  s = s.replace(/(`+)(.+?)\1/g, (m, t, code) => stash('<code>' + code + '</code>'));
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)\u0000]+)\)/g, (m, text, url) => a(url, emph(text)));
+  s = s.replace(/(^|[\s(]|&lt;)(https?:\/\/(?:[^\s<&\u0000]|&amp;)+)/g, (m, pre, url) => {  // \u0000: stop at a stashed link or code span
+    const tail = (/[.,;:!?)\]]+$/.exec(url) || [''])[0];  // sentence punctuation is not part of the URL
+    url = url.slice(0, url.length - tail.length);
+    return pre + a(url, url) + tail;
+  });
+  s = emph(s);
+  while (/\u0000\d+\u0000/.test(s)) s = s.replace(/\u0000(\d+)\u0000/g, (m, i) => keep[i]);
+  return s;
+}
+function cells(row) {
+  const out = [];
+  let cur = '', code = false;
+  row = row.trim().replace(/^\|/, '').replace(/\|$/, '');
+  for (let k = 0; k < row.length; k++) {
+    const c = row[k];
+    if (c === '\\' && row[k + 1] === '|') { cur += '|'; k++; }
+    else if (c === '|' && !code) { out.push(cur.trim()); cur = ''; }
+    else { if (c === '`') code = !code; cur += c; }  // a pipe inside `code` is not a cell border
+  }
+  out.push(cur.trim());
+  return out;
+}
+function mdList(L) {
+  const first = ITEM.exec(L[0]), base = indent(first[1]), ol = /\d/.test(first[2]), n = parseInt(first[2], 10), items = [];
+  for (const l of L) {
+    const m = ITEM.exec(l), it = items[items.length - 1];
+    if (m && (!it || indent(m[1]) <= base + 1)) items.push({text: [m[3]], sub: []});
+    else if (m || it.sub.length) it.sub.push(l);
+    else it.text.push(l.trim());
+  }
+  return (ol ? `<ol${n > 1 ? ` start="${n}"` : ''}>` : '<ul>') +
+    items.map(it => '<li>' + it.text.map(mdInline).join('<br>') + (it.sub.length ? mdList(it.sub) : '') + '</li>').join('') + (ol ? '</ol>' : '</ul>');
+}
+// shortcut: no indented code blocks, setext headings, images or fenced code inside a list item; they render as plain text. Upgrade when an artifact template starts using them.
+function mdBlocks(L, depth) {
+  let out = '', i = 0, m;
+  while (i < L.length) {
+    const l = L[i];
+    if (!l.trim()) { i++; continue; }
+    if ((m = /^\s*(`{3,}|~{3,})/.exec(l))) {
+      const f = m[1], buf = [], closes = x => (x = x.trim()).length >= f.length && x === f[0].repeat(x.length);
+      for (i++; i < L.length && !closes(L[i]); i++) buf.push(L[i]);
+      i++;
+      out += '<pre><code>' + esc(buf.join('\n')) + '</code></pre>';
+    } else if ((m = /^\s{0,3}(#{1,6})\s+(.*)$/.exec(l))) {
+      out += `<h${m[1].length}>${mdInline(m[2])}</h${m[1].length}>`; i++;
+    } else if (isHr(l)) {
+      out += '<hr>'; i++;
+    } else if (/^\s*>/.test(l) && !(depth > 20)) {  // deeper quotes stay text: a file of ">>>>…" must not exhaust the stack
+      const buf = [];
+      for (; i < L.length && /^\s*>/.test(L[i]); i++) buf.push(L[i].replace(/^\s*>\s?/, ''));
+      out += '<blockquote>' + mdBlocks(buf, (depth || 0) + 1) + '</blockquote>';
+    } else if (l.includes('|') && i + 1 < L.length && isSep(L[i + 1])) {
+      const head = cells(l), rows = [];
+      for (i += 2; i < L.length && L[i].trim() && L[i].includes('|'); i++) rows.push(cells(L[i]));
+      out += '<div class="tw"><table><thead><tr>' + head.map(c => '<th>' + mdInline(c) + '</th>').join('') + '</tr></thead><tbody>' +
+        rows.map(r => '<tr>' + r.map(c => '<td>' + mdInline(c) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
+    } else if (ITEM.test(l)) {
+      const buf = [];
+      for (; i < L.length; i++) {
+        if (ITEM.test(L[i]) || /^(\s{2,}|\t)\S/.test(L[i])) buf.push(L[i]);
+        else if (L[i].trim() || !(i + 1 < L.length && (ITEM.test(L[i + 1]) || /^(\s{2,}|\t)\S/.test(L[i + 1])))) break;  // a blank line ends the list unless more of it follows
+      }
+      out += mdList(buf);
+    } else {
+      const buf = [l];
+      for (i++; i < L.length && L[i].trim() && !startsBlock(L, i); i++) buf.push(L[i]);
+      out += '<p>' + buf.map(x => mdInline(x.trim())).join('<br>') + '</p>';
+    }
+  }
+  return out;
+}
+function md(src) { return mdBlocks(String(src).replace(/\r\n?/g, '\n').split('\n')); }
+
+if (typeof module !== 'undefined') {
+  module.exports = {esc, safeUrl, offsetOf, parseTime, fmtDur, columnOf, nest, counts, rel, relPath, defaultFile, verdicts, newestRun,
+                    renderCard, renderFilters, renderBoard, renderHead, renderSide, renderFileHead, renderFile, md, COLS};
+}
+
+// Part 2: the page. Poll, replace only the containers whose HTML changed, keep focus and scroll.
+if (typeof document !== 'undefined') (function () {
+  const $ = id => document.getElementById(id);
+  const EMPTY = '<p class="empty">No TEMPO tasks to show. Start one with <code>/tempo:feature</code> or <code>/tempo:bug</code> and it appears here.</p>';
+  const ui = {checkouts: [], finished: true};
+  let data = null, seen = '', lastOk = 0, skew = 0, timer = 0, busy = false;
+  let open = '', opener = '', file = null, fileOf = '', shown = null;
+
+  try {
+    const v = JSON.parse(localStorage.getItem('tempo-dash') || '{}');
+    if (Array.isArray(v.checkouts)) ui.checkouts = v.checkouts.map(String);
+    if (typeof v.finished === 'boolean') ui.finished = v.finished;
+  } catch (e) { /* storage blocked: the defaults work */ }
+  const persist = () => { try { localStorage.setItem('tempo-dash', JSON.stringify(ui)); } catch (e) { /* same */ } };
+
+  function swap(el, html) {
+    if (el.shownHtml === html) return;
+    const f = el.contains(document.activeElement) && document.activeElement.dataset.f;
+    const keep = [el, $('dbody')].map(x => [x, x.scrollTop]), x = scrollX, y = scrollY;
+    el.innerHTML = html;
+    el.shownHtml = html;
+    if (f) { const again = el.querySelector(`[data-f="${CSS.escape(f)}"]`); if (again) again.focus({preventScroll: true}); }
+    keep.forEach(([k, top]) => { k.scrollTop = top; });
+    if (scrollX !== x || scrollY !== y) scrollTo(x, y);
+  }
+  function tick() {
+    const now = Date.now() + skew;
+    for (const el of document.querySelectorAll('[data-since]')) {
+      const v = fmtDur(now - el.dataset.since, 'coarse' in el.dataset);
+      if (el.textContent !== v) el.textContent = v;
+    }
+  }
+  function status(err) {
+    const at = lastOk ? new Date(lastOk).toTimeString().slice(0, 8) : 'never';
+    swap($('status'), err ? `<span class="bad">● ${esc(err)} · last update ${at}</span>` : `<span class="ok">●</span> updated ${at}`);
+  }
+
+  function loadFile(t) {
+    if (!file) { shown = null; swap($('fbody'), '<p class="dim">No file selected.</p>'); return; }
+    const fresh = !(shown && shown.tag === t.tag && shown.path === file);
+    if (!fresh && shown.busy) return;  // the same file is still loading: a slow fetch must not be dropped by the next poll
+    const want = shown = {tag: t.tag, path: file, busy: true};
+    if (fresh) swap($('fbody'), '<p class="dim">Loading…</p>');
+    fetch('/api/file?tag=' + encodeURIComponent(t.tag) + '&path=' + encodeURIComponent(file), {cache: 'no-store'})
+      .then(r => r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then(text => {
+        want.busy = false;
+        if (shown !== want) return;  // another file was picked while this one loaded
+        swap($('fbody'), renderFile(want.path, text));
+        if (fresh) $('fbody').scrollTop = 0;
+      })
+      .catch(e => {
+        want.busy = false;
+        if (shown !== want) return;
+        swap($('fbody'), `<p class="bad">Could not load ${esc(want.path)}: ${esc(e && e.message || e)}</p>`);
+      });
+  }
+
+  function render() {
+    if (!data) return;
+    const tasks = data.tasks || [], n = nest(tasks), ctx = {off: offsetOf(data.now)}, c = counts(tasks, n);
+    $('host').textContent = data.host || '';
+    document.title = (c.waiting ? `(${c.waiting} waiting) ` : '') + 'TEMPO';
+    swap($('counts'), `<b>${c.running}</b> running · <b${c.waiting ? ' class="bad"' : ''}>${c.waiting}</b> waiting on Jorge · <b>${c.finished}</b> finished`);
+    swap($('filters'), tasks.length ? renderFilters(tasks, ui) : '');
+    swap($('board'), tasks.length ? renderBoard(tasks, n, ui, ctx) : EMPTY);
+    const t = tasks.find(x => x.tag === open);  // a tag that is not listed (yet) keeps its hash and shows nothing
+    $('drawer').classList.toggle('open', !!t);
+    $('scrim').hidden = !t;
+    $('page').inert = !!t;
+    if (t) {
+      const other = fileOf !== t.tag;
+      if (other) { fileOf = t.tag; file = defaultFile(t); }
+      swap($('dhead'), renderHead(t, n, ctx));
+      swap($('side'), renderSide(t, n, file, ctx));
+      swap($('fhead'), renderFileHead(t, file));
+      if (other) $('side').scrollTop = $('dbody').scrollTop = 0;  // another task starts at the top
+      loadFile(t);
+    }
+    tick();
+  }
+
+  async function poll() {
+    if (busy) return;
+    busy = true;
+    clearTimeout(timer);
+    try {
+      const r = await fetch('/api/tasks' + location.search, {cache: 'no-store', signal: AbortSignal.timeout ? AbortSignal.timeout(10000) : undefined});
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = JSON.parse(await r.text()), key = JSON.stringify([d.host, d.tasks]);  // "now" changes on every poll, the rest decides
+      lastOk = Date.now();
+      skew = (Date.parse(d.now) || lastOk) - lastOk;
+      if (key !== seen) { data = d; render(); seen = key; }  // seen only once it rendered: a failed render is retried
+      else { const t = open && d.tasks.find(x => x.tag === open); if (t) loadFile(t); }  // a log or progress file grows without the task changing
+      status('');
+    } catch (e) {
+      status(String(e && e.message || e));
+    }
+    busy = false;
+    if (!document.hidden) timer = setTimeout(poll, 2000);
+  }
+
+  function sync(focus) {
+    const h = location.hash.slice(1), was = open;
+    open = /^[0-9a-f]{12}$/.test(h) ? h : '';
+    render();
+    if (!focus) return;
+    if (open && $('drawer').classList.contains('open')) $('close').focus();
+    else if (was && opener) { const el = document.querySelector(`[data-f="${CSS.escape(opener)}"]`); if (el) el.focus(); }
+  }
+  function go(tag) {
+    if (!open) opener = (document.activeElement && document.activeElement.dataset.f) || 'c' + tag;
+    location.hash = tag;
+  }
+  function closeDrawer() {
+    history.replaceState(null, '', location.pathname + location.search);
+    sync(true);
+  }
+
+  document.addEventListener('click', e => {
+    const el = e.target.closest('a, button, [data-open], [data-close]');
+    if (!el || el.tagName === 'A') return;
+    const d = el.dataset;
+    if ('close' in d) closeDrawer();
+    else if ('file' in d) {
+      file = d.file;
+      render();
+      if (matchMedia('(max-width: 900px)').matches) $('pane').scrollIntoView();  // the pane sits below the lists there
+    } else if ('filter' in d) {
+      ui.checkouts = !d.filter ? [] : ui.checkouts.includes(d.filter) ? ui.checkouts.filter(c => c !== d.filter) : ui.checkouts.concat(d.filter);
+      persist(); render();
+    } else if ('finished' in d) {
+      ui.finished = !ui.finished;
+      persist(); render();
+    } else if (d.open) go(d.open);
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && open) closeDrawer();
+    else if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('card')) { e.preventDefault(); go(e.target.dataset.open); }
+  });
+  addEventListener('hashchange', () => sync(true));
+  document.addEventListener('visibilitychange', () => { if (document.hidden) clearTimeout(timer); else poll(); });
+  setInterval(tick, 1000);
+  sync(false);
+  poll();
+})();
+</script>
+</body>
+</html>

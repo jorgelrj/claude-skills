@@ -41,6 +41,7 @@ After editing files here, restart Claude Code (Option A) or run `/plugin marketp
 | `/tempo:resume <task-id> [build \| answer]` | Continue a task from its last artifact, answer the question it is waiting on, or `build` a planned task |
 | `/tempo:sweep [--yes] [task-id]` | List processes TEMPO or a coding session left running (emulators, servers, watchers, Java stacks), with memory and age, and stop the ones you pick (0.17.0) |
 | `/tempo:report [--task <id>] [--dry-run] <what went wrong>` | File a GitHub issue on the TEMPO repo about something TEMPO just did wrong, with the run's state, artifacts and transcript path attached; the task keeps going (0.19.0) |
+| `/tempo:dash [stop \| status] [folder]` | Start the local, read-only dashboard of running and recent tasks and print its URL; `stop` ends it (0.22.0) |
 | `/tempo:init [repo\|workspace] [notes]` | Write or update the TEMPO config for a repo or a multi-repo workspace, detected from the code |
 
 Everything for a task lives in `.tempo/<task-id>/` in the target repo. The task ID is the ticket key when the request names one (`AV-5696`), else `T-NNN`. A `T-NNN` id is local: each machine numbers its own tasks, so it never appears in a branch, commit, PR, issue or tracker (0.11.0). `tempo_state.py claim` hands out the id with an atomic mkdir, so tasks started in parallel never share one (0.17.1). TEMPO adds `.tempo/` to `.git/info/exclude`, so artifacts and config never show up in the diff.
@@ -64,6 +65,16 @@ Only blocks-start orders the work; see `skills/triage-rubric/SKILL.md` §5.
 ## Teardown (0.17.0)
 
 A task cleans up after itself. Every process TEMPO starts, through `tempo_run.py` (tests, builds, targets) or `tempo_procs.py start` (dev servers, the app for QA, emulators, watchers, docker stacks), is marked with the task and the session in its environment, so its children are found too, even ones a helper starts with nohup. `tempo_state.py` tears the task down by itself: services stop when the task waits on Jorge, and everything stops when the task is DONE, FAILED or ABORTED. A SessionEnd hook stops what a closed session's tasks started. When a run's command ends, anything it left running is stopped and named in its summary (Gradle and Kotlin daemons stay until teardown). In a TEMPO session the `guard_spawn.py` hook denies `nohup`, `setsid`, `disown`, a trailing `&` and `run_in_background`, and names the `tempo_procs.py start` line instead. Only marked processes and the ones recorded in `procs.json` are ever stopped. `/tempo:sweep` finds leftovers machine-wide, including unmarked orphans that look like dev tooling, and stops only what you pick.
+
+## Dashboard (0.22.0)
+
+`/tempo:dash` serves one local page for every TEMPO task on this machine that is running, waits on Jorge or changed in the last 24 hours. For each task it shows the stage and status, the stage log, the agents (in flight and finished, with their model), the test and build runs, the long-lived processes, the question the task waits on, QA progress, the verdict of each document, and the documents themselves.
+
+- Start: `/tempo:dash`, or `python3 skills/orchestrator/scripts/tempo_dash.py start [--port N] [--root DIR ...]`. It prints `DASH: http://127.0.0.1:4310/`. Stop: `/tempo:dash stop`. The server outlives the session until then. `--root` adds a folder of checkouts whose `.tempo/` tasks are not in the registry (`~/.cache/tempo/tasks`), such as tasks copied from another machine.
+- It changes nothing. It reads each task's `state.json`, `events.jsonl`, `procs.json` and documents. `tempo_state.py` appends one line to `events.jsonl` for every state change, and `tempo_run.py` one line per run; the orchestrator and the agents do nothing extra. Both state files are now written through a temp file and a rename, so a reader never sees half of one.
+- Local only: the server listens on `127.0.0.1`, answers GET only, refuses a request whose Host is not `127.0.0.1` or `localhost`, and serves only document types inside a listed task folder. A process row never carries its command line, which can hold passwords, and the files that repeat it (`procs.json`, `procs.log`, the service logs under `procs/`) are never listed or served. A run's label is its command unless `--label` names it, and the page shows the label.
+- A task started before 0.22.0 has no `events.jsonl`. It shows its state, documents and the agents still in flight, and no finished agents or runs.
+- Tests: `python3 -m unittest discover -s tests -v`.
 
 ## Lanes
 
@@ -120,7 +131,7 @@ Spec approval, the workspace plan, clarify questions with a recommendation, loop
 .claude-plugin/
   plugin.json                 plugin manifest (listed in the repo root's marketplace.json)
 commands/
-  feature.md  bug.md  plan.md  resume.md  init.md  cleanup.md  verify.md  sweep.md  report.md
+  feature.md  bug.md  plan.md  resume.md  init.md  cleanup.md  verify.md  sweep.md  report.md  dash.md
 agents/
   triage.md        classify, clarity check, size, route → task.md
   scout.md         read-only explorer, one lens per instance → merged into context.md
@@ -134,7 +145,7 @@ agents/
   qa.md            per acceptance criterion, with evidence → qa-rN.md
 hooks/
   guard_push.py    refuses pushes of local tempo/ branches
-  guard_spawn.py   in a TEMPO session, refuses detached starts (nohup, &, setsid, run_in_background)
+  guard_spawn.py   in a TEMPO session, refuses detached starts (nohup, &, setsid, run_in_background) and kills by name (pkill, killall)
   hooks.json       the hooks above, plus SessionEnd teardown
 skills/
   orchestrator/              the stage machine the commands run (gates, loops, worktrees, PR, workspaces)
@@ -143,12 +154,15 @@ skills/
     scripts/tempo_run.py       runs one test, build or lint command; prints a summary, waits for a heavy slot, stops what it left
     scripts/tempo_procs.py     starts and tracks long-lived processes, tears a task down, sweeps for leftovers
     scripts/tempo_report.py    collects a run's context and files a TEMPO issue (gh, or a prefilled link)
+    scripts/tempo_dash.py      the dashboard's local, read-only server; serves scripts/dashboard.html
   document-standard/         the document shape + scripts/check_doc.py (structure check)
   artifact-templates/        one template per artifact in templates/
   triage-rubric/             clarity questions, task types, S/M/L lanes, routes
   review-rules/              rules files, review depth, the three lenses
   config/                    config schema, defaults, starters, scripts/tempo_config.py
     templates/REVIEW.md      starter REVIEW.md for a target repo
+tests/
+  test_dash.py     the dashboard server and the event log (unittest, standard library)
 ```
 
 ## Document checker
@@ -317,6 +331,13 @@ On 2026-11-03 a `/tempo:plan --auto` in xipp (AV-5703) scouted and planned on th
 
 - The `tempo-app` MCP server (`.mcp.json`, `mcp/tempo_app_bridge.py`) is gone: the TEMPO app's board no longer exists, and TEMPO runs from the plugin's commands and skills only. `TEMPO_APP_TOKEN` and `TEMPO_APP_URL` are no longer read.
 - The `guard_rm.py` hook is gone. It refused deletes runs needed far more often than it caught a delete that mattered, and no stray delete was ever unrecoverable. Builders still delete only what they made (`agents/builder.md`). The push and spawn guards stay.
+
+### Dashboard, cancelling a run, no kill by name (0.22.0)
+
+- New `/tempo:dash` and `tempo_dash.py`: the local page described under Dashboard. `tempo_state.py` and `tempo_run.py` append to `<task>/events.jsonl`, which gives the page finished agents and runs with times to the second. `state.json` and `state.md` are written through a temp file and a rename.
+- New `tempo_run.py stop <ID>`: ends one run, its worker and the command's process group, and nothing else. Until now a run could not be cancelled.
+- `guard_spawn.py` refuses `pkill` and `killall` in a TEMPO session and names `stop` instead. On 2026-11-11, with four tasks running on one Mac, a builder ran `pkill -f flutter_tester` to cancel its own test run; two seconds later the commands of three other tasks' agents ended with exit 137 and their sessions stopped. The link is not proven, but a kill by name on a shared machine is wrong either way. `kill <pid>` stays allowed, and `TEMPO_ALLOW_KILL=1` in the command lets one through when Jorge asks for it.
+- Tests for all of it: `python3 -m unittest discover -s tests -v`.
 
 ## How it runs inside Claude Code
 

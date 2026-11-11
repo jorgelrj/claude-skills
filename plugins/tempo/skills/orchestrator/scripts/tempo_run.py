@@ -25,6 +25,9 @@ command (a dev server, an emulator for QA) is started with `tempo_procs.py start
 Usage: tempo_run.py [--task DIR] [--heavy] [--slots N] [--label L] [--log-dir DIR] [--tail N]
                     [--timeout SECONDS] [--max SECONDS] -- COMMAND [ARG ...]
        tempo_run.py [--task DIR] wait ID [--max SECONDS]
+       tempo_run.py [--task DIR] stop ID
+  stop ends one run: its worker and every process marked with it, nothing else. It is the only way to
+  cancel a run. Never pkill or killall: they match by name across the machine, and other tasks share it.
   --task names the task folder (.tempo/<task-id>), so teardown and sweep find what the run left.
   One COMMAND argument runs through bash -c (a command line from `tempo_config.py cmd`);
   several run as an argument list. --max defaults to 110, inside the Bash tool's default 2-minute timeout; 0 blocks until the run ends.
@@ -196,6 +199,31 @@ def wait(run, max_seconds):
     return int((run / "code").read_text())
 
 
+def stop(run):
+    """Cancel one run: its worker and what it started. `wait` then prints the STOPPED summary."""
+    run = Path(run)
+    if not (run / "opts.json").exists():
+        print(f"tempo_run: no run at {run}", file=sys.stderr); return 2
+    opts = json.loads((run / "opts.json").read_text())
+    if (run / "result.txt").exists():
+        print(f"ENDED: {opts['label']} had already ended"); return 0
+    table = tempo_procs.snapshot()
+    mine = tempo_procs.protected(table)
+    # The worker is known by its own command line (a reused PID never matches). The command runs in its own
+    # process group under the worker; the mark alone misses system binaries, whose environment macOS hides.
+    # by folder name: the same run is /var/... to one caller and /private/var/... to another
+    worker = [p["pid"] for p in table.values() if "--worker" in p["command"] and run.name in p["command"]]
+    groups = {p["pgid"] for p in table.values() if p["ppid"] in worker}
+    pids = [p["pid"] for p in table.values() if p["pid"] not in mine and
+            (p["pid"] in worker or p["pgid"] in groups or tempo_procs.marks(p)["run"] == run.name)]
+    left = tempo_procs.kill_all(pids, grace=5)
+    if not (run / "result.txt").exists():  # the worker died before it wrote a summary
+        (run / "code").write_text("130")
+        (run / "result.txt").write_text(f"RUN: {opts['label']}  EXIT: 130  STOPPED by tempo_run.py stop  LOG: {opts['log']}\n")
+    print(f"STOPPED: {opts['label']}  PROCESSES: {len(pids) - len(left)}" + (f"  STILL ALIVE: {left}" if left else ""))
+    return 1 if left else 0
+
+
 def alive(pid):
     try:
         os.kill(int(pid), 0)
@@ -220,6 +248,8 @@ def main(argv=None):
         p.add_argument("--max", type=int, default=110)
         a = p.parse_args(argv[1:])
         return wait(a.id, a.max)
+    if argv[:1] == ["stop"] and len(argv) == 2:
+        return stop(argv[1])
     p = argparse.ArgumentParser(prog="tempo_run.py", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--heavy", action="store_true", help="take a machine-wide slot first")
@@ -248,6 +278,7 @@ def main(argv=None):
     owner = tempo_procs.find_owner()
     if task:
         tempo_procs.register(task, owner)
+        tempo_procs.event(task, ev="run", id=run.name, dir=str(run), label=label, heavy=a.heavy)
     env = tempo_procs.task_env(task, owner, run=run.name)
     w = subprocess.Popen([sys.executable, os.path.abspath(__file__), "--worker", str(run)],
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, env=env,

@@ -3,6 +3,7 @@
 
 state.json is the source of truth. state.md is rendered from it after every
 change, in the layout of the state template, for Jorge and /tempo:resume.
+Every command that changes state also appends one line to events.jsonl, the history tempo_dash.py shows.
 Times come from this machine's clock, never from the caller.
 
 Usage: tempo_state.py <command> <task-dir> [args]
@@ -124,8 +125,10 @@ def load(d):
 
 def save(d, s):
     d = Path(d)
-    (d / "state.json").write_text(json.dumps(s, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    (d / "state.md").write_text(render(s), encoding="utf-8")
+    for name, text in (("state.json", json.dumps(s, indent=2, ensure_ascii=False) + "\n"), ("state.md", render(s))):
+        tmp = d / f".{name}.{os.getpid()}.tmp"
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, d / name)  # the dashboard reads both while a task runs: never a half-written file
 
 
 def render(s):
@@ -322,6 +325,13 @@ def main(argv=None):
         tempo_procs.register(d / tid, owner)
         print(f"TASK: {tid}  DIR: {d / tid}"); return 0
     tempo_procs.register(d, tempo_procs.find_owner())  # marks this session as a TEMPO session for the hooks
+    closed = None  # agent ids this command took off the in-flight list
+
+    def emit(st):
+        given = {k: v for k, v in vars(a).items() if k not in ("dir", "cmd") and v is not None and v is not False}
+        if closed is not None:
+            given["closed"] = closed
+        tempo_procs.event(d, ev=a.cmd, **given, state=f"{st['stage']}/{st['status']}")
 
     if a.cmd == "init":
         if (d / "state.json").exists():
@@ -330,7 +340,7 @@ def main(argv=None):
         st = new_state(a.task, a.flow, a.title, a.base_branch, a.base_commit, a.task_branch, a.mode,
                        a.parent, a.review_limit, a.qa_limit, a.review_extensions, a.autopilot)
         st["next"] = "Run TRIAGE"
-        save(d, st); print(f"STATE: {d}/state.md  STAGE: TRIAGE"); return 0
+        save(d, st); emit(st); print(f"STATE: {d}/state.md  STAGE: TRIAGE"); return 0
 
     if a.cmd == "adopt":
         st = adopt(d); save(d, st); print(f"STATE: {d}/state.json adopted from state.md  STAGE: {st['stage']}"); return 0
@@ -355,6 +365,7 @@ def main(argv=None):
         if st["status"] in ENDED:
             if st["agents"]:
                 print(f"CLEARED: {len(st['agents'])} agent(s) still listed in flight: {', '.join(v['label'] for v in st['agents'].values())}")
+            closed = list(st["agents"])
             st["agents"] = {}
     elif a.cmd == "log":
         if a.stage != st["stage"]:
@@ -380,7 +391,8 @@ def main(argv=None):
             if a.stage == "REVIEW" and rnd and o.parent.name == "review" and o.name.endswith(f"-r{rnd.group(1)}.md"):
                 return True  # the round's findings close its reviewers
             return False
-        for aid in [k for k, v in st["agents"].items() if done_with(v.get("output"))]:
+        closed = [k for k, v in st["agents"].items() if done_with(v.get("output"))]
+        for aid in closed:
             st["agents"].pop(aid)  # its output is logged, so it is no longer in flight
         st["next"] = None  # the caller sets the next step; a stale one never survives a log
         m = re.search(r"findings-r(\d+)\.md$", a.artifact)
@@ -391,11 +403,11 @@ def main(argv=None):
         lim = c.get(a.counter + "_limit")
         ext = c.get("review_extensions", 1) if a.counter == "review" else 0  # tasks from before 0.4.0 lack the key
         if lim and c[a.counter] > lim + ext:
-            save(d, st)
+            save(d, st); emit(st)
             print(f"HARD STOP: {a.counter} rounds {c[a.counter]} of {lim} plus {ext} extensions; ship open findings as known risks")
             return 2
         if lim and c[a.counter] > lim:
-            save(d, st); print(f"LIMIT: {a.counter} rounds {c[a.counter]} of {lim}; raise LOOP-LIMIT"); return 1
+            save(d, st); emit(st); print(f"LIMIT: {a.counter} rounds {c[a.counter]} of {lim}; raise LOOP-LIMIT"); return 1
     elif a.cmd == "wo":
         cur = st["work_orders"].setdefault(a.wo, {})
         for k in ("worktree", "branch", "status"):
@@ -452,6 +464,7 @@ def main(argv=None):
             sys.stdout.write(render(st))
         return 0
     save(d, st)
+    emit(st)
     print(f"STATE: {d}/state.md  STAGE: {st['stage']}  STATUS: {st['status']}")
     if a.cmd == "set" and st["status"] in ENDED:
         teardown(d, services_only=False)
