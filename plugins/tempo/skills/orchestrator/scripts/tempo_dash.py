@@ -7,7 +7,7 @@ before 0.22.0 has no events.jsonl and shows only the agents still in flight. The
 listens on 127.0.0.1 only and answers GET only. A process row never carries its command
 line (it can hold passwords), and the files that repeat it (procs.json, procs.log, procs/) are never served.
 
-Usage: tempo_dash.py <command> [--port N] [--root DIR ...]
+Usage: tempo_dash.py <command> [--port N] [--root DIR ...] [--allow-host NAME ...]
   start    start the server detached from this shell, or find the one already running.
            Prints DASH: http://127.0.0.1:<port>/. Log: <cache>/dash.log, record: <cache>/dash.json
            (<cache> is $TEMPO_CACHE or ~/.cache/tempo). Exit 1 when the port is taken by something else.
@@ -15,7 +15,8 @@ Usage: tempo_dash.py <command> [--port N] [--root DIR ...]
   status   print the URL, or DASH: not running
   serve    run in the foreground (port 0 picks a free port and prints it)
   --port defaults to 4310. --root adds a folder: its .tempo/*/ and */.tempo/*/ tasks are listed
-  next to the registered ones (tempo_procs.py registry).
+  next to the registered ones (tempo_procs.py registry). --allow-host accepts one more Host header,
+  with or without a port, such as the name `tailscale serve` forwards (my-mac.tailnet.ts.net).
 Endpoints:
   /                          dashboard.html, the file next to this script
   /api/tasks[?hours=N]       tasks RUNNING or WAITING-ON-JORGE, or changed in the last N hours (24; 0: all)
@@ -284,7 +285,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         port = self.server.server_address[1]
-        if self.headers.get("Host") not in (f"127.0.0.1:{port}", f"localhost:{port}"):
+        host = self.headers.get("Host") or ""
+        if host not in (f"127.0.0.1:{port}", f"localhost:{port}") and host.rsplit(":", 1)[0].lower() not in self.server.hosts:
             return self.reply(403, "forbidden host\n")  # a web page that rebinds its own name to 127.0.0.1
         u = urlparse(self.path)
         q = parse_qs(u.query)
@@ -311,9 +313,10 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(404, "not found\n")
 
 
-def server(port, roots):
+def server(port, roots, hosts=()):
     srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     srv.roots, srv.tags = [str(Path(r).resolve()) for r in roots], {}  # tags: the folders /api/file may read
+    srv.hosts = {h.lower() for h in hosts}  # opt-in names a proxy forwards, e.g. tailscale serve
     return srv
 
 
@@ -339,7 +342,7 @@ def recorded():
         return None
 
 
-def start(port, roots):
+def start(port, roots, hosts=()):
     rec = recorded()
     if rec and answers(rec["port"]):
         print(url(rec["port"]))
@@ -352,7 +355,8 @@ def start(port, roots):
     # SessionEnd hook stops it. TEMPO_CACHE stays, so it reads the registry this command wrote its record to.
     env = {k: v for k, v in os.environ.items() if not k.startswith("TEMPO_") or k == "TEMPO_CACHE"}
     roots = [str(Path(r).resolve()) for r in roots]
-    args = [sys.executable, os.path.abspath(__file__), "serve", "--port", str(port)] + (["--root"] + roots if roots else [])
+    args = [sys.executable, os.path.abspath(__file__), "serve", "--port", str(port)] + (["--root"] + roots if roots else []) + \
+        [x for h in hosts for x in ("--allow-host", h)]
     with open(RECORD.parent / "dash.log", "a") as log:
         p = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                              start_new_session=True, env=env, cwd=RECORD.parent)
@@ -377,12 +381,13 @@ def main(argv=None):
     p.add_argument("cmd", choices=["start", "stop", "status", "serve"])
     p.add_argument("--port", type=int, default=4310)
     p.add_argument("--root", nargs="+", action="extend", default=[])
+    p.add_argument("--allow-host", action="append", default=[])
     a = p.parse_args(argv)
     if a.cmd == "start":
-        return start(a.port, a.root)
+        return start(a.port, a.root, a.allow_host)
     if a.cmd == "serve":
         try:
-            srv = server(a.port, a.root)
+            srv = server(a.port, a.root, a.allow_host)
         except OSError as e:
             sys.exit(f"tempo_dash: cannot listen on 127.0.0.1:{a.port}: {e}")
         if a.port:  # port 0 is a test or a one-off look: it never replaces the recorded server

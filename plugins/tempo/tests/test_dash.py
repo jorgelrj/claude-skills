@@ -381,6 +381,18 @@ class Api(Base):
             self.assertEqual(self.get("/api/tasks", method=method)[0], 405)
         self.assertEqual(self.get("/nope")[0], 404)
 
+    def test_allow_host_admits_only_that_name(self):
+        make_task(self.root / ".tempo" / "T-001")
+        srv = tempo_dash.server(0, [self.root], ["mac.tail1.ts.net"])
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        self.port = srv.server_address[1]
+        for ok in ("mac.tail1.ts.net", "MAC.tail1.ts.net:443", f"localhost:{self.port}"):
+            self.assertEqual(self.get("/api/tasks", host=ok)[0], 200, ok)
+        for bad in ("evil.example", "evil.mac.tail1.ts.net", "mac.tail1.ts.net.evil.example"):
+            self.assertEqual(self.get("/api/tasks", host=bad)[0], 403, bad)
+
     def test_missing_page_is_a_404(self):
         here = tempo_dash.HERE
         tempo_dash.HERE = self.tmp  # another agent writes dashboard.html: look where there is none
