@@ -184,7 +184,8 @@ class StateEvents(Base):
         r = script("tempo_run.py", "--task", d, "--label", "unit", "--", "true", cache=self.tmp / "cache",
                    TMPDIR=str(self.tmp), TEMPO_LOCK_DIR=str(self.tmp / "locks"))
         self.assertEqual(r.returncode, 0, r.stderr)
-        e = json.loads((d / "events.jsonl").read_text())
+        e, end = map(json.loads, (d / "events.jsonl").read_text().splitlines())
+        self.assertEqual((end["ev"], end["id"], end["exit"]), ("run-end", e["id"], 0))
         self.assertEqual((e["ev"], e["label"], e["heavy"], Path(e["dir"]).name), ("run", "unit", False, e["id"]))
         self.assertTrue(Path(e["dir"]).is_absolute() and e["id"].startswith("tempo-run-"))
         self.serve(self.tmp / "repo")

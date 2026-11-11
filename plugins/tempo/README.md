@@ -60,7 +60,7 @@ Only blocks-start orders the work; see `skills/triage-rubric/SKILL.md` §5.
 
 ## Task state
 
-`skills/orchestrator/scripts/tempo_state.py` is the only writer of `.tempo/<task-id>/state.json` and the `state.md` rendered from it. It stamps the stage log with this machine's clock, keeps loop counters and work orders, and records agents in flight with their saved prompts, so `/tempo:resume` can restart them after a session restart. Tasks started before 0.3.0 are converted with `tempo_state.py adopt <task-dir>`.
+`skills/orchestrator/scripts/tempo_state.py` is the only writer of `.tempo/<task-id>/state.json` and the `state.md` rendered from it. It stamps the stage log with this machine's clock, keeps loop counters and work orders, and records agents in flight with their saved prompts, so `/tempo:resume` can restart them after a session restart. Each command holds a lock on the task's `.state.lock` from its read to its write, so commands that run in parallel never lose each other's change (0.23.0). Tasks started before 0.3.0 are converted with `tempo_state.py adopt <task-dir>`.
 
 ## Teardown (0.17.0)
 
@@ -163,6 +163,10 @@ skills/
     templates/REVIEW.md      starter REVIEW.md for a target repo
 tests/
   test_dash.py     the dashboard server and the event log (unittest, standard library)
+  test_run.py      stopping a run, the kill guard, the heavy-slot decision, the KILLED line
+  test_procs.py    who owns a process, the config helper, what a session's end marks as stopped
+  test_state.py    the state lock, the QA counter, the SHIP entry, a state.json from 0.21.0
+  test_config.py   a config from 0.21.0, gates.full_bars: verify (runs through uv; skipped without it)
 ```
 
 ## Document checker
@@ -284,7 +288,7 @@ On 2026-10-29, pod1um #64 ran 10.5 hours in 8 slices. Builders spent 4.5 of thei
 
 On 2026-10-29, after 0.15.0, five tasks ran at once and Integrate took 45 to 96 minutes against 6 to 70 of Build. Integrate had logged 67 rounds with no failure across both projects, and the Chrome target no real catch in its kept reports, while review failed 28 of 86 rounds. Subagent commands were still moved to the background at 3 minutes, a harness cap that no `timeout` lifts, so agents kept polling. AV-6004 showed the other cost: review rounds, not tests. Report: https://claude.ai/artifact/XEVu3g95UqrL9CwpZGbJCB. 0.16.0:
 
-- Full bars at a chosen point. `gates.full_bars: on_demand` (the default): Integrate runs NARROW bars, the touched packages' tests, build and lint. The full suite runs for a critical change, for a change to `gates.full_paths` (lockfiles, toolchain pins), and on the new `/tempo:verify`. The PR body says when it did not run. `<cfg> bars` decides. `full_bars: integrate` restores the old behaviour.
+- Full bars at a chosen point. `gates.full_bars: on_demand` (the default): Integrate runs NARROW bars, the touched packages' tests, build and lint. The full suite runs for a critical change, for a change to `gates.full_paths` (lockfiles, toolchain pins), and on the new `/tempo:verify`. The PR body says when it did not run. `<cfg> bars` decides. `full_bars: integrate` restores the old behaviour. `full_bars: verify` (0.23.0) never runs it inside a task: see 0.23.0 below.
 - Targets take `run: routine|critical`; an advisory target defaults to critical, so a routine task starts no Chrome and no base comparison.
 - `tempo_run.py` runs the command in a detached worker. Each call blocks up to 110 seconds; a longer run returns `RUNNING` with an ID for `tempo_run.py wait`.
 - QA no longer runs the full suite: it cites the head Integrate proved.
@@ -338,6 +342,17 @@ On 2026-11-03 a `/tempo:plan --auto` in xipp (AV-5703) scouted and planned on th
 - New `tempo_run.py stop <ID>`: ends one run, its worker and the command's process group, and nothing else. Until now a run could not be cancelled.
 - `guard_spawn.py` refuses `pkill` and `killall` in a TEMPO session and names `stop` instead. On 2026-11-11, with four tasks running on one Mac, a builder ran `pkill -f flutter_tester` to cancel its own test run; two seconds later the commands of three other tasks' agents ended with exit 137 and their sessions stopped. The link is not proven, but a kill by name on a shared machine is wrong either way. `kill <pid>` stays allowed, and `TEMPO_ALLOW_KILL=1` in the command lets one through when Jorge asks for it.
 - Tests for all of it: `python3 -m unittest discover -s tests -v`.
+
+### Test load and safety (0.23.0)
+
+A read of two story runs (POD-11 and POD-12, many subtasks at once on one Mac) showed test time lost with no stage at fault. The main session had written `--heavy` as the generic run line in 151 of 619 prompts, so one-minute runs queued behind whole suites: 175 to 414 minutes on POD-12. The QA counter was 0 in 62 of 65 tasks that had a QA report, because nothing bumped it. 0.23.0 changes no default and no stage:
+
+- The script decides the heavy slot. With `--task` and a config it can read, `tempo_run.py` gives a slot to the whole test command and to a target's whole command (also when it is one `&&` part of a longer line, or behind `fvm`), and never to test-one with test files, typecheck or lint, whatever the flag says. For anything else (a target's scoped line, an app build, an unknown command) the caller's `--heavy` decides, as before. A whole suite spelled differently from the config is not recognised.
+- `gates.full_bars: verify`, opt-in: the whole suite never runs inside a task, critical or not. `<cfg> bars` prints `BARS: NARROW` and, when the suite was owed, a second line `DEFERRED: critical change` or `DEFERRED: gates.full_paths matches ...`. The orchestrator then calls `<cfg> targets --scoped-only`, which prints scoped runs only, and `name<TAB># DEFERRED whole suite` for a target that has none. The PR body says the full suite was not run. It is meant for a story checkout, where the suite runs once on the story branch; a regression of a critical subtask is then found there, not in the task. The default stays `on_demand`: a lone critical task keeps its one full run at its final integrate. A config that names `verify` fails `check` on an older plugin, so keep it out of a tracked config until every machine is updated.
+- A killed run says so. Exit 137 or 143, or a worker that died, puts `KILLED: signal <n>. Stopped from outside, not a test failure. Run it again once.` first in the summary. Builder, integrator and QA run the command again once and report BLOCKED when it is killed again. Every run that ends appends a `run-end` line to `events.jsonl`: exit, seconds, slot wait, load, killed, leftovers.
+- Owner. `tempo_procs.py` takes the nearest Claude ancestor as the owning session and reads `TEMPO_OWNER` only when there is none (a detached worker), so a session started under a marked process owns what it starts. A session's end marks as stopped only the ledger rows that session owns.
+- State. `tempo_state.py` holds a lock on `<task>/.state.lock` from its read to its write and releases it before a teardown. `log` of `qa-rN.md` raises the QA counter to N, and on a FAIL at or past the limit prints `LIMIT: qa rounds N of L; raise LOOP-LIMIT` (exit 0). `set --pr` logs SHIP when the last log entry is not SHIP. DONE clears the next action unless `--next` comes with it. `state.json` keeps its shape: a task folder from 0.21.0 works as it is.
+- Tests: `tests/test_state.py`, `test_config.py`, `test_procs.py`, and more cases in `test_run.py`.
 
 ## How it runs inside Claude Code
 

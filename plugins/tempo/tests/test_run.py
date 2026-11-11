@@ -1,8 +1,11 @@
-"""Tests for `tempo_run.py stop` and the kill-by-name guard in hooks/guard_spawn.py.
+"""Tests for tempo_run.py (the heavy slot it decides, KILLED, run-end events, `stop`) and the kill-by-name guard
+in hooks/guard_spawn.py.
 
 Run: python3 -m unittest discover -s <plugin>/tests -v
 Everything happens in temp folders, with TEMPO_CACHE pointed at one.
 """
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -11,9 +14,23 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 PLUGIN = Path(__file__).resolve().parents[1]
 SCRIPTS = PLUGIN / "skills" / "orchestrator" / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+import tempo_run  # noqa: E402  (in this process: its pure functions, and wait() on a run folder made by hand)
+
+# The command strings of pod1um's .tempo/config.yaml, as `tempo_config.py resolve` prints them.
+POD = {"commands": {"test": "cd flutter-client && melos run test",
+                    "test_one": "cd {package} && flutter test {tests}",
+                    "build": "cd flutter-client && melos run analyze", "typecheck": None,
+                    "lint": "cd flutter-client && dart format --output=none --set-exit-if-changed modules/core apps "
+                            "&& melos run i18n:check"},
+       "targets": [{"name": "web", "command": "cd flutter-client && melos run test:web:full",
+                    "scoped_command": "cd {package} && flutter test --platform chrome {tests}", "advisory": True}]}
+NPM = {"commands": {"test": "npm test", "test_one": None, "lint": "npm run lint"}, "targets": []}
+APP = "cd flutter-client/apps/coach"
 
 
 class Base(unittest.TestCase):
@@ -28,12 +45,136 @@ class Base(unittest.TestCase):
                               input=stdin, env={**self.env, **env})
 
 
+    def task(self, config=None):
+        d = self.tmp / "repo" / ".tempo" / "T-001"
+        d.mkdir(parents=True)
+        if config:
+            (d.parent / "config.yaml").write_text(config)
+            subprocess.run(["git", "init", "-q", str(self.tmp / "repo")], check=True)  # tempo_config.py reads a git repo's config
+        return d
+
+    def events(self, d, ev="run-end"):
+        rows = [json.loads(x) for x in (d / "events.jsonl").read_text().splitlines()]
+        return [e for e in rows if e["ev"] == ev]
+
+
+class Heavy(Base):
+    def test_the_config_decides_the_slot_for_the_commands_it_knows(self):
+        always, never, flag = (True, True), (False, False), (False, True)  # the result without and with --heavy
+        for cfg, cmd, want in (
+                (POD, "cd flutter-client && melos run test", always),
+                (POD, 'export FVM_HOME="/x y"; cd flutter-client && melos run test', always),
+                (POD, "cd flutter-client && melos run test 2>&1 | tail -40", always),
+                (POD, "cd /w/flutter-client && melos run test 2>&1 | tee out.log | tail -5", always),
+                (POD, "cd flutter-client && melos run test:web:full", always),
+                (POD, "cd flutter-client && fvm exec melos run test", always),  # the launcher agents add
+                (POD, f"{APP} && fvm flutter test test/a_test.dart", never),
+                (POD, "cd flutter-client && melos run test && melos run analyze", always),  # a suite in front of a cheap tail
+                (POD, f"cd flutter-client && melos run test && cd apps/coach && flutter test test/a_test.dart", always),
+                (POD, "cd flutter-client && melos run test:web:full && melos run i18n:check", always),
+                (POD, f"{APP} && flutter test test/a_test.dart", never),
+                (POD, f"{APP} && flutter test test/a_test.dart test/b_test.dart 2>&1 | tail -40", never),
+                (POD, f"{APP} && flutter test --platform chrome test/a_test.dart", flag),  # the scoped Chrome line
+                (POD, f"{APP} && flutter test", flag),  # a whole package: no test argument
+                (POD, POD["commands"]["lint"], never),
+                (POD, POD["commands"]["build"], flag),
+                (POD, f"{APP} && flutter build web", flag),
+                (NPM, "npm test", always),
+                (NPM, 'export CI="1"; npm test', always),
+                (NPM, "npx jest a.test.ts", flag),
+                (NPM, "npm run lint", never),
+                ({}, "npm test", flag)):
+            got = tuple(tempo_run.decide_heavy([cmd], f, cfg) for f in (False, True))
+            self.assertEqual(got, want, cmd)
+        self.assertIs(tempo_run.decide_heavy(["npm", "test"], False, NPM), True)  # an argument list, not a shell line
+
+    def test_only_a_task_with_a_readable_config_overrides_the_flag(self):
+        d = self.task("version: 1\ncommands:\n  test: echo suite\n  lint: echo lint\n")
+
+        def heavy(*args):
+            before = set(self.tmp.glob("tempo-run-*"))
+            r = self.run_py(SCRIPTS / "tempo_run.py", *args)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            (run,) = set(self.tmp.glob("tempo-run-*")) - before
+            return json.loads((run / "opts.json").read_text())["heavy"]
+
+        self.assertIs(heavy("--heavy", "--", "echo lint"), True)  # no --task: the flag, as before
+        self.assertIs(heavy("--", "echo suite"), False)
+        (d.parent / "config.yaml").write_text("commands: [")
+        self.assertIs(heavy("--task", d, "--heavy", "--", "echo lint"), True)  # a config that cannot be read: the flag
+        (d.parent / "config.yaml").write_text("version: 1\ncommands:\n  test: echo suite\n  lint: echo lint\n")
+        if not shutil.which("uv"):
+            try:
+                import jsonschema, yaml  # noqa: F401
+            except ImportError:
+                self.skipTest("tempo_config.py needs uv, or PyYAML and jsonschema")
+        self.assertIs(heavy("--task", d, "--heavy", "--", "echo lint"), False)
+        self.assertIs(heavy("--task", d, "--", "echo suite"), True)
+        self.assertEqual([e["heavy"] for e in self.events(d, "run")], [True, False, True])
+
+
+class Killed(Base):
+    KEYS = {"at", "ev", "id", "exit", "seconds", "waited", "load1", "killed", "leftovers"}
+
+    def test_a_kill_from_outside_prints_killed_and_every_run_logs_its_end(self):
+        d = self.task()
+        r = self.run_py(SCRIPTS / "tempo_run.py", "--task", d, "--label", "dies", "--", "kill -9 $$")
+        self.assertEqual(r.returncode, 137, r.stdout + r.stderr)
+        first, second = r.stdout.splitlines()[:2]
+        self.assertEqual(first, "KILLED: signal 9. Stopped from outside, not a test failure. Run it again once.")
+        self.assertTrue(second.startswith("RUN: dies  EXIT: 137  "), second)
+        r = self.run_py(SCRIPTS / "tempo_run.py", "--task", d, "--label", "term", "--", "sh -c 'kill -15 $$'; exit $?")
+        self.assertEqual((r.returncode, r.stdout[:18]), (143, "KILLED: signal 15."), r.stdout)
+        r = self.run_py(SCRIPTS / "tempo_run.py", "--task", d, "--label", "fails", "--", "exit 3")
+        self.assertEqual((r.returncode, r.stdout[:21]), (3, "RUN: fails  EXIT: 3  "), r.stdout)
+        ev = self.events(d)
+        self.assertEqual([(e["exit"], e["killed"], e["leftovers"]) for e in ev], [(137, True, 0), (143, True, 0), (3, False, 0)])
+        self.assertEqual([set(e) for e in ev], [self.KEYS] * 3)
+        self.assertEqual([e["id"] for e in ev], [e["id"] for e in self.events(d, "run")])
+        self.assertIsInstance(ev[0]["load1"], float)
+
+    def run_dir(self, d, cmd, pid=None):
+        """A run folder as main() leaves it for the worker."""
+        run = self.tmp / "tempo-run-made"
+        run.mkdir()
+        (run / "opts.json").write_text(json.dumps({
+            "label": "made", "log": str(run / "out.log"), "heavy": False, "slots": 1, "tail": 5, "timeout": None,
+            "cmd": [cmd], "cwd": str(self.tmp), "started": 0, "task": str(d), "pid": pid}))
+        return run
+
+    def test_a_dead_worker_is_reported_as_killed_once_and_its_command_is_stopped(self):
+        d = self.task()
+        gone = subprocess.Popen(["true"])
+        gone.wait()
+        run = self.run_dir(d, "true", gone.pid)
+        out = io.StringIO()
+        with mock.patch.object(tempo_run, "reap_leftovers", return_value=(["orphan (1 MB)"], [])) as reap, \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual([tempo_run.wait(run, 1), tempo_run.wait(run, 1)], [1, 1])
+        reap.assert_called_once_with(run.name, None)
+        first, second = out.getvalue().splitlines()[:2]
+        self.assertEqual(first, "KILLED: signal unknown. Stopped from outside, not a test failure. Run it again once.")
+        self.assertTrue(second.startswith("RUN: made  EXIT: 1  WORKER DIED  LOG: "), second)
+        self.assertEqual(out.getvalue().count("KILLED:"), 2)  # the second wait says the same
+        self.assertEqual([(e["id"], e["exit"], e["killed"], e["leftovers"]) for e in self.events(d)], [(run.name, 1, True, 1)])
+
+    def test_a_run_its_own_agent_stopped_is_not_killed(self):
+        d = self.task()
+        run = self.run_dir(d, "kill -9 $$")
+        (run / "stopped").touch()  # what `stop` leaves before it kills; here the worker lives to write the summary
+        r = self.run_py(SCRIPTS / "tempo_run.py", "--worker", run)
+        self.assertEqual((r.returncode, (run / "code").read_text()), (0, "137"), r.stderr)
+        self.assertTrue((run / "result.txt").read_text().startswith("RUN: made  EXIT: 137  "))
+        self.assertEqual([(e["exit"], e["killed"]) for e in self.events(d)], [(137, False)])
+
+
 class Stop(Base):
     def test_stop_ends_only_its_own_run(self):
         mark = f"sleep 3{os.getpid() % 1000:03d}"  # a command line no other test or task uses
+        d = self.task()
         runs = []
         for _ in range(2):
-            r = self.run_py(SCRIPTS / "tempo_run.py", "--max", "1", "--", mark)
+            r = self.run_py(SCRIPTS / "tempo_run.py", "--task", d, "--max", "1", "--", mark)
             self.assertEqual(r.returncode, 75, r.stderr)
             runs.append(r.stdout.split("ID: ")[1].split("  ")[0])
         self.addCleanup(self.run_py, SCRIPTS / "tempo_run.py", "stop", runs[1])
@@ -45,6 +186,8 @@ class Stop(Base):
         w = self.run_py(SCRIPTS / "tempo_run.py", "wait", runs[0], "--max", "1")
         self.assertEqual(w.returncode, 130, w.stdout)
         self.assertIn("EXIT: 130  STOPPED", w.stdout)
+        self.assertNotIn("KILLED", w.stdout)  # its own agent stopped it: not a kill from outside
+        self.assertEqual([(Path(runs[0]).name, 130, False)], [(e["id"], e["exit"], e["killed"]) for e in self.events(d)])
         after = pgrep()
         self.assertTrue(after and after < before, (before, after))  # its processes are gone, the other run's are alive
         self.assertEqual(self.run_py(SCRIPTS / "tempo_run.py", "wait", runs[1], "--max", "1").returncode, 75)
@@ -65,7 +208,9 @@ class Guard(Base):
         (task / "state.json").write_text(json.dumps({"status": "RUNNING"}))
         sessions = self.tmp / "cache" / "sessions"
         sessions.mkdir(parents=True)
-        (sessions / "4242.json").write_text(json.dumps([str(task)]))
+        # The session the hook sees: the Claude Code process the suite runs under, else the 4242 given below.
+        owner = self.run_py(SCRIPTS / "tempo_procs.py", "owner", TEMPO_OWNER="4242").stdout.strip()
+        (sessions / f"{owner}.json").write_text(json.dumps([str(task)]))
         for cmd in ('cd x && sed -n 1p f; pkill -f "flutter_tester" -n; pkill -f "tempo-run-abc"', "killall node",
                     "pkill -f tempo_run.py", 'kill -9 $(pgrep -f "flutter_tester")', "kill `pgrep node`",
                     "pgrep -f dart | xargs kill -9", "sudo pkill node", "true && killall Simulator",

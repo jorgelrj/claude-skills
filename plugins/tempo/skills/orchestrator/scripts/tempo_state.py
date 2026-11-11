@@ -4,6 +4,7 @@
 state.json is the source of truth. state.md is rendered from it after every
 change, in the layout of the state template, for Jorge and /tempo:resume.
 Every command that changes state also appends one line to events.jsonl, the history tempo_dash.py shows.
+A command holds a lock on <task-dir>/.state.lock from its read to its write, so parallel commands never lose a change.
 Times come from this machine's clock, never from the caller.
 
 Usage: tempo_state.py <command> <task-dir> [args]
@@ -17,14 +18,18 @@ Usage: tempo_state.py <command> <task-dir> [args]
   set       <dir> [--lane L] [--stage S] [--status S] [--next TEXT] [--mode M] [--title T]
             [--task-branch B] [--base-commit H] [--pr URL] [--review-limit N] [--review-extensions N]
             [--autopilot on|off] [--critical on|off] [--pattern on|off]
-                                                 (DONE clears the agents still listed in flight. Stage DONE and
-                                                  status DONE, FAILED or ABORTED tear the task down: every process
-                                                  it started stops, see tempo_procs.py)
+                                                 (DONE clears the agents still listed in flight, and the next
+                                                  action unless --next comes with it. --pr logs SHIP when the last
+                                                  log entry is not SHIP. Stage DONE and status DONE, FAILED or
+                                                  ABORTED tear the task down: every process it started stops, see
+                                                  tempo_procs.py)
   decide    <dir> KIND --question Q --choice C --why W [--from FILE] [--not-a-source WHY]
                                                  (record a decision autopilot accepted; writes decisions.md.
                                                   Refuses the stop kinds of orchestrator 4.5.1, and a question
                                                   that reads like a missing source unless --not-a-source)
-  log       <dir> STAGE ARTIFACT PASS|FAIL|BLOCKED   (logging findings-rN.md raises the review count to N;
+  log       <dir> STAGE ARTIFACT PASS|FAIL|BLOCKED   (logging findings-rN.md raises the review count to N, and
+                                                   qa-rN.md the QA count, with the line `bump` prints past the
+                                                   limit and exit 0;
                                                    records start and end, closes the agent that wrote ARTIFACT
                                                    (EXPLORE also closes the scouts, REVIEW the round's reviewers);
                                                    the same stage and artifact again right after extends that entry;
@@ -45,6 +50,7 @@ Exit 0 ok, 1 error, 3 claim: the folder exists.
 """
 import argparse
 import datetime as dt
+import fcntl
 import json
 import os
 import re
@@ -247,6 +253,17 @@ def new_state(task, flow, title, base_branch, base_commit, task_branch=None, mod
             "autopilot": autopilot, "decisions": []}
 
 
+def past_limit(c, counter):
+    """(exit code, line) when a loop counter is past its limit, else (0, None)."""
+    lim = c.get(counter + "_limit")
+    ext = c.get("review_extensions", 1) if counter == "review" else 0  # tasks from before 0.4.0 lack the key
+    if lim and c[counter] > lim + ext:
+        return 2, f"HARD STOP: {counter} rounds {c[counter]} of {lim} plus {ext} extensions; ship open findings as known risks"
+    if lim and c[counter] > lim:
+        return 1, f"LIMIT: {counter} rounds {c[counter]} of {lim}; raise LOOP-LIMIT"
+    return 0, None
+
+
 LOCAL_ID = re.compile(r"^T-(\d+)")
 
 
@@ -326,6 +343,13 @@ def main(argv=None):
         print(f"TASK: {tid}  DIR: {d / tid}"); return 0
     tempo_procs.register(d, tempo_procs.find_owner())  # marks this session as a TEMPO session for the hooks
     closed = None  # agent ids this command took off the in-flight list
+    note = None  # the limit line `log` prints after the STATE line
+    try:  # one command at a time reads, changes and writes a task's state: parallel updates lost each other's change
+        lock = open(d / ".state.lock", "w")
+        fcntl.flock(lock, fcntl.LOCK_EX)
+    except OSError:
+        lock = None  # no folder yet (init makes it, load reports it) or a read-only one
+    # Released below before the teardown. Every early return ends the command right after its save and drops it too.
 
     def emit(st):
         given = {k: v for k, v in vars(a).items() if k not in ("dir", "cmd") and v is not None and v is not False}
@@ -347,6 +371,9 @@ def main(argv=None):
 
     st = load(d)
     if a.cmd == "set":
+        if a.pr and (not st["log"] or st["log"][-1][-3] != "SHIP"):  # only a FOLD logs SHIP (3.12): the PR is its record
+            st["log"].append([st.get("stage_since") or st["started"], now(), "SHIP", "pr.md", "PASS"])
+            st["stage_since"] = now()
         if a.stage and a.stage != st["stage"]:
             st["stage_since"] = now()
         for k in ("lane", "stage", "status", "next", "mode", "title", "pr"):
@@ -362,6 +389,8 @@ def main(argv=None):
         if a.pattern: st["pattern"] = a.pattern == "on"
         if a.status == "DONE" or a.stage == "DONE":
             st["stage"], st["status"] = "DONE", "DONE"
+            if a.next is None:
+                st["next"] = None  # a finished task has no next action; one given with this command stays
         if st["status"] in ENDED:
             if st["agents"]:
                 print(f"CLEARED: {len(st['agents'])} agent(s) still listed in flight: {', '.join(v['label'] for v in st['agents'].values())}")
@@ -398,16 +427,17 @@ def main(argv=None):
         m = re.search(r"findings-r(\d+)\.md$", a.artifact)
         if a.stage == "REVIEW" and m:  # the findings file is the round's record; the counter never lags it
             st["counters"]["review"] = max(st["counters"]["review"], int(m.group(1)))
+        m = re.search(r"(^|/)qa-r(\d+)\.md$", a.artifact)
+        if a.stage == "QA" and m:  # nothing bumps qa (3.11): the report counts
+            c = st["counters"]
+            c["qa"] = max(c["qa"], int(m.group(2)))
+            if a.result == "FAIL" and c.get("qa_limit") and c["qa"] >= c["qa_limit"]:  # 3.11: QA stops at the limit
+                note = f"LIMIT: qa rounds {c['qa']} of {c['qa_limit']}; raise LOOP-LIMIT"
     elif a.cmd == "bump":
-        c = st["counters"]; c[a.counter] += 1
-        lim = c.get(a.counter + "_limit")
-        ext = c.get("review_extensions", 1) if a.counter == "review" else 0  # tasks from before 0.4.0 lack the key
-        if lim and c[a.counter] > lim + ext:
-            save(d, st); emit(st)
-            print(f"HARD STOP: {a.counter} rounds {c[a.counter]} of {lim} plus {ext} extensions; ship open findings as known risks")
-            return 2
-        if lim and c[a.counter] > lim:
-            save(d, st); emit(st); print(f"LIMIT: {a.counter} rounds {c[a.counter]} of {lim}; raise LOOP-LIMIT"); return 1
+        st["counters"][a.counter] += 1
+        code, line = past_limit(st["counters"], a.counter)
+        if code:
+            save(d, st); emit(st); print(line); return code
     elif a.cmd == "wo":
         cur = st["work_orders"].setdefault(a.wo, {})
         for k in ("worktree", "branch", "status"):
@@ -465,7 +495,11 @@ def main(argv=None):
         return 0
     save(d, st)
     emit(st)
+    if lock:
+        lock.close()  # a teardown can take 90 s: never under the lock
     print(f"STATE: {d}/state.md  STAGE: {st['stage']}  STATUS: {st['status']}")
+    if note:
+        print(note)
     if a.cmd == "set" and st["status"] in ENDED:
         teardown(d, services_only=False)
     elif a.cmd == "wait" and a.file:

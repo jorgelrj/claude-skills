@@ -54,6 +54,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -61,6 +62,7 @@ import time
 from pathlib import Path
 
 HOME_CACHE = Path(os.environ.get("TEMPO_CACHE") or Path.home() / ".cache" / "tempo")
+CONFIG = Path(__file__).resolve().parents[2] / "config" / "scripts" / "tempo_config.py"
 REGISTRY = HOME_CACHE / "tasks"
 SESSIONS = HOME_CACHE / "sessions"
 ENDED = {"DONE", "FAILED", "ABORTED"}
@@ -196,13 +198,13 @@ def ancestors(pid, table):
 
 def find_owner(table=None, pid=None):
     """PID of the nearest Claude Code process above `pid` (default: this process), or 0."""
-    if os.environ.get("TEMPO_OWNER", "").isdigit():
-        return int(os.environ["TEMPO_OWNER"])
     table = table or snapshot()
     for a in ancestors(pid or os.getpid(), table)[1:]:
         if is_claude(a, table):
             return a
-    return 0
+    # The inherited mark counts only here (a detached worker): a session started under a marked process is its own owner.
+    mark = os.environ.get("TEMPO_OWNER", "")
+    return int(mark) if mark.isdigit() else 0
 
 
 def is_claude(pid, table):
@@ -253,6 +255,13 @@ def event(task_dir, **fields):
                 f.write(line)  # one write: lines from parallel commands never interleave
     except Exception:
         pass
+
+
+def cfg(repo, *args):
+    """Run tempo_config.py for `repo` and return what it prints. Raises when it fails or takes over 60 s."""
+    how = ["uv", "run", "--quiet"] if shutil.which("uv") else [sys.executable]
+    return subprocess.run([*how, str(CONFIG), "--repo", str(repo), *map(str, args)], stdin=subprocess.DEVNULL,
+                          capture_output=True, text=True, timeout=60, check=True).stdout
 
 
 def registry():
@@ -570,7 +579,7 @@ def session_end():
         # Hand the work to a detached reaper: the hook returns at once, the reaper outlives the session.
         job = HOME_CACHE / f"reap-{owner}.json"
         job.parent.mkdir(parents=True, exist_ok=True)
-        job.write_text(json.dumps({"pids": pids, "stops": stops, "dirs": dirs}))
+        job.write_text(json.dumps({"pids": pids, "stops": stops, "dirs": dirs, "owner": owner}))
         subprocess.Popen([sys.executable, os.path.abspath(__file__), "reap-job", str(job)],
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          start_new_session=True, env={k: v for k, v in os.environ.items() if not k.startswith("TEMPO_")})
@@ -590,7 +599,8 @@ def reap_job(path):
         rows = load_ledger(d)
         if rows:
             for r in rows:
-                r.setdefault("stopped", time.time())
+                if r.get("owner") == job.get("owner"):  # another session's services in the same task still run
+                    r.setdefault("stopped", time.time())
             try:
                 save_ledger(d, rows)
                 with open(Path(d) / "procs.log", "a") as f:

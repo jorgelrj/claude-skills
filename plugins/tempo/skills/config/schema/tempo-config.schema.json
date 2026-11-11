@@ -200,8 +200,8 @@
       "properties": {
         "full_bars": {
           "type": "string",
-          "enum": ["on_demand", "integrate"],
-          "description": "When TEMPO runs the full suite. on_demand: Integrate runs NARROW bars; the full suite runs for critical changes and on /tempo:verify. integrate: every task's final integrate runs it."
+          "enum": ["on_demand", "integrate", "verify"],
+          "description": "When TEMPO runs the full suite. on_demand: Integrate runs NARROW bars; the full suite runs for critical changes and on /tempo:verify. integrate: every task's final integrate runs it. verify: never inside a task, critical or not; bars prints a DEFERRED line, targets print scoped runs only, and the full suite runs on the branch the task merges into or on /tempo:verify."
         },
         "full_paths": {
           "type": "array",

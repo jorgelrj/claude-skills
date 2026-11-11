@@ -10,7 +10,7 @@ commands:
   run_app: null
 targets: []        # extra platform test runs: [{name, command, paths, scoped_command?, advisory?, run?}]
 gates:
-  full_bars: on_demand    # on_demand: Integrate runs NARROW bars; the full suite runs for critical changes and on /tempo:verify. integrate: every task's final integrate runs it
+  full_bars: on_demand    # on_demand: Integrate runs NARROW bars; the full suite runs for critical changes and on /tempo:verify. integrate: every task's final integrate runs it. verify: never inside a task, only on /tempo:verify or the branch the task merges into
   full_paths:             # a change to one of these is wide enough to run FULL bars
     - "**/pubspec.lock"
     - "**/melos.yaml"

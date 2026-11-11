@@ -25,12 +25,15 @@ Commands:
                                          prefixes of its remote branches, else {type}/{ticket}); tempo/ names
                                          are local work branches only and never name the task branch
   cmd     NAME [--var k=v ...]           print one command as a shell line, env exported first
-  targets [--paths P ...] [--ref REF] [--full] [--critical]
+  targets [--paths P ...] [--ref REF] [--full] [--critical] [--scoped-only]
                                          print the platform test runs for the changed paths: scoped to the
                                          tests those paths touch or mirror when a target has scoped_command.
                                          Targets with run: critical (advisory targets by default) print only
-                                         with --critical or --full
-  bars    [--paths P ...] [--critical]   print the bars an integrate runs: BARS: FULL|NARROW and why
+                                         with --critical or --full. --scoped-only: a target that would print
+                                         its whole command prints `# DEFERRED whole suite` instead
+  bars    [--paths P ...] [--critical]   print the bars an integrate runs: BARS: FULL|NARROW and why. With
+                                         gates.full_bars: verify it is NARROW, plus a DEFERRED: line when the
+                                         change would have run the whole suite
   setup   --worktree PATH                print the shell steps that prepare a new worktree
   teardown --worktree PATH               print the shell steps that release a worktree's resources
   repos                                  list workspace repos in dependency order
@@ -693,6 +696,7 @@ def main(argv=None):
     t.add_argument("--ref", help="find test files in this commit (default: the files git tracks in the checkout)")
     t.add_argument("--full", action="store_true", help="print each target's full command, never the scoped one")
     t.add_argument("--critical", action="store_true", help="include the targets that run for critical changes only")
+    t.add_argument("--scoped-only", action="store_true", help="never print a whole command: a `# DEFERRED whole suite` line instead")
     bs = add("bars"); bs.add_argument("--paths", nargs="*", default=[]); bs.add_argument("--critical", action="store_true")
     s = add("setup"); s.add_argument("--worktree", required=True)
     td = add("teardown"); td.add_argument("--worktree", required=True)
@@ -801,6 +805,8 @@ def main(argv=None):
                     continue
                 tail = "\tadvisory" if tg.get("advisory") else ""
                 full = f"{tg['name']}\t{env_prefix(cfg.get('env'))}{tg['command']}{tail}"
+                if a.scoped_only:
+                    full = f"{tg['name']}\t# DEFERRED whole suite{tail}"
                 if a.paths is None:
                     print(full); continue
                 hit = [f for f in a.paths if any(_matches(f, pat) for pat in tg["paths"])]
@@ -822,7 +828,13 @@ def main(argv=None):
         if a.cmd == "bars":
             gates = cfg.get("gates") or {}
             hit = [f for f in a.paths if any(_matches(f, pat) for pat in gates.get("full_paths") or [])]
-            if gates.get("full_bars") == "integrate":
+            if gates.get("full_bars") == "verify":  # the whole suite never runs inside the task
+                print("BARS: NARROW  WHY: gates.full_bars is verify")
+                if a.critical:
+                    print("DEFERRED: critical change")
+                elif hit:
+                    print(f"DEFERRED: gates.full_paths matches {' '.join(hit[:5])}")
+            elif gates.get("full_bars") == "integrate":
                 print("BARS: FULL  WHY: gates.full_bars is integrate")
             elif a.critical:
                 print("BARS: FULL  WHY: critical change")

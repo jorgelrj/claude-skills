@@ -12,7 +12,10 @@ polls: no background runs, no sleep loops, no reading of the log to see if it en
 least 1; env TEMPO_HEAVY_SLOTS or --slots). Use it for whole suites, platform targets
 and app builds: too many at once run slower than a queue. The wait happens inside the
 worker and is reported as WAITED. Scoped runs (one package, a few test files) do not
-take a slot.
+take a slot. With --task and a config that can be read, the script decides for the commands
+the config knows (decide_heavy): the whole test command and a target's whole command always
+take a slot; test-one with test files, typecheck and lint never do. For any other command,
+and without --task or a config, the caller's --heavy decides.
 
 Leftovers. Every process a run starts carries TEMPO_RUN=<id> (and the task's
 TEMPO_TAG and TEMPO_OWNER, see tempo_procs.py). When the command ends, anything it
@@ -35,10 +38,11 @@ Prints:
   RUN: <label>  EXIT: <code>  TIME: <m:ss>  WAITED: <m:ss>  LOG: <path>
   FAILURES: <count shown>   then up to 40 failure lines, or FAILURES: NIL
   TAIL:                     then the last --tail lines (default 25)
+  KILLED: signal <n>. ...   first line when the exit is 137 or 143 (SIGKILL, SIGTERM from outside), or the worker died
 or, while it runs:
   RUNNING: <label>  ID: <id>  ELAPSED: <m:ss>  STATE: <waiting for a slot | running>
 FAILURES are hints matched by pattern; EXIT decides whether the run passed.
-Exit: the command's exit code; 75 while it still runs; 124 when --timeout killed it;
+Exit: the command's exit code (128 + n when signal n ended it); 75 while it still runs; 124 when --timeout killed it;
 2 on a usage error.
 """
 import argparse
@@ -64,6 +68,62 @@ FAILURE = re.compile(
     re.IGNORECASE)
 KEEP_DAEMONS = re.compile(os.environ.get("TEMPO_KEEP_DAEMONS", r"GradleDaemon|KotlinCompileDaemon|kotlin-daemon") or "(?!x)x")
 NOISE = re.compile(r"^\s*$|^\d+:\d+ \+\d+(?: ~\d+)?: (?:loading|All tests passed)", re.IGNORECASE)
+
+
+TRAIL = re.compile(r"\s*(2>&1|\|\s*(tail|tee)\b[^|&;]*)\s*$")
+EXPORT = re.compile(r"^\s*export\s[^;]*;")  # the env prefix `tempo_config.py cmd` prints
+TESTS = r"[^-\s]\S*(?: [^-\s]\S*)*"  # test files only: with an option among them the line may be a target's scoped one
+
+
+LAUNCHER = re.compile(r"^fvm (exec )?")  # shortcut: one project's launcher; a config key when a second one shows up
+
+
+def parts(line):
+    """The `&&` parts of a shell line, each without a leading `export ...;`, a launcher, or a trailing `2>&1`, `| tail ...`, `| tee ...`."""
+    out = []
+    for part in (line or "").split("&&"):
+        part = EXPORT.sub("", part)
+        while TRAIL.search(part):
+            part = TRAIL.sub("", part)
+        out.append(LAUNCHER.sub("", " ".join(part.split())))
+    return out
+
+
+def last_part(line):
+    return parts(line)[-1]
+
+
+def decide_heavy(cmd, flag, cfg):
+    """Whether the run takes a heavy slot: yes for the config's whole suites, no for its scoped or cheap commands, else `flag`."""
+    every = parts(cmd[0] if len(cmd) == 1 else " ".join(cmd))
+    part = every[-1]
+    c = cfg.get("commands") or {}
+    # any part: a whole suite chained in front of a lint still needs its slot
+    if set(every) & {last_part(x) for x in [c.get("test")] + [t.get("command") for t in cfg.get("targets") or []] if x}:
+        return True
+    one = re.split(r"(\{[a-z_]+\})", last_part(c.get("test_one")))  # placeholders land on the odd indexes
+    rx = "".join((TESTS if x == "{tests}" else r"\S+") if i % 2 else re.escape(x) for i, x in enumerate(one))
+    if "{tests}" in one and re.fullmatch(rx, part):
+        return False
+    if part in {last_part(c[k]) for k in ("typecheck", "lint") if c.get(k)}:
+        return False
+    return flag
+
+
+def killed_line(sig):
+    return f"KILLED: signal {sig}. Stopped from outside, not a test failure. Run it again once."
+
+
+def run_end(run, opts, code, seconds, waited=0.0, killed=False, leftovers=0):
+    """One line in the task's events.jsonl for a run that ended, with the machine's load, to see what queues and what dies."""
+    if not opts.get("task"):
+        return
+    try:
+        load = round(os.getloadavg()[0], 2)
+    except OSError:
+        load = None
+    tempo_procs.event(opts["task"], ev="run-end", id=run.name, exit=code, seconds=round(seconds), waited=round(waited),
+                      load1=load, killed=killed, leftovers=leftovers)
 
 
 def clock(seconds):
@@ -140,10 +200,15 @@ def worker(run, opts, cmd):
         if lock:
             lock.seek(0); lock.truncate(); lock.close()
     took = time.monotonic() - start
+    if code < 0:
+        code = 128 - code  # died from a signal: the code a shell reports
+    killed = code in (137, 143) and not (run / "stopped").exists()
     stopped, kept = reap_leftovers(run.name, locals().get("proc"))
 
     fails, total, tail = summary(log, opts["tail"])
     rows = [f"RUN: {opts['label']}  EXIT: {code}  TIME: {clock(took)}  WAITED: {clock(waited)}  LOG: {log}"]
+    if killed:
+        rows.insert(0, killed_line(code - 128))
     if waited >= 1 and holder:
         rows.append(f"WAITED FOR: {holder}")
     if fails:
@@ -160,6 +225,7 @@ def worker(run, opts, cmd):
     tmp = run / "result.tmp"
     tmp.write_text("\n".join(rows) + "\n", encoding="utf-8")
     (run / "code").write_text(str(code))
+    run_end(run, opts, code, took, waited, killed, len(stopped))
     tmp.rename(run / "result.txt")  # last: its presence means the run is over
 
 
@@ -188,9 +254,15 @@ def wait(run, max_seconds):
     end = time.monotonic() + max_seconds if max_seconds else None
     while not (run / "result.txt").exists():
         if end is not None and time.monotonic() >= end:
-            if not alive(opts.get("pid")) and not (run / "result.txt").exists():
+            # not while `stop` is at work: it writes its own STOPPED summary
+            if not alive(opts.get("pid")) and not (run / "result.txt").exists() and not (run / "stopped").exists():
                 print(f"tempo_run: the worker for {opts['label']} died; see {opts['log']}", file=sys.stderr)
-                return 1
+                stopped, _ = reap_leftovers(run.name, None)  # the command may outlive its worker, and the caller runs it again
+                (run / "code").write_text("1")
+                run_end(run, opts, 1, time.time() - opts["started"], killed=True, leftovers=len(stopped))
+                # written down, so the next wait prints the same and the event is logged once
+                (run / "result.txt").write_text(f"{killed_line('unknown')}\nRUN: {opts['label']}  EXIT: 1  WORKER DIED  LOG: {opts['log']}\n")
+                continue
             state = (run / "state").read_text() if (run / "state").exists() else "starting"
             print(f"RUNNING: {opts['label']}  ID: {run}  ELAPSED: {clock(time.time() - opts['started'])}  STATE: {state}")
             return 75
@@ -207,6 +279,7 @@ def stop(run):
     opts = json.loads((run / "opts.json").read_text())
     if (run / "result.txt").exists():
         print(f"ENDED: {opts['label']} had already ended"); return 0
+    (run / "stopped").touch()  # a worker that sees its command die first must not report an outside kill
     table = tempo_procs.snapshot()
     mine = tempo_procs.protected(table)
     # The worker is known by its own command line (a reused PID never matches). The command runs in its own
@@ -220,6 +293,7 @@ def stop(run):
     if not (run / "result.txt").exists():  # the worker died before it wrote a summary
         (run / "code").write_text("130")
         (run / "result.txt").write_text(f"RUN: {opts['label']}  EXIT: 130  STOPPED by tempo_run.py stop  LOG: {opts['log']}\n")
+        run_end(run, opts, 130, time.time() - opts["started"])
     print(f"STOPPED: {opts['label']}  PROCESSES: {len(pids) - len(left)}" + (f"  STILL ALIVE: {left}" if left else ""))
     return 1 if left else 0
 
@@ -266,19 +340,27 @@ def main(argv=None):
     if not cmd:
         p.print_usage(sys.stderr); return 2
     task = task or a.task
+    heavy = a.heavy
+    if task:
+        try:
+            cfg = json.loads(tempo_procs.cfg(Path(task).resolve().parent.parent, "resolve", "--format", "json"))
+            heavy = decide_heavy(cmd, a.heavy, cfg["config"])
+        except Exception:  # no config, or tempo_config.py cannot run here: the caller's flag decides, as before
+            pass
     label = a.label or " ".join(cmd)[:80]
     run = Path(tempfile.mkdtemp(prefix="tempo-run-"))
     log_dir = Path(a.log_dir) if a.log_dir else run
     log_dir.mkdir(parents=True, exist_ok=True)
     slug = re.sub(r"[^A-Za-z0-9]+", "-", label).strip("-")[:40] or "run"
     log = log_dir.resolve() / f"{time.strftime('%H%M%S')}-{slug}.log"
-    opts = {"label": label, "log": str(log), "heavy": a.heavy, "slots": a.slots, "tail": a.tail,
-            "timeout": a.timeout, "cmd": cmd, "cwd": os.getcwd(), "started": time.time()}
+    opts = {"label": label, "log": str(log), "heavy": heavy, "slots": a.slots, "tail": a.tail,
+            "timeout": a.timeout, "cmd": cmd, "cwd": os.getcwd(), "started": time.time(),
+            "task": os.path.abspath(task) if task else None}
     (run / "opts.json").write_text(json.dumps(opts))
     owner = tempo_procs.find_owner()
     if task:
         tempo_procs.register(task, owner)
-        tempo_procs.event(task, ev="run", id=run.name, dir=str(run), label=label, heavy=a.heavy)
+        tempo_procs.event(task, ev="run", id=run.name, dir=str(run), label=label, heavy=heavy)
     env = tempo_procs.task_env(task, owner, run=run.name)
     w = subprocess.Popen([sys.executable, os.path.abspath(__file__), "--worker", str(run)],
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, env=env,
