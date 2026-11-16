@@ -131,7 +131,7 @@ class Killed(Base):
         self.assertEqual([(e["exit"], e["killed"], e["leftovers"]) for e in ev], [(137, True, 0), (143, True, 0), (3, False, 0)])
         self.assertEqual([set(e) for e in ev], [self.KEYS] * 3)
         self.assertEqual([e["id"] for e in ev], [e["id"] for e in self.events(d, "run")])
-        self.assertIsInstance(ev[0]["load1"], float)
+        self.assertIsInstance(ev[0]["load1"], type(None) if sys.platform == "win32" else float)  # no load average there
 
     def run_dir(self, d, cmd, pid=None):
         """A run folder as main() leaves it for the worker."""
@@ -169,6 +169,7 @@ class Killed(Base):
 
 
 class Stop(Base):
+    @unittest.skipIf(sys.platform == "win32", "uses pgrep; check 6 of the Windows handoff covers stop there")
     def test_stop_ends_only_its_own_run(self):
         mark = f"sleep 3{os.getpid() % 1000:03d}"  # a command line no other test or task uses
         d = self.task()

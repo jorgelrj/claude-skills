@@ -19,7 +19,9 @@ Each `start` also writes an entry in <task>/procs.json (the ledger): PID, proces
 group, start time, command, log and an optional --stop command (for things that run
 outside the process tree, such as a docker compose stack). The environment is read
 from /proc on Linux and `ps -E` on macOS; where it cannot be read, the ledger's
-process groups still find what `start` launched.
+process groups still find what `start` launched. Native Windows exposes no other
+process's environment and has no process groups: there the ledger PID or the run's
+worker PID is found in a PowerShell process table and taskkill /T stops its tree.
 
 Usage: tempo_procs.py <command> [args]
   start    --task DIR --label L [--stop CMD] [--ready REGEX] [--max S] [--cwd D] -- COMMAND [ARG ...]
@@ -55,11 +57,13 @@ import json
 import os
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import tempo_os  # noqa: E402
 
 HOME_CACHE = Path(os.environ.get("TEMPO_CACHE") or Path.home() / ".cache" / "tempo")
 CONFIG = Path(__file__).resolve().parents[2] / "config" / "scripts" / "tempo_config.py"
@@ -70,7 +74,7 @@ TAG_RE = re.compile(r"\bTEMPO_TAG=([0-9a-f]{12})\b")
 OWNER_RE = re.compile(r"\bTEMPO_OWNER=(\d+)\b")
 SVC_RE = re.compile(r"\bTEMPO_SVC=(\S+)")
 RUN_RE = re.compile(r"\bTEMPO_RUN=(\S+)")
-CLAUDE_EXE = re.compile(r"(^|/)claude$|claude-code|@anthropic-ai/claude")
+CLAUDE_EXE = re.compile(r'(^"?|[/\\])claude(\.exe)?"?$|claude-code|@anthropic-ai[/\\]claude')
 # Unmarked orphans that look like dev tooling a session started for testing.
 SUSPECT_RE = re.compile(
     r"qemu-system|/emulator(\s|$)|emulator\s+-avd|\bjava\b.*\s-jar\s|spring-boot|bootRun|"
@@ -104,9 +108,42 @@ def _etime(s):
     return (int(days) if days else 0) * 86400 + parts[0] * 3600 + parts[1] * 60 + parts[2]
 
 
+# One tab-separated line per process: pid, ppid, working set bytes, creation time in UTC ticks (0.1 us), command line.
+WIN_PS = ("[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-CimInstance Win32_Process | ForEach-Object { "
+          "$c = if ($_.CommandLine) { $_.CommandLine -replace '\\s', ' ' } else { $_.Name }; "
+          "$t = if ($_.CreationDate) { $_.CreationDate.ToUniversalTime().Ticks } else { 0 }; "
+          "\"$($_.ProcessId)`t$($_.ParentProcessId)`t$($_.WorkingSetSize)`t$t`t$c\" }")
+
+
+def _parse_win(text, now):
+    """WIN_PS output to snapshot rows. `now` is UTC seconds since year 1.
+    shortcut: Windows cannot read another process's environment, so no row carries TEMPO_* marks, and it has
+    no process groups, so pgid is the pid itself. Teardown finds what `start` and tempo_run launched by the
+    ledger or worker PID and taskkill /T takes the tree; orphans whose parent already exited are missed.
+    Upgrade with a named Job Object per task if that bites."""
+    out = {}
+    for line in text.splitlines():
+        f = line.rstrip("\r").split("\t", 4)
+        if len(f) < 5 or not f[0].isdigit():
+            continue
+        pid, ticks = int(f[0]), int(f[3] or 0)
+        out[pid] = {"pid": pid, "ppid": int(f[1] or 0), "pgid": pid, "rss_kb": int(f[2] or 0) // 1024,
+                    "age_s": max(0, int(now - ticks / 1e7)) if ticks else 0, "start": f[3], "uid": -1,
+                    "command": f[4], "env": "", "cwd": None}
+    return out
+
+
 def snapshot(with_cwd=False):
     """Every readable process: pid, ppid, pgid, rss_kb, age_s, start (identity token), uid, command, env text."""
     out = {}
+    if tempo_os.WINDOWS:
+        r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", WIN_PS],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
+        now = (dt.datetime.now(dt.timezone.utc) - dt.datetime(1, 1, 1, tzinfo=dt.timezone.utc)).total_seconds()
+        out = _parse_win(r.stdout, now)
+        if not out:  # PowerShell missing or blocked: an empty table would read as "nothing running"
+            raise RuntimeError(f"tempo_procs: no process table from PowerShell: {r.stderr.strip()[:300]}")
+        return out
     if Path("/proc/self/stat").exists():
         clk = _clk()
         uptime = float(Path("/proc/uptime").read_text().split()[0])
@@ -115,7 +152,7 @@ def snapshot(with_cwd=False):
                 continue
             uid = -1
             try:
-                stat = (p / "stat").read_text()
+                stat = (p / "stat").read_text(encoding="utf-8")
                 rest = stat[stat.rindex(")") + 2:].split()
                 cmd = (p / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace").strip()
                 try:
@@ -123,7 +160,7 @@ def snapshot(with_cwd=False):
                 except OSError:
                     env = ""
                 rss = 0
-                for line in (p / "status").read_text().splitlines():
+                for line in (p / "status").read_text(encoding="utf-8").splitlines():
                     if line.startswith("VmRSS:"):
                         rss = int(line.split()[1])
                     elif line.startswith("Uid:"):
@@ -181,11 +218,7 @@ def alive(pid, start=None, table=None):
     if table is not None:
         p = table.get(int(pid))
         return bool(p) and (start is None or p["start"] == start)
-    try:
-        os.kill(int(pid), 0)
-    except (OSError, ValueError, TypeError):
-        return False
-    return True
+    return tempo_os.alive(pid)
 
 
 def ancestors(pid, table):
@@ -210,7 +243,7 @@ def find_owner(table=None, pid=None):
 def is_claude(pid, table):
     """True when the process runs Claude Code: `claude ...`, or `node .../claude-code/cli.js ...`."""
     p = table.get(pid)
-    return bool(p) and any(CLAUDE_EXE.search(w) for w in p["command"].split()[:2])
+    return bool(p) and any(CLAUDE_EXE.search(w) for w in re.findall(r'"[^"]*"|\S+', p["command"])[:2])
 
 
 # ---------- tags, registry, ledger ----------
@@ -229,7 +262,7 @@ def register(task_dir, owner=0):
             SESSIONS.mkdir(parents=True, exist_ok=True)
             f = SESSIONS / f"{owner}.json"
             try:
-                cur = json.loads(f.read_text()) if f.exists() else []
+                cur = json.loads(f.read_text(encoding="utf-8")) if f.exists() else []
             except ValueError:
                 cur = []  # an older, non-atomic writer left it half written
             if str(d) not in cur:
@@ -241,8 +274,8 @@ def register(task_dir, owner=0):
 def _write(path, text):
     """Write via a temp file and rename, so a parallel reader never sees a half-written file."""
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(text)
-    os.replace(tmp, path)
+    tmp.write_text(text, encoding="utf-8")
+    tempo_os.replace(tmp, path)
 
 
 def event(task_dir, **fields):
@@ -268,7 +301,7 @@ def registry():
     out = {}
     for f in (REGISTRY.glob("*.json") if REGISTRY.exists() else []):
         try:
-            out[f.stem] = json.loads(f.read_text())["dir"]
+            out[f.stem] = json.loads(f.read_text(encoding="utf-8"))["dir"]
         except (OSError, ValueError, KeyError):
             continue
     return out
@@ -289,20 +322,20 @@ def ledger_path(d):
 
 def load_ledger(d):
     try:
-        return json.loads(ledger_path(d).read_text())
+        return json.loads(ledger_path(d).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
 
 
 def save_ledger(d, rows):
     tmp = ledger_path(d).with_suffix(".tmp")
-    tmp.write_text(json.dumps(rows, indent=1))
-    tmp.rename(ledger_path(d))
+    tmp.write_text(json.dumps(rows, indent=1), encoding="utf-8")
+    tempo_os.replace(tmp, ledger_path(d))
 
 
 def task_status(d):
     try:
-        s = json.loads((Path(d) / "state.json").read_text())
+        s = json.loads((Path(d) / "state.json").read_text(encoding="utf-8"))
         return s.get("status") or "RUNNING", s
     except (OSError, ValueError):
         return ("GONE" if not Path(d).exists() else "UNKNOWN"), {}
@@ -322,24 +355,20 @@ def kill_all(pids, grace=10):
     """SIGTERM, wait up to `grace` s, then SIGKILL. Returns the PIDs still alive after that."""
     pids = [p for p in set(pids) if p not in (os.getpid(), os.getppid())]
     for p in pids:
-        try:
-            os.kill(p, signal.SIGTERM)
-        except OSError:
-            pass
+        tempo_os.kill(p)
     end = time.monotonic() + grace
     while time.monotonic() < end and any(alive(p) for p in pids):
         time.sleep(0.2)
     left = [p for p in pids if alive(p)]
     for p in left:
-        try:
-            os.kill(p, signal.SIGKILL)
-        except OSError:
-            pass
+        tempo_os.kill(p, force=True)
     time.sleep(0.3)
     return [p for p in left if alive(p) and not _zombie(p)]
 
 
 def _zombie(pid):
+    if tempo_os.WINDOWS:
+        return False  # an exited process leaves no entry behind
     try:
         return Path(f"/proc/{pid}/stat").read_text().split(") ")[1][0] == "Z"
     except (OSError, IndexError):
@@ -356,7 +385,7 @@ def run_stop_cmd(row):
     if not row.get("stop"):
         return None
     try:
-        r = subprocess.run(["bash", "-c", row["stop"]], cwd=row.get("cwd") or None, capture_output=True,
+        r = subprocess.run(tempo_os.shell(row["stop"]), cwd=row.get("cwd") or None, capture_output=True,
                            text=True, timeout=90)
         return f"exit {r.returncode}"
     except subprocess.TimeoutExpired:
@@ -422,7 +451,7 @@ def teardown(d, services_only=False, dry_run=False, label=None, quiet=False):
         if rows:
             save_ledger(d, rows)
         if targets or any(l.startswith("RAN") for l in lines):
-            with open(d / "procs.log", "a") as f:
+            with open(d / "procs.log", "a", encoding="utf-8") as f:
                 f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} teardown{' services' if services_only else ''}\n"
                         + "".join(f"  {l}\n" for l in lines))
     if not lines and not quiet:
@@ -443,12 +472,12 @@ def start(a):
     logs = d / "procs"; logs.mkdir(exist_ok=True)
     slug = re.sub(r"[^A-Za-z0-9]+", "-", a.label).strip("-")[:40] or "proc"
     log = logs / f"{slug}.log"
-    args = ["bash", "-c", cmd[0]] if len(cmd) == 1 else cmd
-    with open(log, "a") as out:
+    args = tempo_os.shell(cmd[0]) if len(cmd) == 1 else cmd
+    with open(log, "a", encoding="utf-8") as out:
         out.write(f"\n--- {time.strftime('%Y-%m-%d %H:%M:%S')} start: {' '.join(cmd)}\n"); out.flush()
-        proc = subprocess.Popen(args, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                                start_new_session=True, cwd=a.cwd or os.getcwd(),
-                                env=task_env(d, owner, svc=slug))
+        since = out.tell()  # the log is appended to: the ready line must come from this start
+        proc = tempo_os.spawn(args, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                              cwd=a.cwd or os.getcwd(), env=task_env(d, owner, svc=slug))
     time.sleep(0.2)
     table = snapshot()
     row = {"label": slug, "pid": proc.pid, "pgid": proc.pid, "start": (table.get(proc.pid) or {}).get("start"),
@@ -459,17 +488,17 @@ def start(a):
     if a.ready:
         rx, end = re.compile(a.ready), time.monotonic() + a.max
         while time.monotonic() < end:
-            if rx.search(log.read_text(errors="replace")):
-                print(f"READY: {slug}  PID: {proc.pid}  LOG: {log}"); return 0
+            if rx.search(log.read_bytes()[since:].decode("utf-8", "replace")):
+                print(f"READY: {slug}  PID: {proc.pid}  LOG: {log.as_posix()}"); return 0
             if proc.poll() is not None:
                 break
             time.sleep(0.5)
         if proc.poll() is not None:
-            print(f"EXITED: {slug}  CODE: {proc.returncode}  LOG: {log}"); return 1
-        print(f"NOT READY: {slug}  PID: {proc.pid}  after {a.max} s, still running  LOG: {log}"); return 1
+            print(f"EXITED: {slug}  CODE: {proc.returncode}  LOG: {log.as_posix()}"); return 1
+        print(f"NOT READY: {slug}  PID: {proc.pid}  after {a.max} s, still running  LOG: {log.as_posix()}"); return 1
     if proc.poll() is not None:
-        print(f"EXITED: {slug}  CODE: {proc.returncode}  LOG: {log}"); return 1
-    print(f"STARTED: {slug}  PID: {proc.pid}  LOG: {log}\nSTOP: tempo_procs.py stop --task {d} --label {slug}")
+        print(f"EXITED: {slug}  CODE: {proc.returncode}  LOG: {log.as_posix()}"); return 1
+    print(f"STARTED: {slug}  PID: {proc.pid}  LOG: {log.as_posix()}\nSTOP: tempo_procs.py stop --task {d.as_posix()} --label {slug}")
     return 0
 
 
@@ -497,7 +526,7 @@ def adopt(a):
 
 def sweep(a):
     table = snapshot(with_cwd=True)
-    reg, me = registry(), os.getuid()
+    reg, me = registry(), tempo_os.uid()
     keep = protected(table)
     leftover, inuse, suspects = [], [], []
     for p in table.values():
@@ -517,12 +546,12 @@ def sweep(a):
             (leftover if why else inuse).append((p, Path(d).name if d else m["tag"], why or status))
             continue
         parent = table.get(p["ppid"]) or {}
-        orphan = p["ppid"] == 1 or bool(REAPER_RE.search(parent.get("command", "")))
+        orphan = p["ppid"] == 1 or bool(REAPER_RE.search(parent.get("command", ""))) or (tempo_os.WINDOWS and not parent)
         if not orphan or p["age_s"] < a.min_age * 60 or NEVER_RE.search(p["command"]):
             continue
         cwd = p.get("cwd") or ""
         hit = SUSPECT_RE.search(p["command"])
-        gone = bool(cwd) and cwd.startswith("/") and not os.path.isdir(cwd)
+        gone = bool(cwd) and os.path.isabs(cwd) and not os.path.isdir(cwd)
         if hit or "/.tempo/" in cwd or gone:
             suspects.append((p, cwd, "folder deleted" if gone else ".tempo worktree" if "/.tempo/" in cwd else hit.group(0)))
     tot = lambda xs: mb(sum(x[0]["rss_kb"] for x in xs))
@@ -568,21 +597,25 @@ def session_end():
     stops = []
     f = SESSIONS / f"{owner}.json"
     try:
-        dirs = json.loads(f.read_text()) if f.exists() else []
+        dirs = json.loads(f.read_text(encoding="utf-8")) if f.exists() else []
     except (OSError, ValueError):
         dirs = []
     for d in dirs:
         for r in load_ledger(d):
             if r.get("stop") and not r.get("stopped") and r.get("owner") == owner:
                 stops.append(r)
+            # the ledger PID too: on Windows no process carries the owner mark
+            if tempo_os.WINDOWS and r.get("pid") and not r.get("stopped") and r.get("owner") == owner and alive(r["pid"], r.get("start"), table) \
+                    and r["pid"] not in pids and r["pid"] not in protected(table):
+                pids.append(r["pid"])
     if pids or stops:
         # Hand the work to a detached reaper: the hook returns at once, the reaper outlives the session.
         job = HOME_CACHE / f"reap-{owner}.json"
         job.parent.mkdir(parents=True, exist_ok=True)
-        job.write_text(json.dumps({"pids": pids, "stops": stops, "dirs": dirs, "owner": owner}))
-        subprocess.Popen([sys.executable, os.path.abspath(__file__), "reap-job", str(job)],
-                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         start_new_session=True, env={k: v for k, v in os.environ.items() if not k.startswith("TEMPO_")})
+        job.write_text(json.dumps({"pids": pids, "stops": stops, "dirs": dirs, "owner": owner}), encoding="utf-8")
+        tempo_os.spawn([sys.executable, os.path.abspath(__file__), "reap-job", str(job)],
+                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       env={k: v for k, v in os.environ.items() if not k.startswith("TEMPO_")})
     try:
         f.unlink()
     except OSError:
@@ -591,7 +624,7 @@ def session_end():
 
 
 def reap_job(path):
-    job = json.loads(Path(path).read_text())
+    job = json.loads(Path(path).read_text(encoding="utf-8"))
     for r in job["stops"]:
         run_stop_cmd(r)
     kill_all(job["pids"])
@@ -603,7 +636,7 @@ def reap_job(path):
                     r.setdefault("stopped", time.time())
             try:
                 save_ledger(d, rows)
-                with open(Path(d) / "procs.log", "a") as f:
+                with open(Path(d) / "procs.log", "a", encoding="utf-8") as f:
                     f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} session ended: stopped {len(job['pids'])} process(es)\n")
             except OSError:
                 pass

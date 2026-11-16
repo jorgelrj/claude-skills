@@ -44,7 +44,7 @@ class Cfg(unittest.TestCase):
             with mock.patch.object(shutil, "which", return_value=uv), \
                     mock.patch.object(tempo_procs.subprocess, "run", return_value=done) as run:
                 self.assertEqual(tempo_procs.cfg(Path("/r"), "resolve", "--format", "json"), "{}")
-            self.assertEqual(run.call_args[0][0], [*how, str(tempo_procs.CONFIG), "--repo", "/r", "resolve", "--format", "json"])
+            self.assertEqual(run.call_args[0][0], [*how, str(tempo_procs.CONFIG), "--repo", str(Path("/r")), "resolve", "--format", "json"])
             self.assertTrue(run.call_args[1]["check"] and run.call_args[1]["timeout"])
         self.assertTrue(tempo_procs.CONFIG.is_file())
 

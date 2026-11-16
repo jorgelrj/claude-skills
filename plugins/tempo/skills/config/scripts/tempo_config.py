@@ -52,6 +52,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+if sys.platform == "win32":  # the console code page cannot carry every character a task or a hook holds
+    for _s in (sys.stdin, sys.stdout, sys.stderr):
+        if hasattr(_s, "reconfigure"):
+            _s.reconfigure(encoding="utf-8", errors="replace")
+
 try:
     import yaml
     import jsonschema

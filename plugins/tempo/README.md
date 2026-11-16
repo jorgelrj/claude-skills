@@ -354,6 +354,17 @@ A read of two story runs (POD-11 and POD-12, many subtasks at once on one Mac) s
 - State. `tempo_state.py` holds a lock on `<task>/.state.lock` from its read to its write and releases it before a teardown. `log` of `qa-rN.md` raises the QA counter to N, and on a FAIL at or past the limit prints `LIMIT: qa rounds N of L; raise LOOP-LIMIT` (exit 0). `set --pr` logs SHIP when the last log entry is not SHIP. DONE clears the next action unless `--next` comes with it. `state.json` keeps its shape: a task folder from 0.21.0 works as it is.
 - Tests: `tests/test_state.py`, `test_config.py`, `test_procs.py`, and more cases in `test_run.py`.
 
+### Native Windows (0.24.0)
+
+The state, run and process scripts imported `fcntl` and called `killpg`, `/proc` and `ps`, so on native Windows a task stopped before Triage. The platform calls now sit in `tempo_os.py`; macOS and Linux keep the same calls as before.
+
+- Locks: `msvcrt` byte locks on Windows, placed past the text so a slot file still says who holds it.
+- Processes: commands start in their own process group with no console window, and leave Claude Code's job object where the job allows that. Bash commands go through Git Bash (`CLAUDE_CODE_GIT_BASH_PATH`, or the `bash.exe` next to `git`), not the WSL launcher. The process table comes from PowerShell (`Get-CimInstance Win32_Process`). Each process TEMPO starts gets its own named job object, which its descendants join, so stopping one runs `taskkill /T /F` on its tree and then ends its job: Git Bash's fork and exec leave children whose parent PID is gone, which the tree walk alone misses.
+- Limits on Windows: no process exposes its environment, so nothing carries the task mark. Teardown, `stop` and the session's end find a service by its ledger PID and a run by its worker PID, and stop the whole tree and its job. A program started through an app execution alias (a Store or install-manager `python.exe`) leaves the job; it is still stopped while its parent lives, but not once its parent has exited. `/tempo:sweep` lists no LEFTOVER there, only SUSPECT orphans.
+- Every text file the scripts read or write is UTF-8, whatever the code page, and so is every script's and hook's stdin and stdout.
+- Paths the scripts print for an agent to paste back (run `ID:`, `LOG:`, `DIR:`, `STATE:`, the hook's suggested lines) use forward slashes, which Git Bash keeps.
+- Checked on a Windows machine with the handoff in PR #11, and the unit suite runs there (FIFO and `pgrep` tests skip). `tests/test_os.py` checks the lock, the liveness probe, the Git Bash lookup and the Windows table parser on any machine, and the job kill on Windows.
+
 ## How it runs inside Claude Code
 
 - The main session is the orchestrator. Subagents cannot start other subagents, so the orchestrator starts every agent, including the parallel scouts, builders and reviewers.

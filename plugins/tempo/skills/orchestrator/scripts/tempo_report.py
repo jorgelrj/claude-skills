@@ -30,6 +30,11 @@ import sys
 import urllib.parse
 from pathlib import Path
 
+if sys.platform == "win32":  # the console code page cannot carry every character a task or a hook holds
+    for _s in (sys.stdin, sys.stdout, sys.stderr):
+        if hasattr(_s, "reconfigure"):
+            _s.reconfigure(encoding="utf-8", errors="replace")
+
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 REPORTS = Path.home() / ".cache" / "tempo" / "reports"
 STATE_MD_CAP = 8000
@@ -49,7 +54,7 @@ def run(cmd, cwd=None, timeout=30):
 
 def plugin_meta():
     try:
-        return json.loads((PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text())
+        return json.loads((PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
 
@@ -87,7 +92,7 @@ def task_dirs(tempo):
         if sj.parent.name in SKIP_DIRS:
             continue
         try:
-            st = json.loads(sj.read_text())
+            st = json.loads(sj.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             st = {}
         found.append((sj.stat().st_mtime, sj.parent, st))
@@ -174,7 +179,7 @@ def cmd_context(a):
                 out.append(f"- Parent: `{st['parent']}`")
         sm = d / "state.md"
         if sm.is_file():
-            text = sm.read_text(errors="replace")
+            text = sm.read_text(errors="replace", encoding="utf-8")
             cut = len(text) > STATE_MD_CAP
             text = text[:STATE_MD_CAP]
             out += ["", "<details><summary>state.md" + (" (cut)" if cut else "") + "</summary>", "",
@@ -239,7 +244,7 @@ def cmd_file(a):
     if not repo:
         print("ERROR: no target repo: pass --target OWNER/NAME or set TEMPO_REPORT_REPO", file=sys.stderr)
         return 1
-    body = Path(a.body_file).read_text()
+    body = Path(a.body_file).read_text(encoding="utf-8")
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     labels = a.label or DEFAULT_LABELS
     if a.snapshot and a.dry_run:
@@ -264,7 +269,7 @@ def cmd_file(a):
                 ensure_label(repo)
             tmp = REPORTS / stamp / "issue.md"
             tmp.parent.mkdir(parents=True, exist_ok=True)
-            tmp.write_text(body)
+            tmp.write_text(body, encoding="utf-8")
             base = ["gh", "issue", "create", "--repo", repo, "--title", a.title, "--body-file", str(tmp)]
             code, out, err = run(base + sum((["--label", lab] for lab in labels), []), timeout=60)
             if code != 0 and "label" in err.lower():
@@ -278,7 +283,7 @@ def cmd_file(a):
 
     saved = REPORTS / stamp / "issue.md"
     saved.parent.mkdir(parents=True, exist_ok=True)
-    saved.write_text(f"# {a.title}\n\n{body}")
+    saved.write_text(f"# {a.title}\n\n{body}", encoding="utf-8")
     print(f"NOT FILED: {reason}")
     print(f"BODY: {saved}")
     print(f"FALLBACK: {fallback_url(repo, a.title, body, labels, saved)}")

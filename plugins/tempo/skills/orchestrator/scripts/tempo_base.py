@@ -36,6 +36,11 @@ import argparse
 import subprocess
 import sys
 
+if sys.platform == "win32":  # the console code page cannot carry every character a task or a hook holds
+    for _s in (sys.stdin, sys.stdout, sys.stderr):
+        if hasattr(_s, "reconfigure"):
+            _s.reconfigure(encoding="utf-8", errors="replace")
+
 
 def git(repo, *args, timeout=60, check=True):
     p = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, timeout=timeout)

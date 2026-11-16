@@ -50,7 +50,6 @@ Exit 0 ok, 1 error, 3 claim: the folder exists.
 """
 import argparse
 import datetime as dt
-import fcntl
 import json
 import os
 import re
@@ -58,6 +57,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import tempo_os  # noqa: E402
 import tempo_procs  # noqa: E402
 
 
@@ -134,7 +134,7 @@ def save(d, s):
     for name, text in (("state.json", json.dumps(s, indent=2, ensure_ascii=False) + "\n"), ("state.md", render(s))):
         tmp = d / f".{name}.{os.getpid()}.tmp"
         tmp.write_text(text, encoding="utf-8")
-        os.replace(tmp, d / name)  # the dashboard reads both while a task runs: never a half-written file
+        tempo_os.replace(tmp, d / name)  # the dashboard reads both while a task runs: never a half-written file
 
 
 def render(s):
@@ -282,7 +282,7 @@ def claim(root, key=None, owner=0):
             (root / key).mkdir()
         except FileExistsError:
             return key, False
-        (root / key / ".claim").write_text(note)
+        (root / key / ".claim").write_text(note, encoding="utf-8")
         return key, True
     used = [int(m.group(1)) for e in root.iterdir() if (m := LOCAL_ID.match(e.name))]
     n = max(used, default=0)
@@ -293,7 +293,7 @@ def claim(root, key=None, owner=0):
             (root / tid).mkdir()
         except FileExistsError:
             continue
-        (root / tid / ".claim").write_text(note)
+        (root / tid / ".claim").write_text(note, encoding="utf-8")
         return tid, True
 
 
@@ -338,15 +338,15 @@ def main(argv=None):
         owner = tempo_procs.find_owner()
         tid, created = claim(d, a.key, owner)
         if not created:
-            print(f"EXISTS: {d / tid}  TASK: {tid}  (resume it, or pick another ID)"); return 3
+            print(f"EXISTS: {(d / tid).as_posix()}  TASK: {tid}  (resume it, or pick another ID)"); return 3
         tempo_procs.register(d / tid, owner)
-        print(f"TASK: {tid}  DIR: {d / tid}"); return 0
+        print(f"TASK: {tid}  DIR: {(d / tid).as_posix()}"); return 0
     tempo_procs.register(d, tempo_procs.find_owner())  # marks this session as a TEMPO session for the hooks
     closed = None  # agent ids this command took off the in-flight list
     note = None  # the limit line `log` prints after the STATE line
     try:  # one command at a time reads, changes and writes a task's state: parallel updates lost each other's change
-        lock = open(d / ".state.lock", "w")
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        lock = open(d / ".state.lock", "w", encoding="utf-8")
+        tempo_os.lock(lock)
     except OSError:
         lock = None  # no folder yet (init makes it, load reports it) or a read-only one
     # Released below before the teardown. Every early return ends the command right after its save and drops it too.
@@ -364,10 +364,10 @@ def main(argv=None):
         st = new_state(a.task, a.flow, a.title, a.base_branch, a.base_commit, a.task_branch, a.mode,
                        a.parent, a.review_limit, a.qa_limit, a.review_extensions, a.autopilot)
         st["next"] = "Run TRIAGE"
-        save(d, st); emit(st); print(f"STATE: {d}/state.md  STAGE: TRIAGE"); return 0
+        save(d, st); emit(st); print(f"STATE: {d.as_posix()}/state.md  STAGE: TRIAGE"); return 0
 
     if a.cmd == "adopt":
-        st = adopt(d); save(d, st); print(f"STATE: {d}/state.json adopted from state.md  STAGE: {st['stage']}"); return 0
+        st = adopt(d); save(d, st); print(f"STATE: {d.as_posix()}/state.json adopted from state.md  STAGE: {st['stage']}"); return 0
 
     st = load(d)
     if a.cmd == "set":
@@ -486,7 +486,7 @@ def main(argv=None):
         st["children"][a.repo] = {"folder": str(Path(a.folder).resolve()), "stage": None, "status": None, "pr": None}
         tracker(d, st)
     elif a.cmd == "tracker":
-        tracker(d, st); save(d, st); print(f"TRACKER: {d}/tracker.md"); return 0
+        tracker(d, st); save(d, st); print(f"TRACKER: {d.as_posix()}/tracker.md"); return 0
     elif a.cmd == "show":
         if a.json:
             print(json.dumps(st, indent=2, ensure_ascii=False))
@@ -497,7 +497,7 @@ def main(argv=None):
     emit(st)
     if lock:
         lock.close()  # a teardown can take 90 s: never under the lock
-    print(f"STATE: {d}/state.md  STAGE: {st['stage']}  STATUS: {st['status']}")
+    print(f"STATE: {d.as_posix()}/state.md  STAGE: {st['stage']}  STATUS: {st['status']}")
     if note:
         print(note)
     if a.cmd == "set" and st["status"] in ENDED:
