@@ -363,7 +363,7 @@ The state, run and process scripts imported `fcntl` and called `killpg`, `/proc`
 - Limits on Windows: no process exposes its environment, so nothing carries the task mark. Teardown, `stop` and the session's end find a service by its ledger PID and a run by its worker PID, and stop the whole tree and its job. A program started through an app execution alias (a Store or install-manager `python.exe`) leaves the job; it is still stopped while its parent lives, but not once its parent has exited. `/tempo:sweep` lists no LEFTOVER there, only SUSPECT orphans.
 - Every text file the scripts read or write is UTF-8, whatever the code page, and so is every script's and hook's stdin and stdout.
 - Paths the scripts print for an agent to paste back (run `ID:`, `LOG:`, `DIR:`, `STATE:`, the hook's suggested lines) use forward slashes, which Git Bash keeps.
-- Not yet run on a Windows machine. `tests/test_os.py` checks the lock, the liveness probe and the Windows table parser on any machine.
+- Checked on a Windows machine with the handoff in PR #11, and the unit suite runs there (FIFO and `pgrep` tests skip). `tests/test_os.py` checks the lock, the liveness probe, the Git Bash lookup and the Windows table parser on any machine, and the job kill on Windows.
 
 ## How it runs inside Claude Code
 

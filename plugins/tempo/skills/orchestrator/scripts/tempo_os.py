@@ -100,14 +100,17 @@ def spawn(args, **kw):
         proc = subprocess.Popen(args, creationflags=flags, **kw)
     # Its own named job, joined before it runs: every descendant inherits it, so kill() finds them all.
     # A job's name lives only while a handle to it is open, so the process holds a copy of the handle.
-    k32, child = _k32(), ctypes.c_void_p(int(proc._handle))
-    job = ctypes.c_void_p(k32.CreateJobObjectW(None, _job_name(proc.pid)))
-    if job.value:
-        k32.AssignProcessToJobObject(job, child)
-        k32.DuplicateHandle(ctypes.c_void_p(k32.GetCurrentProcess()), job, child,
-                            ctypes.byref(ctypes.c_void_p()), 0, False, 0x2)  # DUPLICATE_SAME_ACCESS
-        k32.CloseHandle(job)
-    ctypes.WinDLL("ntdll").NtResumeProcess(child)
+    child = ctypes.c_void_p(int(proc._handle))
+    try:
+        k32 = _k32()
+        job = ctypes.c_void_p(k32.CreateJobObjectW(None, _job_name(proc.pid)))
+        if job.value:
+            k32.AssignProcessToJobObject(job, child)
+            k32.DuplicateHandle(ctypes.c_void_p(k32.GetCurrentProcess()), job, child,
+                                ctypes.byref(ctypes.c_void_p()), 0, False, 0x2)  # DUPLICATE_SAME_ACCESS
+            k32.CloseHandle(job)
+    finally:  # a failed job setup costs the job, never leaves the process suspended
+        ctypes.WinDLL("ntdll").NtResumeProcess(child)
     return proc
 
 
