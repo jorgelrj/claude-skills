@@ -475,6 +475,7 @@ def start(a):
     args = tempo_os.shell(cmd[0]) if len(cmd) == 1 else cmd
     with open(log, "a", encoding="utf-8") as out:
         out.write(f"\n--- {time.strftime('%Y-%m-%d %H:%M:%S')} start: {' '.join(cmd)}\n"); out.flush()
+        since = out.tell()  # the log is appended to: the ready line must come from this start
         proc = tempo_os.spawn(args, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                               cwd=a.cwd or os.getcwd(), env=task_env(d, owner, svc=slug))
     time.sleep(0.2)
@@ -487,7 +488,7 @@ def start(a):
     if a.ready:
         rx, end = re.compile(a.ready), time.monotonic() + a.max
         while time.monotonic() < end:
-            if rx.search(log.read_text(errors="replace", encoding="utf-8")):
+            if rx.search(log.read_bytes()[since:].decode("utf-8", "replace")):
                 print(f"READY: {slug}  PID: {proc.pid}  LOG: {log.as_posix()}"); return 0
             if proc.poll() is not None:
                 break
