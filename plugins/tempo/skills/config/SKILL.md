@@ -38,6 +38,19 @@ description: TEMPO's structured configuration. The YAML files (.tempo/config.yam
   - 2.4.3 `tempo/` marks a branch that never leaves the machine. The plugin's push hook (`hooks/guard_push.py`) denies a push to any `tempo/` name.
 2.5 Task IDs: with `task.id: ticket`, a ticket key matching `task.ticket_pattern` in the request becomes the task ID (`AV-5696`). When the pattern has a capture group, the group is the key (`(?:#|/issues/)(\d+)` turns `#215` into `215`). Without a match, or with `task.id: sequence`, the ID is `T-NNN`.
 2.5.1 Local IDs stay local. A `T-NNN` id is numbered per checkout: another machine running TEMPO on the same project has its own `T-004`. It names the `.tempo/` folder and nothing else. `names` never puts it in a branch, commit message or PR title, and `check` fails a config whose templates hold one.
+2.5.2 Trackers. `task.trackers` lists every tracker a project takes tickets from, each with its own `type` and `ticket_pattern`; it replaces `task.tracker` and `task.ticket_pattern`, which still work as a list of one. `ticket --text <request>` prints the ticket the request names first and its tracker (a tie goes to the tracker listed first).
+2.5.3 Sync, opt-in per tracker. A tracker's `sync:` lets TEMPO write to it: `assign: true` assigns the ticket to you and `start: <status>` moves it when the task starts building; `pr: <status>` moves it when the PR opens. Jira goes through atlassian-multi's `atl.py` (a transition name or the status it leads to). GitHub assigns with `gh issue edit` and moves the issue on the Projects board `project: <owner>/<number>` by its Status field (gh needs the `project` scope: `gh auth refresh -s project`). `sync start|pr --text <request>` does it and always exits 0; what failed prints `WARN:`.
+
+```yaml
+task:
+  trackers:
+    - type: github
+      ticket_pattern: "(?:#|/issues/)(\\d+)"
+      sync: {assign: true, start: In progress, pr: In review, project: my-org/4}
+    - type: jira
+      ticket_pattern: "\\b(POD-\\d+)\\b"
+      sync: {assign: true, start: In Progress}
+```
 2.6 Docs. `docs:` says where the project's own documentation lives. It MAY appear at the top of a workspace file (shared docs, relative to the workspace root), in a repo entry and in a repo's `config.yaml` (relative to the repo root). The paths of every block add up; `index` and `rules` come from the last block that sets them.
   - 2.6.1 `paths`: each entry is a folder (every `.md`, `.mdx`, `.markdown`, `.rst`, `.txt`, `.adoc` file under it), a file, a glob (`docs/**/*.md`) or a regex over the root-relative path written `re:<regex>`.
   - 2.6.2 `exclude`: globs or `re:` regexes removed from the matches.

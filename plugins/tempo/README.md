@@ -146,6 +146,7 @@ agents/
 hooks/
   guard_push.py    refuses pushes of local tempo/ branches
   guard_spawn.py   in a TEMPO session, refuses detached starts (nohup, &, setsid, run_in_background) and kills by name (pkill, killall)
+  check_update.py  at session start, says when a newer TEMPO is on GitHub main and gives the update commands
   hooks.json       the hooks above, plus SessionEnd teardown
 skills/
   orchestrator/              the stage machine the commands run (gates, loops, worktrees, PR, workspaces)
@@ -364,6 +365,16 @@ The state, run and process scripts imported `fcntl` and called `killpg`, `/proc`
 - Every text file the scripts read or write is UTF-8, whatever the code page, and so is every script's and hook's stdin and stdout.
 - Paths the scripts print for an agent to paste back (run `ID:`, `LOG:`, `DIR:`, `STATE:`, the hook's suggested lines) use forward slashes, which Git Bash keeps.
 - Checked on a Windows machine with the handoff in PR #11, and the unit suite runs there (FIFO and `pgrep` tests skip). `tests/test_os.py` checks the lock, the liveness probe, the Git Bash lookup and the Windows table parser on any machine, and the job kill on Windows.
+
+### Update check (0.24.1)
+
+- A SessionStart hook, `hooks/check_update.py`, compares the installed version with `plugin.json` on GitHub main. When main is newer it shows `claude plugin marketplace update jorgelrj-skills && claude plugin update tempo@jorgelrj-skills`. It gives up silently after 2 seconds, offline, or on any error.
+
+### Several trackers and ticket sync (0.25.0)
+
+- `task.trackers` lists every tracker a project takes tickets from (GitHub issues and Jira in one repo, for example), each with its own `ticket_pattern`. The ticket the request names first picks the tracker and becomes the task ID. The older `task.tracker` and `task.ticket_pattern` still work as a list of one; `check` fails a file that sets both forms.
+- Opt-in `sync:` per tracker. `assign: true` and `start: <status>` assign the ticket to you and move it when the task starts building (after setup in a full run, or when a planned task is approved for build); `pr: <status>` moves it when the PR opens. Jira goes through atlassian-multi's `atl.py`; GitHub uses `gh issue edit` and the Status field of the Projects board in `project: <owner>/<number>` (gh needs the `project` scope). A tracker that refuses prints a `WARN:` and the task goes on. Child and slice tasks never sync; their parent does. Config skill 2.5.2 and 2.5.3, orchestrator 1.6 and 1.10.
+- `tempo_config.py ticket` and `sync` do the work. `tests/test_config.py` covers the pick, the lint and the opt-out paths.
 
 ## How it runs inside Claude Code
 

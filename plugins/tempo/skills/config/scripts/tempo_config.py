@@ -39,6 +39,12 @@ Commands:
   repos                                  list workspace repos in dependency order
   docs    [--format list|json]           list the project's doc files (config docs:), index files first
   migrate FILE                           convert a legacy .tempo/config.md to YAML on stdout
+  ticket  --text REQUEST                 print the ticket the request names first and its tracker
+                                         (task.trackers, else task.tracker and task.ticket_pattern)
+  sync    start|pr --text REQUEST        assign the request's ticket and move it to the status that tracker's
+                                         sync: sets for the event (Jira via atlassian-multi's atl.py, GitHub
+                                         via gh and its Projects board). Prints ASSIGNED:/MOVED:/WARN:/SYNC: OFF
+                                         lines and exits 0 whatever the tracker answers
 Common option: --repo PATH (default: current directory).
 Exit codes: 0 ok, 1 invalid config or usage error, 2 missing dependency.
 """
@@ -182,6 +188,112 @@ def lint(data, path):
                          ("pr.title", (block.get("pr") or {}).get("title"))):
             if isinstance(tpl, str) and LOCAL_ID.search(tpl):
                 out.append(f"{path}: {loc + '.' if loc else ''}{key}: '{tpl}' holds a local task id; use {{ticket}}.")
+        task = block.get("task") or {}
+        if task.get("trackers") and ("tracker" in task or "ticket_pattern" in task):
+            out.append(f"{path}: {loc + '.' if loc else ''}task: trackers replaces tracker and ticket_pattern; remove those two.")
+        for i, tr in enumerate(task.get("trackers") or [], 1):
+            where = f"{path}: {loc + '.' if loc else ''}task.trackers[{i}]"
+            try:
+                re.compile(tr.get("ticket_pattern", ""))
+            except re.error as e:
+                out.append(f"{where}.ticket_pattern: not a regex ({e}).")
+            sync = tr.get("sync") or {}
+            if sync and tr.get("type") not in ("jira", "github"):
+                out.append(f"{where}.sync: TEMPO syncs jira and github tickets only, not {tr.get('type')}.")
+            if sync.get("project") and tr.get("type") != "github":
+                out.append(f"{where}.sync.project: a GitHub Projects board; only a github tracker has one.")
+    return out
+
+
+# ---------- trackers ----------
+
+def trackers(cfg):
+    """task.trackers, or the older single task.tracker and task.ticket_pattern as a list of one."""
+    t = cfg.get("task") or {}
+    return t.get("trackers") or [{"type": t.get("tracker", "none"), "ticket_pattern": t.get("ticket_pattern")}]
+
+
+def find_ticket(cfg, text):
+    """(key, tracker) for the ticket that appears first in text; a tie goes to the earlier tracker."""
+    best = None
+    for tr in trackers(cfg):
+        for m in re.finditer(tr.get("ticket_pattern") or r"(?!x)x", text):
+            key = m.group(1) if m.groups() else m.group(0)
+            if LOCAL_ID.fullmatch(key):
+                continue  # a local T-NNN id is never a ticket
+            if best is None or m.start() < best[0]:
+                best = (m.start(), key, tr)
+            break
+    return (best[1], best[2]) if best else (None, None)
+
+
+def _run(cmd, cwd):
+    r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=60)
+    if r.returncode:
+        lines = (r.stderr or r.stdout).strip().splitlines()
+        raise RuntimeError(lines[-1] if lines else f"exit {r.returncode}")
+    return r.stdout
+
+
+def atl_script():
+    """The newest installed atlassian-multi atl.py, or None."""
+    cache = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "plugins" / "cache"
+    hits = list(cache.glob("*/atlassian-multi/*/skills/atlassian-multi/scripts/atl.py"))
+    return max(hits, key=lambda p: p.stat().st_mtime) if hits else None
+
+
+def github_move(cwd, number, project, status):
+    owner, num = project.rsplit("/", 1)
+    url = _run(["gh", "issue", "view", number, "--json", "url", "-q", ".url"], cwd).strip()
+    # item-add returns the issue's existing item when it is already on the board
+    item = json.loads(_run(["gh", "project", "item-add", num, "--owner", owner, "--url", url, "--format", "json"], cwd))["id"]
+    pid = json.loads(_run(["gh", "project", "view", num, "--owner", owner, "--format", "json"], cwd))["id"]
+    fields = json.loads(_run(["gh", "project", "field-list", num, "--owner", owner, "--format", "json", "--limit", "100"], cwd))["fields"]
+    field = next((f for f in fields if f.get("name") == "Status" and f.get("options")), None)
+    if not field:
+        raise RuntimeError(f"project {project} has no Status field")
+    opt = next((o for o in field["options"] if o["name"].lower() == status.lower()), None)
+    if not opt:
+        raise RuntimeError(f"no status '{status}' on {project}; it has: " + ", ".join(o["name"] for o in field["options"]))
+    _run(["gh", "project", "item-edit", "--id", item, "--project-id", pid, "--field-id", field["id"],
+          "--single-select-option-id", opt["id"]], cwd)
+
+
+def sync_ticket(cfg, cwd, event, text):
+    """Print what was done. Never raises: a tracker that refuses never stops a task."""
+    key, tr = find_ticket(cfg, text)
+    if not key:
+        return ["SYNC: OFF (no ticket in the request)"]
+    sync = tr.get("sync") or {}
+    status = sync.get(event)
+    if not sync or not (status or (event == "start" and sync.get("assign"))):
+        return [f"SYNC: OFF ({tr['type']} {key}: nothing set for {event})"]
+    out = []
+    if tr["type"] == "jira":
+        atl = atl_script()
+        if not atl:
+            return [f"WARN: {key} not synced: atlassian-multi is not installed (claude plugin install atlassian-multi@jorgelrj-skills)"]
+        base = [sys.executable, str(atl), "jira"]
+        assign = lambda: _run(base + ["assign", key, "me"], cwd)
+        move = lambda: _run(base + ["move", key, status], cwd)
+    else:
+        assign = lambda: _run(["gh", "issue", "edit", key, "--add-assignee", "@me"], cwd)
+        project = sync.get("project")
+        move = lambda: github_move(cwd, key, project, status) if project else None
+    if event == "start" and sync.get("assign"):
+        try:
+            assign(); out.append(f"ASSIGNED: {key} to you")
+        except Exception as e:
+            out.append(f"WARN: assigning {key} failed: {e}")
+    if status:
+        if tr["type"] == "github" and not sync.get("project"):
+            out.append(f"WARN: {key} not moved: sync.project names no GitHub Projects board")
+        else:
+            try:
+                move(); out.append(f"MOVED: {key} -> {status}")
+            except Exception as e:
+                hint = " (gh needs the project scope: gh auth refresh -s project)" if "scope" in str(e) else ""
+                out.append(f"WARN: moving {key} to {status} failed: {e}{hint}")
     return out
 
 
@@ -708,6 +820,8 @@ def main(argv=None):
     add("repos")
     dc = add("docs"); dc.add_argument("--format", choices=["list", "json"], default="list")
     g = add("migrate"); g.add_argument("file")
+    tk = add("ticket"); tk.add_argument("--text", required=True)
+    sy = add("sync"); sy.add_argument("event", choices=["start", "pr"]); sy.add_argument("--text", required=True)
     a = p.parse_args(argv)
 
     try:
@@ -882,6 +996,13 @@ def main(argv=None):
             else:
                 print("\n".join(str(f) for f in files))
             return 0
+
+        if a.cmd == "ticket":
+            key, tr = find_ticket(cfg, a.text)
+            print(f"TICKET: {key}\nTRACKER: {tr['type']}" if key else "TICKET: NONE"); return 0
+
+        if a.cmd == "sync":
+            print("\n".join(sync_ticket(cfg, info.get("repo") or a.repo, a.event, a.text))); return 0
 
         if a.cmd == "repos":
             if not info.get("workspace"):

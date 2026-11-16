@@ -290,6 +290,34 @@
           "type": "string",
           "description": "Regex for ticket keys, for example [A-Z]+-\\d+. With a capture group, the group is the key: (?:#|/issues/)(\\d+) for GitHub issues."
         },
+        "trackers": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Every tracker this project takes tickets from. The ticket that appears first in the request picks its tracker and becomes the task ID. Replaces tracker and ticket_pattern.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "ticket_pattern"],
+            "properties": {
+              "type": {"enum": ["jira", "github", "linear", "none"]},
+              "ticket_pattern": {
+                "type": "string",
+                "description": "Regex for this tracker's keys. With a capture group, the group is the key: (?:#|/issues/)(\\d+) for GitHub issues."
+              },
+              "sync": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "Opt-in: TEMPO assigns and moves the ticket. Absent: TEMPO never writes to it.",
+                "properties": {
+                  "assign": {"type": "boolean", "description": "Assign the ticket to you when the task starts building."},
+                  "start": {"type": "string", "description": "Status (Jira: transition or target status name) when the task starts building."},
+                  "pr": {"type": "string", "description": "Status when the task's PR opens."},
+                  "project": {"type": "string", "pattern": "^[^/\\s]+/[0-9]+$", "description": "GitHub only: owner/number of the Projects board whose Status field moves, e.g. my-org/4."}
+                }
+              }
+            }
+          }
+        },
         "tracker": {
           "enum": [
             "jira",

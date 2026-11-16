@@ -71,4 +71,12 @@ task:
   id: ticket                    # ticket | sequence
   ticket_pattern: "[A-Z][A-Z0-9]+-\\d+"
   tracker: none                 # jira | github | linear | none
+  # Several trackers, each with an opt-in sync (replaces tracker and ticket_pattern):
+  # trackers:
+  #   - type: github
+  #     ticket_pattern: "(?:#|/issues/)(\\d+)"
+  #     sync: {assign: true, start: In progress, pr: In review, project: my-org/4}
+  #   - type: jira
+  #     ticket_pattern: "\\b(ABC-\\d+)\\b"
+  #     sync: {assign: true, start: In Progress}
   # autopilot: true             # accept TEMPO's own recommendations; stop only where orchestrator §4.5 says

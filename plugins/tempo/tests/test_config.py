@@ -1,4 +1,4 @@
-"""Tests for tempo_config.py: a config written for 0.21.0 still passes, and gates.full_bars: verify.
+"""Tests for tempo_config.py: a config written for 0.21.0 still passes, gates.full_bars: verify, and task.trackers.
 
 Run: python3 -m unittest discover -s <plugin>/tests -v
 The script needs PyYAML and jsonschema, so it runs the way the plugin runs it, with `uv run`.
@@ -57,7 +57,7 @@ class Config(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.repo = self.tmp / "repo"
         self.env = {**os.environ, "TEMPO_CACHE": str(self.tmp / "cache"), "TMPDIR": str(self.tmp),
-                    "TEMPO_LOCK_DIR": str(self.tmp / "locks")}  # HOME stays: uv keeps its packages there
+                    "TEMPO_LOCK_DIR": str(self.tmp / "locks"), "CLAUDE_CONFIG_DIR": str(self.tmp / "claude")}  # HOME stays: uv keeps its packages there
         for f in ("app/pubspec.yaml", "app/lib/foo.dart", "app/test/foo_test.dart", ".tempo/config.yaml"):
             (self.repo / f).parent.mkdir(parents=True, exist_ok=True)
             (self.repo / f).write_text("")
@@ -106,6 +106,33 @@ class Config(unittest.TestCase):
         self.assertEqual(self.cfg("targets", "--critical", "--scoped-only"),
                          "web\t# DEFERRED whole suite\tadvisory\ne2e\t# DEFERRED whole suite\n")
         self.assertEqual(self.cfg("targets", "--paths", "app/lib/foo.dart", "--scoped-only"), "")  # both run: critical
+
+    def test_trackers_pick_the_ticket_named_first_and_sync_is_opt_in(self):
+        self.assertEqual(self.cfg("ticket", "--text", "Fix #215 for POD-3"), "TICKET: 215\nTRACKER: github\n")  # 0.21.0 form
+        self.assertEqual(self.cfg("ticket", "--text", "T-004 again"), "TICKET: NONE\n")
+        self.write(OLD.split("task:")[0] + TRACKERS)
+        self.assertEqual(self.cfg("check"), f"PASS: {CONFIG / 'defaults.yaml'}, {self.repo / '.tempo' / 'config.yaml'}\n")
+        self.assertEqual(self.cfg("ticket", "--text", "POD-3: see #215"), "TICKET: POD-3\nTRACKER: jira\n")
+        self.assertEqual(self.cfg("ticket", "--text", "#215, from POD-3"), "TICKET: 215\nTRACKER: github\n")
+        self.assertEqual(self.cfg("sync", "pr", "--text", "POD-3"), "SYNC: OFF (jira POD-3: nothing set for pr)\n")
+        self.assertEqual(self.cfg("sync", "start", "--text", "nothing here"), "SYNC: OFF (no ticket in the request)\n")
+        self.assertIn("atlassian-multi is not installed", self.cfg("sync", "start", "--text", "POD-3"))  # CLAUDE_CONFIG_DIR is empty
+        self.assertEqual(self.cfg("sync", "pr", "--text", "#215"),
+                         "WARN: 215 not moved: sync.project names no GitHub Projects board\n")
+        self.write(OLD + TRACKERS.replace("task:\n", ""))
+        self.assertIn("trackers replaces tracker and ticket_pattern", self.cfg("check", code=1))
+
+
+TRACKERS = """\
+task:
+  trackers:
+    - type: jira
+      ticket_pattern: "\\\\b(POD-\\\\d+)\\\\b"
+      sync: {assign: true, start: In Progress}
+    - type: github
+      ticket_pattern: "(?:#|/issues/)(\\\\d+)"
+      sync: {pr: In review}
+"""
 
 
 if __name__ == "__main__":
