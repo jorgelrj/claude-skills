@@ -154,7 +154,7 @@ class StateEvents(Base):
         state("child", "api", "--folder", self.tmp / "child")
         state("decide", "SCOPE", "--question", "q", "--choice", "c", "--why", "w")
         state("wait", "esc-1.md")
-        self.assertEqual(state("wait", "--clear"), f"STATE: {d}/state.md  STAGE: TRIAGE  STATUS: RUNNING\n")
+        self.assertEqual(state("wait", "--clear"), f"STATE: {d.as_posix()}/state.md  STAGE: TRIAGE  STATUS: RUNNING\n")
         state("adopt")
         ev = [json.loads(x) for x in (d / "events.jsonl").read_text().splitlines()][6:]
         for e in ev:
@@ -296,6 +296,7 @@ class Api(Base):
             self.assertNotIn("hunter2", body)
         self.assertEqual(self.get(f"/api/file?tag={t['tag']}&path=qa/procs.log")[0], 200)
 
+    @unittest.skipIf(sys.platform == "win32", "no FIFOs on Windows")
     def test_a_fifo_or_an_outside_symlink_never_stalls_or_leaks(self):
         d = make_task(self.root / ".tempo" / "T-001")
         os.mkfifo(d / "report.md")  # read_text on a FIFO blocks forever
@@ -341,9 +342,9 @@ class Api(Base):
 
     def test_file_is_confined_to_the_task_folder(self):
         d = make_task(self.root / ".tempo" / "T-001")
-        (d / "spec.md").write_text("# Spec ✓\n")
+        (d / "spec.md").write_bytes("# Spec ✓\n".encode())  # bytes: no CRLF on Windows
         (d / "qa").mkdir()
-        (d / "qa" / "progress.md").write_text("ok\n")
+        (d / "qa" / "progress.md").write_bytes(b"ok\n")
         (d / "procs.json").write_text('[{"command": "hunter2"}]')
         (d / "secret.env").write_text("hunter2")
         outside = self.tmp / "outside.md"
@@ -414,8 +415,10 @@ class Page(unittest.TestCase):
         probe = js[:js.index("\n(function", cut)] if "\n(function" in js[cut:] else js
         hostile = ["http://a/[d](http://b/onmouseover=x//)", "http://a/`c`", "[x](javascript:alert(1))",
                    "<img src=x onerror=alert(1)>"]
-        out = subprocess.run(["node", "-e", probe + ";\nconsole.log(JSON.stringify(" + json.dumps(hostile) + ".map(md)))"],
-                             capture_output=True, text=True)
+        f = Path(tempfile.mkdtemp()) / "probe.js"  # a file, not -e: Windows caps a command line at 32K
+        self.addCleanup(shutil.rmtree, f.parent)
+        f.write_text(probe + ";\nconsole.log(JSON.stringify(" + json.dumps(hostile) + ".map(md)))", encoding="utf-8")
+        out = subprocess.run(["node", str(f)], capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(out.returncode, 0, out.stderr[-600:])
         for html in json.loads(out.stdout):
             self.assertNotRegex(html, r'<a href="[^"]*<')

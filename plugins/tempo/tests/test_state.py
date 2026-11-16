@@ -130,7 +130,7 @@ class Counters(Base):
         out = self.state("log", "QA", "qa-r1.md", "FAIL")
         self.assertEqual((self.json()["counters"]["qa"], out.count("\n")), (1, 1), out)
         out = self.state("log", "QA", "qa-r2.md", "FAIL")  # a FAIL at the limit: said, and still exit 0 (3.11)
-        self.assertEqual(out.splitlines(), [f"STATE: {self.d}/state.md  STAGE: QA  STATUS: RUNNING",
+        self.assertEqual(out.splitlines(), [f"STATE: {self.d.as_posix()}/state.md  STAGE: QA  STATUS: RUNNING",
                                             "LIMIT: qa rounds 2 of 2; raise LOOP-LIMIT"])
         out = self.state("log", "QA", ".tempo/T-001/qa-r3.md", "FAIL")
         self.assertEqual(out.splitlines()[1], "LIMIT: qa rounds 3 of 2; raise LOOP-LIMIT")
