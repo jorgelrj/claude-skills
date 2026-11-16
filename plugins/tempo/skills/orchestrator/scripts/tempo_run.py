@@ -46,11 +46,9 @@ Exit: the command's exit code (128 + n when signal n ended it); 75 while it stil
 2 on a usage error.
 """
 import argparse
-import fcntl
 import json
 import os
 import re
-import signal
 import subprocess
 import sys
 import tempfile
@@ -58,6 +56,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import tempo_os  # noqa: E402
 import tempo_procs  # noqa: E402
 
 LOCK_DIR = Path(os.environ.get("TEMPO_LOCK_DIR") or Path.home() / ".cache" / "tempo" / "locks")
@@ -120,7 +119,7 @@ def run_end(run, opts, code, seconds, waited=0.0, killed=False, leftovers=0):
         return
     try:
         load = round(os.getloadavg()[0], 2)
-    except OSError:
+    except (OSError, AttributeError):  # Windows has no load average
         load = None
     tempo_procs.event(opts["task"], ev="run-end", id=run.name, exit=code, seconds=round(seconds), waited=round(waited),
                       load1=load, killed=killed, leftovers=leftovers)
@@ -137,9 +136,9 @@ def take_slot(slots, label):
     start, holder = time.monotonic(), None
     while True:
         for i in range(slots):
-            f = open(LOCK_DIR / f"heavy-{i}.lock", "a+")
+            f = open(LOCK_DIR / f"heavy-{i}.lock", "a+", encoding="utf-8")
             try:
-                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                tempo_os.lock(f, block=False)
             except OSError:
                 if holder is None:
                     f.seek(0)
@@ -174,26 +173,25 @@ def default_slots():
 
 def worker(run, opts, cmd):
     """Runs in its own session: takes the slot, runs the command, writes result.txt, then exit."""
-    (run / "state").write_text("waiting for a slot" if opts["heavy"] else "running")
+    (run / "state").write_text("waiting for a slot" if opts["heavy"] else "running", encoding="utf-8")
     lock, waited, holder = (None, 0.0, None)
     if opts["heavy"]:
         lock, waited, holder = take_slot(max(1, opts["slots"]), opts["label"])
-    (run / "state").write_text("running")
+    (run / "state").write_text("running", encoding="utf-8")
     start = time.monotonic()
     log, code = Path(opts["log"]), 0
     try:
         with open(log, "w", encoding="utf-8") as out:
-            args = (["bash", "-c", cmd[0]] if len(cmd) == 1 else cmd)
-            proc = subprocess.Popen(args, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                                    start_new_session=True, cwd=opts["cwd"])
+            args = (tempo_os.shell(cmd[0]) if len(cmd) == 1 else cmd)
+            proc = tempo_os.spawn(args, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, cwd=opts["cwd"])
             try:
                 code = proc.wait(timeout=opts["timeout"])
             except subprocess.TimeoutExpired:
-                os.killpg(proc.pid, signal.SIGTERM)
+                tempo_os.kill(proc.pid, group=True)
                 try:
                     proc.wait(timeout=20)
                 except subprocess.TimeoutExpired:
-                    os.killpg(proc.pid, signal.SIGKILL); proc.wait()
+                    tempo_os.kill(proc.pid, force=True, group=True); proc.wait()
                 out.write(f"\ntempo_run: killed after {opts['timeout']} s\n")
                 code = 124
     finally:
@@ -206,7 +204,7 @@ def worker(run, opts, cmd):
     stopped, kept = reap_leftovers(run.name, locals().get("proc"))
 
     fails, total, tail = summary(log, opts["tail"])
-    rows = [f"RUN: {opts['label']}  EXIT: {code}  TIME: {clock(took)}  WAITED: {clock(waited)}  LOG: {log}"]
+    rows = [f"RUN: {opts['label']}  EXIT: {code}  TIME: {clock(took)}  WAITED: {clock(waited)}  LOG: {log.as_posix()}"]
     if killed:
         rows.insert(0, killed_line(code - 128))
     if waited >= 1 and holder:
@@ -224,9 +222,9 @@ def worker(run, opts, cmd):
     rows += tail
     tmp = run / "result.tmp"
     tmp.write_text("\n".join(rows) + "\n", encoding="utf-8")
-    (run / "code").write_text(str(code))
+    (run / "code").write_text(str(code), encoding="utf-8")
     run_end(run, opts, code, took, waited, killed, len(stopped))
-    tmp.rename(run / "result.txt")  # last: its presence means the run is over
+    tempo_os.replace(tmp, run / "result.txt")  # last: its presence means the run is over
 
 
 def reap_leftovers(run_id, proc):
@@ -236,7 +234,7 @@ def reap_leftovers(run_id, proc):
         mine = tempo_procs.protected(table)
         group = proc.pid if proc is not None else None
         hits = [p for p in table.values() if p["pid"] not in mine and
-                (tempo_procs.marks(p)["run"] == run_id or (group and p["pgid"] == group))]
+                (tempo_procs.marks(p)["run"] == run_id or (group and group in (p["pgid"], p["ppid"] if tempo_os.WINDOWS else None)))]
         kept = [p for p in hits if KEEP_DAEMONS.search(p["command"])]
         gone = [p for p in hits if p not in kept]
         tempo_procs.kill_all([p["pid"] for p in gone], grace=5)
@@ -250,7 +248,7 @@ def wait(run, max_seconds):
     run = Path(run)
     if not (run / "opts.json").exists():
         print(f"tempo_run: no run at {run}", file=sys.stderr); return 2
-    opts = json.loads((run / "opts.json").read_text())
+    opts = json.loads((run / "opts.json").read_text(encoding="utf-8"))
     end = time.monotonic() + max_seconds if max_seconds else None
     while not (run / "result.txt").exists():
         if end is not None and time.monotonic() >= end:
@@ -258,17 +256,17 @@ def wait(run, max_seconds):
             if not alive(opts.get("pid")) and not (run / "result.txt").exists() and not (run / "stopped").exists():
                 print(f"tempo_run: the worker for {opts['label']} died; see {opts['log']}", file=sys.stderr)
                 stopped, _ = reap_leftovers(run.name, None)  # the command may outlive its worker, and the caller runs it again
-                (run / "code").write_text("1")
+                (run / "code").write_text("1", encoding="utf-8")
                 run_end(run, opts, 1, time.time() - opts["started"], killed=True, leftovers=len(stopped))
                 # written down, so the next wait prints the same and the event is logged once
-                (run / "result.txt").write_text(f"{killed_line('unknown')}\nRUN: {opts['label']}  EXIT: 1  WORKER DIED  LOG: {opts['log']}\n")
+                (run / "result.txt").write_text(f"{killed_line('unknown')}\nRUN: {opts['label']}  EXIT: 1  WORKER DIED  LOG: {opts['log']}\n", encoding="utf-8")
                 continue
-            state = (run / "state").read_text() if (run / "state").exists() else "starting"
-            print(f"RUNNING: {opts['label']}  ID: {run}  ELAPSED: {clock(time.time() - opts['started'])}  STATE: {state}")
+            state = (run / "state").read_text(encoding="utf-8") if (run / "state").exists() else "starting"
+            print(f"RUNNING: {opts['label']}  ID: {Path(run).as_posix()}  ELAPSED: {clock(time.time() - opts['started'])}  STATE: {state}")
             return 75
         time.sleep(1)
     print((run / "result.txt").read_text(encoding="utf-8"), end="")
-    return int((run / "code").read_text())
+    return int((run / "code").read_text(encoding="utf-8"))
 
 
 def stop(run):
@@ -276,7 +274,7 @@ def stop(run):
     run = Path(run)
     if not (run / "opts.json").exists():
         print(f"tempo_run: no run at {run}", file=sys.stderr); return 2
-    opts = json.loads((run / "opts.json").read_text())
+    opts = json.loads((run / "opts.json").read_text(encoding="utf-8"))
     if (run / "result.txt").exists():
         print(f"ENDED: {opts['label']} had already ended"); return 0
     (run / "stopped").touch()  # a worker that sees its command die first must not report an outside kill
@@ -291,19 +289,15 @@ def stop(run):
             (p["pid"] in worker or p["pgid"] in groups or tempo_procs.marks(p)["run"] == run.name)]
     left = tempo_procs.kill_all(pids, grace=5)
     if not (run / "result.txt").exists():  # the worker died before it wrote a summary
-        (run / "code").write_text("130")
-        (run / "result.txt").write_text(f"RUN: {opts['label']}  EXIT: 130  STOPPED by tempo_run.py stop  LOG: {opts['log']}\n")
+        (run / "code").write_text("130", encoding="utf-8")
+        (run / "result.txt").write_text(f"RUN: {opts['label']}  EXIT: 130  STOPPED by tempo_run.py stop  LOG: {opts['log']}\n", encoding="utf-8")
         run_end(run, opts, 130, time.time() - opts["started"])
     print(f"STOPPED: {opts['label']}  PROCESSES: {len(pids) - len(left)}" + (f"  STILL ALIVE: {left}" if left else ""))
     return 1 if left else 0
 
 
 def alive(pid):
-    try:
-        os.kill(int(pid), 0)
-        return True
-    except (OSError, TypeError, ValueError):
-        return False
+    return tempo_os.alive(pid)
 
 
 def main(argv=None):
@@ -313,7 +307,7 @@ def main(argv=None):
         task, argv = argv[1], argv[2:]
     if argv[:1] == ["--worker"]:
         run = Path(argv[1])
-        opts = json.loads((run / "opts.json").read_text())
+        opts = json.loads((run / "opts.json").read_text(encoding="utf-8"))
         worker(run, opts, opts["cmd"])
         return 0
     if argv[:1] == ["wait"]:
@@ -353,20 +347,20 @@ def main(argv=None):
     log_dir.mkdir(parents=True, exist_ok=True)
     slug = re.sub(r"[^A-Za-z0-9]+", "-", label).strip("-")[:40] or "run"
     log = log_dir.resolve() / f"{time.strftime('%H%M%S')}-{slug}.log"
-    opts = {"label": label, "log": str(log), "heavy": heavy, "slots": a.slots, "tail": a.tail,
+    opts = {"label": label, "log": log.as_posix(), "heavy": heavy, "slots": a.slots, "tail": a.tail,
             "timeout": a.timeout, "cmd": cmd, "cwd": os.getcwd(), "started": time.time(),
             "task": os.path.abspath(task) if task else None}
-    (run / "opts.json").write_text(json.dumps(opts))
+    (run / "opts.json").write_text(json.dumps(opts), encoding="utf-8")
     owner = tempo_procs.find_owner()
     if task:
         tempo_procs.register(task, owner)
         tempo_procs.event(task, ev="run", id=run.name, dir=str(run), label=label, heavy=heavy)
     env = tempo_procs.task_env(task, owner, run=run.name)
-    w = subprocess.Popen([sys.executable, os.path.abspath(__file__), "--worker", str(run)],
-                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, env=env,
-                         stderr=open(run / "worker.err", "w"), start_new_session=True)
+    w = tempo_os.spawn([sys.executable, os.path.abspath(__file__), "--worker", str(run)],
+                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, env=env,
+                       stderr=open(run / "worker.err", "w", encoding="utf-8"))
     opts["pid"] = w.pid
-    (run / "opts.json").write_text(json.dumps(opts))
+    (run / "opts.json").write_text(json.dumps(opts), encoding="utf-8")
     return wait(run, a.max)
 
 

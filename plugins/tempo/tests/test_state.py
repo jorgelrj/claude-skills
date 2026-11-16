@@ -3,7 +3,6 @@
 Run: python3 -m unittest discover -s <plugin>/tests -v
 Everything happens in temp folders, with TEMPO_CACHE pointed at one.
 """
-import fcntl
 import json
 import os
 import shutil
@@ -15,6 +14,8 @@ import unittest
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "skills" / "orchestrator" / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+import tempo_os  # noqa: E402
 
 # A state.json as 0.21.0 left it: a finished M feature on autopilot, with the shape of a real one
 # (same keys, entries and counters); the title, links, paths and decision texts are stand-ins.
@@ -74,7 +75,7 @@ class Lock(Base):
     def test_two_concurrent_wo_updates_both_persist(self):
         self.init()
         with open(self.d / ".state.lock", "w") as held:
-            fcntl.flock(held, fcntl.LOCK_EX)
+            tempo_os.lock(held)
             procs = [subprocess.Popen(self.cmd("wo", wo, "--status", "BUILDING"), env=self.env, stdout=subprocess.DEVNULL)
                      for wo in ("WO-01", "WO-02")]
             self.addCleanup(lambda: [p.kill() for p in procs if p.poll() is None])
@@ -104,7 +105,7 @@ class Lock(Base):
             time.sleep(0.1)
         time.sleep(0.5)
         with open(self.d / ".state.lock", "w") as f:
-            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)  # raises when the command still holds it
+            tempo_os.lock(f, block=False)  # raises when the command still holds it
         self.assertIsNone(p.poll())  # the stop command is still running
         self.assertEqual(p.wait(30), 0)
 

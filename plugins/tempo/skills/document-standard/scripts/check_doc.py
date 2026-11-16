@@ -12,6 +12,11 @@ import os
 import re
 import sys
 
+if sys.platform == "win32":  # the console code page cannot carry every character a task or a hook holds
+    for _s in (sys.stdin, sys.stdout, sys.stderr):
+        if hasattr(_s, "reconfigure"):
+            _s.reconfigure(encoding="utf-8", errors="replace")
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_DIR = os.path.normpath(os.path.join(HERE, "..", "..", "artifact-templates", "templates"))
 

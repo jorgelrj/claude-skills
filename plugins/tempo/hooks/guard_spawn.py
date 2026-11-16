@@ -24,8 +24,13 @@ import os
 import re
 import sys
 
+if sys.platform == "win32":  # the console code page cannot carry every character a task or a hook holds
+    for _s in (sys.stdin, sys.stdout, sys.stderr):
+        if hasattr(_s, "reconfigure"):
+            _s.reconfigure(encoding="utf-8", errors="replace")
+
 HERE = os.path.dirname(os.path.abspath(__file__))
-SCRIPTS = os.path.join(os.path.dirname(HERE), "skills", "orchestrator", "scripts")
+SCRIPTS = os.path.join(os.path.dirname(HERE), "skills", "orchestrator", "scripts").replace(os.sep, "/")  # pasted into bash
 WORDS = re.compile(r"(^|[;&|(\s])(nohup|setsid|disown)(\s|;|$)")
 QUOTED = re.compile(r"'[^']*'|\"(?:\\.|[^\"\\])*\"")
 AMP = re.compile(r"(?<![&>|<])&(?![&>])")
@@ -60,13 +65,13 @@ def main():
         f = tempo_procs.SESSIONS / f"{owner}.json"
         if not owner or not f.exists():
             return 0
-        open_tasks = [d for d in json.loads(f.read_text())
+        open_tasks = [d for d in json.loads(f.read_text(encoding="utf-8"))
                       if tempo_procs.task_status(d)[0] not in tempo_procs.ENDED | {"GONE", "UNKNOWN"}]
         if not open_tasks:
             return 0
     except Exception:
         return 0
-    procs = os.path.join(SCRIPTS, "tempo_procs.py")
+    procs = f"{SCRIPTS}/tempo_procs.py"
     task = open_tasks[-1] if len(open_tasks) == 1 else "<task folder: " + " | ".join(open_tasks) + ">"
     if kills:
         print(json.dumps({"hookSpecificOutput": {
@@ -75,7 +80,7 @@ def main():
             "permissionDecisionReason": (
                 "TEMPO guard: pkill and killall stop processes by name anywhere on this machine, and other TEMPO "
                 "tasks share it (a pkill of flutter_tester in one task was followed by three other tasks' commands dying). "
-                f"To cancel a test or build run you started: python3 {os.path.join(SCRIPTS, 'tempo_run.py')} stop <ID> "
+                f"To cancel a test or build run you started: python3 {SCRIPTS}/tempo_run.py stop <ID> "
                 "(the ID its RUNNING line printed). To stop a service you started: "
                 f"python3 {procs} stop --task {task} --label <short name>. To stop one process you started yourself, "
                 "kill its PID. Only if Jorge asked for this kill by name, put TEMPO_ALLOW_KILL=1 in the command. "

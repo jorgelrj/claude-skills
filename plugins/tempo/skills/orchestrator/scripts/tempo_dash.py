@@ -29,7 +29,6 @@ import glob
 import json
 import os
 import re
-import signal
 import socket
 import stat
 import subprocess
@@ -40,6 +39,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import tempo_os  # noqa: E402
 import tempo_procs  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
@@ -59,7 +59,7 @@ def text(p, root=None, tail=False, cap=512 * 1024):
     p = Path(p).resolve()
     if root is not None and not p.is_relative_to(Path(root).resolve()):
         raise OSError(f"{p}: outside {root}")
-    fd = os.open(p, os.O_RDONLY | os.O_NONBLOCK)  # O_NONBLOCK: opening a FIFO returns at once
+    fd = os.open(p, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))  # O_NONBLOCK: opening a FIFO returns at once (Windows has none)
     with open(fd, "rb") as f:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
@@ -132,7 +132,7 @@ def owned():
         table, live, known = tempo_procs.snapshot(), set(), set()
         for f in (tempo_procs.SESSIONS.glob("*.json") if tempo_procs.SESSIONS.exists() else []):
             try:
-                dirs = {str(x) for x in json.loads(f.read_text())}
+                dirs = {str(x) for x in json.loads(f.read_text(encoding="utf-8"))}
             except (OSError, ValueError, TypeError):
                 continue
             known |= dirs
@@ -335,9 +335,10 @@ def answers(port):
 def recorded():
     """dash.json, when its pid still is a dashboard server (the pid may have been reused); else None."""
     try:
-        rec = json.loads(RECORD.read_text())
-        ps = subprocess.run(["ps", "-o", "command=", "-p", str(int(rec["pid"]))], capture_output=True, text=True)
-        return rec if "tempo_dash.py" in ps.stdout and int(rec["port"]) else None
+        rec = json.loads(RECORD.read_text(encoding="utf-8"))
+        cmd = (tempo_procs.snapshot().get(int(rec["pid"])) or {}).get("command", "") if tempo_os.WINDOWS else \
+            subprocess.run(["ps", "-o", "command=", "-p", str(int(rec["pid"]))], capture_output=True, text=True).stdout
+        return rec if "tempo_dash.py" in cmd and int(rec["port"]) else None
     except (OSError, ValueError, KeyError, TypeError):
         return None
 
@@ -357,9 +358,8 @@ def start(port, roots, hosts=()):
     roots = [str(Path(r).resolve()) for r in roots]
     args = [sys.executable, os.path.abspath(__file__), "serve", "--port", str(port)] + (["--root"] + roots if roots else []) + \
         [x for h in hosts for x in ("--allow-host", h)]
-    with open(RECORD.parent / "dash.log", "a") as log:
-        p = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                             start_new_session=True, env=env, cwd=RECORD.parent)
+    with open(RECORD.parent / "dash.log", "a", encoding="utf-8") as log:
+        p = tempo_os.spawn(args, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, env=env, cwd=RECORD.parent)
     end = time.monotonic() + 10
     while time.monotonic() < end:
         rec = recorded()  # written by the server that got the port: ours, or a start that ran at the same moment
@@ -392,7 +392,7 @@ def main(argv=None):
             sys.exit(f"tempo_dash: cannot listen on 127.0.0.1:{a.port}: {e}")
         if a.port:  # port 0 is a test or a one-off look: it never replaces the recorded server
             RECORD.parent.mkdir(parents=True, exist_ok=True)
-            RECORD.write_text(json.dumps({"pid": os.getpid(), "port": a.port, "roots": srv.roots}))
+            RECORD.write_text(json.dumps({"pid": os.getpid(), "port": a.port, "roots": srv.roots}), encoding="utf-8")
         print(url(srv.server_address[1]), flush=True)
         try:
             srv.serve_forever()
@@ -401,7 +401,7 @@ def main(argv=None):
         return 0
     rec = recorded()
     if a.cmd == "stop" and rec:
-        os.kill(rec["pid"], signal.SIGTERM)
+        tempo_os.kill(rec["pid"])
         RECORD.unlink(missing_ok=True)
         print("DASH: stopped")
     else:
