@@ -213,7 +213,7 @@ def results(d):
         except OSError:
             continue
         if m:
-            out[str(p.relative_to(d))] = m.group(1) or m.group(2)
+            out[p.relative_to(d).as_posix()] = m.group(1) or m.group(2)
     return out
 
 
@@ -223,7 +223,7 @@ def files(d):
         rel = Path(base).relative_to(d)
         top = not rel.parts  # os.walk gives the names on disk, so the top-level HIDDEN ones are skipped by name
         dirs[:] = [] if len(rel.parts) >= 2 else [x for x in dirs if x != "worktrees" and not (top and x.lower() in HIDDEN)]
-        out += [str(rel / n) for n in names if Path(n).suffix.lower() in SUFFIXES and not (top and n.lower() in HIDDEN)]
+        out += [(rel / n).as_posix() for n in names if Path(n).suffix.lower() in SUFFIXES and not (top and n.lower() in HIDDEN)]
     return sorted(out)[:300]
 
 
