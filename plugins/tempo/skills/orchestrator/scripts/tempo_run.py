@@ -198,6 +198,8 @@ def worker(run, opts, cmd):
         if lock:
             lock.seek(0); lock.truncate(); lock.close()
     took = time.monotonic() - start
+    if tempo_os.WINDOWS and code > 255 and not code & 0xFF:
+        code = -(code >> 8)  # Git Bash exits with signal n << 8 when a signal kills it
     if code < 0:
         code = 128 - code  # died from a signal: the code a shell reports
     killed = code in (137, 143) and not (run / "stopped").exists()
