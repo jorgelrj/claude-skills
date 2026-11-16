@@ -71,10 +71,18 @@ def alive(pid):
 def kill(pid, force=False, group=False):
     """SIGTERM (or SIGKILL with `force`) to `pid`, or to its process group with `group`. Never raises.
     Windows: taskkill /T /F, always the whole tree. It has no process groups, and a console program ignores
-    the polite taskkill, so the grace period would only be lost time."""
+    the polite taskkill, so the grace period would only be lost time. A process `spawn` started also has its job
+    killed: Git Bash's fork and exec leave children whose parent PID is gone, which taskkill /T misses."""
     try:
         if WINDOWS:
+            # Open the job first: its name dies with the process that holds it. Kill the tree before the job, while
+            # its parent links hold: an app-execution-alias program (a Store or install-manager python.exe) starts
+            # outside the job.
+            job = _job(int(pid))
             subprocess.run(["taskkill", "/PID", str(int(pid)), "/T", "/F"], capture_output=True, timeout=30)
+            if job:
+                _k32().TerminateJobObject(job, 1)
+                _k32().CloseHandle(job)
         else:
             (os.killpg if group else os.kill)(int(pid), signal.SIGKILL if force else signal.SIGTERM)
     except (OSError, ValueError, subprocess.TimeoutExpired):
@@ -85,11 +93,38 @@ def spawn(args, **kw):
     """Popen in its own session (POSIX) or process group, without a console (Windows), so it outlives the caller."""
     if not WINDOWS:
         return subprocess.Popen(args, start_new_session=True, **kw)
-    flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+    flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW | 0x4  # CREATE_SUSPENDED
     try:  # out of the caller's job object, which may kill everything in it when the Bash tool call ends
-        return subprocess.Popen(args, creationflags=flags | 0x01000000, **kw)  # CREATE_BREAKAWAY_FROM_JOB
+        proc = subprocess.Popen(args, creationflags=flags | 0x01000000, **kw)  # CREATE_BREAKAWAY_FROM_JOB
     except OSError:  # the job forbids breakaway
-        return subprocess.Popen(args, creationflags=flags, **kw)
+        proc = subprocess.Popen(args, creationflags=flags, **kw)
+    # Its own named job, joined before it runs: every descendant inherits it, so kill() finds them all.
+    # A job's name lives only while a handle to it is open, so the process holds a copy of the handle.
+    k32, child = _k32(), ctypes.c_void_p(int(proc._handle))
+    job = ctypes.c_void_p(k32.CreateJobObjectW(None, _job_name(proc.pid)))
+    if job.value:
+        k32.AssignProcessToJobObject(job, child)
+        k32.DuplicateHandle(ctypes.c_void_p(k32.GetCurrentProcess()), job, child,
+                            ctypes.byref(ctypes.c_void_p()), 0, False, 0x2)  # DUPLICATE_SAME_ACCESS
+        k32.CloseHandle(job)
+    ctypes.WinDLL("ntdll").NtResumeProcess(child)
+    return proc
+
+
+def _k32():
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateJobObjectW.restype = k32.OpenJobObjectW.restype = k32.GetCurrentProcess.restype = ctypes.c_void_p
+    return k32
+
+
+def _job_name(pid):
+    # shortcut: named by PID, so a reused PID reaches leftovers of the old job; key by start time if that bites
+    return f"Local\\tempo-{pid}"
+
+
+def _job(pid):
+    h = _k32().OpenJobObjectW(0x0008, False, _job_name(pid))  # JOB_OBJECT_TERMINATE
+    return ctypes.c_void_p(h) if h else None
 
 
 def shell(cmd):

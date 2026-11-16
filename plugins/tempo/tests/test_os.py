@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -65,7 +66,8 @@ class GitBash(unittest.TestCase):
             with mock.patch.object(tempo_os, "WINDOWS", True), mock.patch.dict(os.environ, {"CLAUDE_CODE_GIT_BASH_PATH": ""}), \
                     mock.patch.object(tempo_os.shutil, "which", wsl):
                 self.assertIsNone(tempo_os.git_bash())
-        self.assertEqual(tempo_os.shell("echo hi"), ["bash", "-c", "echo hi"])  # POSIX: as before
+        if not tempo_os.WINDOWS:
+            self.assertEqual(tempo_os.shell("echo hi"), ["bash", "-c", "echo hi"])  # POSIX: as before
 
 
 class WindowsTable(unittest.TestCase):
@@ -88,6 +90,27 @@ class WindowsTable(unittest.TestCase):
             "C:\\Users\\x\\.local\\bin\\claude.exe", "\"C:\\Program Files\\nodejs\\node.exe\" C:\\npm\\node_modules\\@anthropic-ai\\claude-code\\cli.js",
             "/usr/local/bin/claude --resume", "claude", "vim claude.md", "C:\\tools\\claudette.exe"])}
         self.assertEqual([tempo_procs.is_claude(i, table) for i in table], [True, True, True, True, False, False])
+
+
+@unittest.skipUnless(tempo_os.WINDOWS, "job objects are Windows only")
+class WindowsJob(unittest.TestCase):
+    def test_kill_reaches_a_grandchild_whose_parent_has_exited(self):
+        """Git Bash's fork and exec leave such orphans; taskkill /T cannot see them, the spawn's job can."""
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "pid"
+            mid = ("import subprocess, sys; p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+                   f"open({str(f)!r}, 'w').write(str(p.pid))")
+            top = f"import subprocess, sys, time; subprocess.run([sys.executable, '-c', {mid!r}]); time.sleep(60)"
+            a = tempo_os.spawn([sys.executable, "-c", top])
+            for _ in range(100):
+                if f.exists() and f.read_text():
+                    break
+                time.sleep(0.1)
+            orphan = int(f.read_text())
+            self.assertTrue(tempo_os.alive(orphan))
+            tempo_os.kill(a.pid)
+            time.sleep(0.5)
+            self.assertEqual((tempo_os.alive(a.pid), tempo_os.alive(orphan)), (False, False))
 
 
 if __name__ == "__main__":
