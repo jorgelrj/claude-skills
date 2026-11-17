@@ -17,12 +17,18 @@ Usage: tempo_state.py <command> <task-dir> [args]
             [--review-extensions N] [--autopilot]
   set       <dir> [--lane L] [--stage S] [--status S] [--next TEXT] [--mode M] [--title T]
             [--task-branch B] [--base-commit H] [--pr URL] [--review-limit N] [--review-extensions N]
-            [--autopilot on|off] [--critical on|off] [--pattern on|off]
+            [--autopilot on|off] [--critical on|off [--gate ANSWER]] [--pattern on|off]
                                                  (DONE clears the agents still listed in flight, and the next
                                                   action unless --next comes with it. --pr logs SHIP when the last
                                                   log entry is not SHIP. Stage DONE and status DONE, FAILED or
                                                   ABORTED tear the task down: every process it started stops, see
-                                                  tempo_procs.py)
+                                                  tempo_procs.py. --critical on past TRIAGE needs --gate with
+                                                  Jorge's answer, which the state keeps)
+  watch     <dir> --file F [--agent ID] [--idle S] [--poll S]
+                                                 (wait on a background agent: prints STALL when F, events.jsonl and
+                                                  every tempo_run run of the task were quiet --idle seconds (default
+                                                  900), GONE when F is deleted, DONE when `agent done` took ID off the
+                                                  in-flight list; then exits 0. Never stops anything)
   decide    <dir> KIND --question Q --choice C --why W [--from FILE] [--not-a-source WHY]
                                                  (record a decision autopilot accepted; writes decisions.md.
                                                   Refuses the stop kinds of orchestrator 4.5.1, and a question
@@ -54,6 +60,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -158,6 +165,7 @@ def render(s):
     ] + ([f"Pull request: {s['pr']}"] if s.get("pr") else []))
     section(2, "Stage", [f"Current: {s['stage']}", f"Status: {s['status']}"])
     section(3, "Stage log", [log_line(e) for e in s["log"]] +
+            [f"{g['at']} | {g['stage']} | GATE {g['gate']} | Jorge: {g['answer']}" for g in s.get("gates", [])] +
             ([f"{s['stage']} running since {s['stage_since']}"] if s.get("stage_since") and s["status"] == "RUNNING" else []))
     c = s["counters"]
     section(4, "Loop counters", [f"Review rounds: {c['review']} of {c['review_limit']}. Extensions: {c.get('review_extensions', 1)}",
@@ -253,6 +261,52 @@ def new_state(task, flow, title, base_branch, base_commit, task_branch=None, mod
             "autopilot": autopilot, "decisions": []}
 
 
+def activity(d, path):
+    """The newest mtime among the agent's output file, the task's events.jsonl and its runs; now while a run is live."""
+    times = [os.path.getmtime(path)]
+    ev = Path(d) / "events.jsonl"
+    if ev.is_file():
+        times.append(ev.stat().st_mtime)
+        for line in ev.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            if e.get("ev") != "run" or not e.get("dir"):
+                continue
+            run = Path(e["dir"])
+            try:
+                opts = json.loads((run / "opts.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue  # a run folder the OS cleaned up long ago
+            if not (run / "result.txt").exists() and tempo_os.alive(opts.get("pid")):
+                return time.time()  # a test run may print nothing for many minutes
+            if opts.get("log") and os.path.exists(opts["log"]):
+                times.append(os.path.getmtime(opts["log"]))
+    return max(times)
+
+
+def watch(d, path, idle, poll, agent=None):
+    start, seen = time.time(), False
+    while True:
+        if agent:  # done once `agent done` took the id it saw in flight off the list
+            try:
+                live = agent in json.loads((Path(d) / "state.json").read_text(encoding="utf-8")).get("agents", {})
+            except (OSError, ValueError):
+                live = True  # unreadable for a moment: not done
+            if seen and not live:
+                print(f"DONE: {path}"); return 0
+            seen = seen or live
+        try:
+            last = max(activity(d, path), start)
+        except FileNotFoundError:  # only the output file's getmtime raises it
+            print(f"GONE: {path}"); return 0
+        quiet = time.time() - last
+        if quiet >= idle:
+            print(f"STALL: {path} unchanged for {int(quiet)}s and no test run active"); return 0
+        time.sleep(min(poll, max(0.1, idle - quiet)))
+
+
 def past_limit(c, counter):
     """(exit code, line) when a loop counter is past its limit, else (0, None)."""
     lim = c.get(counter + "_limit")
@@ -316,6 +370,10 @@ def main(argv=None):
     s_.add_argument("--review-limit", type=int); s_.add_argument("--review-extensions", type=int)
     s_.add_argument("--autopilot", choices=["on", "off"])
     s_.add_argument("--critical", choices=["on", "off"]); s_.add_argument("--pattern", choices=["on", "off"])
+    s_.add_argument("--gate", help="Jorge's answer to the gate that turned critical on after TRIAGE")
+    wa = sp.add_parser("watch"); wa.add_argument("dir"); wa.add_argument("--file", required=True)
+    wa.add_argument("--idle", type=float, default=900); wa.add_argument("--poll", type=float, default=30)
+    wa.add_argument("--agent", help="the agent id `agent start` listed: DONE when `agent done` takes it off")
     dc = sp.add_parser("decide"); dc.add_argument("dir"); dc.add_argument("kind")
     for x in ("--question", "--choice", "--why"):
         dc.add_argument(x, required=True)
@@ -341,6 +399,8 @@ def main(argv=None):
             print(f"EXISTS: {(d / tid).as_posix()}  TASK: {tid}  (resume it, or pick another ID)"); return 3
         tempo_procs.register(d / tid, owner)
         print(f"TASK: {tid}  DIR: {(d / tid).as_posix()}"); return 0
+    if a.cmd == "watch":  # runs for many minutes: never registers, never holds the state lock
+        return watch(d, a.file, a.idle, a.poll, a.agent)
     tempo_procs.register(d, tempo_procs.find_owner())  # marks this session as a TEMPO session for the hooks
     closed = None  # agent ids this command took off the in-flight list
     note = None  # the limit line `log` prints after the STATE line
@@ -350,6 +410,13 @@ def main(argv=None):
     except OSError:
         lock = None  # no folder yet (init makes it, load reports it) or a read-only one
     # Released below before the teardown. Every early return ends the command right after its save and drops it too.
+
+    def left_triage(d):  # events.jsonl keeps every stage the task was in, which state.json does not
+        try:
+            lines = (d / "events.jsonl").read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return False
+        return any(not str(json.loads(x).get("state", "TRIAGE/")).startswith("TRIAGE/") for x in lines if x.strip())
 
     def emit(st):
         given = {k: v for k, v in vars(a).items() if k not in ("dir", "cmd") and v is not None and v is not False}
@@ -371,6 +438,11 @@ def main(argv=None):
 
     st = load(d)
     if a.cmd == "set":
+        past = st["stage"] != "TRIAGE" or any(e[-3] != "TRIAGE" for e in st["log"]) or left_triage(d)  # `--stage TRIAGE` again does not reopen it
+        if a.critical == "on" and not st.get("critical") and past:
+            if not a.gate:
+                sys.exit("critical after triage needs Jorge's gate: pass --gate '<his answer>'")
+            st.setdefault("gates", []).append({"at": now(), "stage": st["stage"], "gate": "critical on", "answer": a.gate})
         if a.pr and (not st["log"] or st["log"][-1][-3] != "SHIP"):  # only a FOLD logs SHIP (3.12): the PR is its record
             st["log"].append([st.get("stage_since") or st["started"], now(), "SHIP", "pr.md", "PASS"])
             st["stage_since"] = now()

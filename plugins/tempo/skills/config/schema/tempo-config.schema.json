@@ -210,6 +210,23 @@
         }
       }
     },
+    "tests": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Test files that need their own handling, as repo-relative paths. bars --paths prints them as ALWAYS: and SLOW: lines.",
+      "properties": {
+        "always": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Files the integrator runs at every NARROW integrate, from their own package, whatever packages the change touches (a guard test that must never be skipped)."
+        },
+        "slow": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Files too slow to run whole on every change. Builders and QA run them filtered to the groups a change touches; the integrate after the last wave runs each one the change touches or mirrors whole, once."
+        }
+      }
+    },
     "limits": {
       "type": "object",
       "additionalProperties": false,
@@ -374,6 +391,9 @@
         "gates": {
           "$ref": "#/$defs/gates"
         },
+        "tests": {
+          "$ref": "#/$defs/tests"
+        },
         "limits": {
           "$ref": "#/$defs/limits"
         },
@@ -451,6 +471,9 @@
         },
         "gates": {
           "$ref": "#/$defs/gates"
+        },
+        "tests": {
+          "$ref": "#/$defs/tests"
         },
         "limits": {
           "$ref": "#/$defs/limits"
@@ -639,8 +662,8 @@
           },
           "run": {
             "type": "string",
-            "enum": ["routine", "critical"],
-            "description": "routine: runs at every integrate, scoped. critical: runs only for critical changes and on /tempo:verify. Default: critical for an advisory target, routine otherwise."
+            "enum": ["routine", "final", "critical"],
+            "description": "routine: runs at every integrate, scoped. final: runs once, scoped, at the integrate after the last wave (targets --final). critical: runs only for critical changes and on /tempo:verify. Default: critical for an advisory target, routine otherwise."
           },
           "advisory": {
             "type": "boolean",

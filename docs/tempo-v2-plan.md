@@ -87,6 +87,8 @@ The plan starts from the minimal-diff design and has six small versions. 0.23.0:
   - `SKILL.md` 154 still allows `targets --full` inside a task for a change to the target's own setup, also under `verify`.
   - Not done: the two-minute hand test of whether hooks see Bash calls inside subagents.
 
+> **Note (2026-11-17).** The released 0.24.0 to 0.26.0 are not the versions planned below. 0.24.0 was native Windows, 0.25.0 several trackers, and 0.26.0 the faster test step from the pod1um audit (README "Faster test step"). The plan's items below are still unbuilt, and get new version numbers when they are built.
+
 ### 0.24.0: Models, fix severity, final read (planned)
 
 **Goal.** D2, D3 and the review half of D4: Sonnet for every stage agent from config, review fixes HIGH only, and one top-tier read of the final diff that is enforced before the push in this same version.

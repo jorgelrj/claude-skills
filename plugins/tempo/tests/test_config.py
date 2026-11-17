@@ -1,4 +1,5 @@
-"""Tests for tempo_config.py: a config written for 0.21.0 still passes, gates.full_bars: verify, and task.trackers.
+"""Tests for tempo_config.py: a config written for 0.21.0 still passes, gates.full_bars: verify, task.trackers,
+run: final targets, tests.always and tests.slow, dupes and the space WARN.
 
 Run: python3 -m unittest discover -s <plugin>/tests -v
 The script needs PyYAML and jsonschema, so it runs the way the plugin runs it, with `uv run`.
@@ -107,6 +108,13 @@ class Config(unittest.TestCase):
                          "web\t# DEFERRED whole suite\tadvisory\ne2e\t# DEFERRED whole suite\n")
         self.assertEqual(self.cfg("targets", "--paths", "app/lib/foo.dart", "--scoped-only"), "")  # both run: critical
 
+    def test_verify_gate_defers_whole_suites_unless_verify_asks(self):
+        self.write(OLD + "gates:\n  full_bars: verify\n")
+        out = self.cfg("targets", "--critical", "--full", "--paths", "app/lib/foo.dart")
+        self.assertNotIn("melos run", out)
+        self.assertIn("# DEFERRED whole suite", out)
+        self.assertIn("melos run", self.cfg("targets", "--critical", "--full", "--verify", "--paths", "app/lib/foo.dart"))
+
     def test_trackers_pick_the_ticket_named_first_and_sync_is_opt_in(self):
         self.assertEqual(self.cfg("ticket", "--text", "Fix #215 for POD-3"), "TICKET: 215\nTRACKER: github\n")  # 0.21.0 form
         self.assertEqual(self.cfg("ticket", "--text", "T-004 again"), "TICKET: NONE\n")
@@ -121,6 +129,60 @@ class Config(unittest.TestCase):
                          "WARN: 215 not moved: sync.project names no GitHub Projects board\n")
         self.write(OLD + TRACKERS.replace("task:\n", ""))
         self.assertIn("trackers replaces tracker and ticket_pattern", self.cfg("check", code=1))
+
+
+    def test_final_targets_print_with_final_critical_or_full_only(self):
+        self.write(OLD.replace("    run: critical\n", "    run: final\n"))  # e2e becomes final; web keeps the advisory default
+        e2e = "e2e\tcd app && melos run e2e\n"
+        self.assertEqual(self.cfg("targets", "--paths", "app/lib/foo.dart"), "")
+        self.assertEqual(self.cfg("targets", "--paths", "app/lib/foo.dart", "--final"), e2e)  # advisory stays critical-only
+        self.assertEqual(self.cfg("targets", "--paths", "app/lib/foo.dart", "--critical"), WEB + e2e)
+        self.assertEqual(self.cfg("targets", "--paths", "app/lib/foo.dart", "--full"),
+                         "web\tcd app && melos run test:web:full\tadvisory\n" + e2e)
+
+    def test_bars_print_always_and_the_slow_files_a_change_touches_or_mirrors(self):
+        for f in ("app/lib/bar.dart", "app/test/bar_test.dart"):
+            (self.repo / f).write_text("")
+        subprocess.run(["git", "-C", str(self.repo), "add", "app"], check=True)
+        self.write(OLD + "tests:\n  always: [app/test/guard_test.dart]\n  slow: [app/test/foo_test.dart]\n")
+        narrow = "BARS: NARROW  WHY: routine change\nALWAYS: app/test/guard_test.dart\n"
+        self.assertEqual(self.cfg("bars", "--paths", "app/test/foo_test.dart"), narrow + "SLOW: app/test/foo_test.dart\n")
+        self.assertEqual(self.cfg("bars", "--paths", "app/lib/foo.dart"), narrow + "SLOW: app/test/foo_test.dart\n")
+        self.assertEqual(self.cfg("bars", "--paths", "app/lib/bar.dart", "app/test/bar_test.dart"), narrow)
+        self.assertEqual(self.cfg("bars"), narrow)
+
+    def test_check_warns_when_the_repo_path_has_a_space(self):
+        self.assertNotIn("WARN", self.cfg("check"))
+        self.repo = self.repo.rename(self.tmp / "my repo")
+        self.assertIn("contains a space: melos splits it on Windows", self.cfg("check"))
+
+    @unittest.skipIf(os.name == "nt", "the gh stub is a shell script")
+    def test_dupes_lists_other_open_prs_and_remote_branches_for_the_ticket(self):
+        git = ["git", "-C", str(self.repo), "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+        subprocess.run(git + ["commit", "-qm", "x"], check=True)
+        self.assertIn("WARN: remote branches not checked", self.cfg("dupes", "--ticket", "PD-12", "--branch", "feat/PD-12"))
+        bare = self.tmp / "origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+        subprocess.run(git + ["remote", "add", "origin", str(bare)], check=True)
+        for b in ("feat/PD-12", "feat/PD-12-s2", "fix/pd-12-retry", "feat/PD-123", "chore/PD-12-x", "fix/PD-12-old"):
+            subprocess.run(git + ["push", "-q", "origin", f"HEAD:refs/heads/{b}"], check=True)
+        bin_ = self.tmp / "bin"
+        bin_.mkdir()
+        prs = ('[{"number":7,"headRefName":"chore/PD-12-x","url":"u7","title":"x"},'
+               '{"number":8,"headRefName":"feat/PD-12","url":"u8","title":"PD-12"},'
+               '{"number":9,"headRefName":"feat/PD-123","url":"u9","title":"PD-123"},'
+               '{"number":10,"headRefName":"docs/y","url":"u10","title":"Follow PD-12 up"},'
+               '{"number":5,"headRefName":"fix/PD-12-old","url":"u5","title":"PD-12","state":"MERGED"},'
+               '{"number":4,"headRefName":"feat/PD-12-v0","url":"u4","title":"PD-12","state":"CLOSED"}]')
+        (bin_ / "gh").write_text(f"#!/bin/sh\necho '{prs}'\n")
+        (bin_ / "gh").chmod(0o755)
+        self.env["PATH"] = f"{bin_}{os.pathsep}{self.env['PATH']}"
+        self.assertEqual(self.cfg("dupes", "--ticket", "PD-12", "--branch", "feat/PD-12", "--branch", "feat/PD-12-s2", code=3),
+                         "DUPE: pr chore/PD-12-x u7\nDUPE: pr docs/y u10\nDUPE: branch fix/pd-12-retry\n")
+        (bin_ / "gh").write_text("#!/bin/sh\nexit 1\n")
+        out = self.cfg("dupes", "--ticket", "PD-99", "--branch", "feat/PD-99")
+        self.assertEqual(out.splitlines()[0][:40], "WARN: open PRs not checked: gh did not a")
+        self.assertNotIn("DUPE", out)
 
 
 TRACKERS = """\

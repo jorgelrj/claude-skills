@@ -36,12 +36,12 @@ Ask the four questions in order. Only questions 1 and 2 can send the task back t
 
 ## 3 Size and lane
 
-Count production files only. Test files, fixtures and docs do not count toward the size.
+Count production files only. Test files, fixtures, docs, locale resources (`*.arb`, `i18n/*.json`, slang JSON) and generated files (`*.g.dart`, `*.freezed.dart`, `generated/` folders) do not count toward the size.
 
 | Size | Rule (all conditions) | Lane |
 |---|---|---|
 | S | 1 to 3 production files; no new design; no schema change on real data; no new dependency. | Work Order from the Task Card, Build, quick review (correctness lens only), PR. |
-| M | 4 to 8 production files in one area; goal is clear; no schema change on real data. | Explore (2 scouts), light spec, Build, standard review (correctness and spec lenses), QA, PR. Spec gate only if the spec lists open decisions. |
+| M | 4 to 8 production files in one area; goal is clear; no schema change on real data. | Explore (2 scouts), light spec, 1 or 2 Work Orders (more only when file scopes would overlap, with the reason in the spec), Build, standard review (correctness and spec lenses), QA, PR. Spec gate only if the spec lists open decisions. |
 | L | More than 8 production files, OR a new screen or flow design, OR a schema change on real data, OR a new dependency. | Full spec, Jorge approves spec, parallel builders, deep review, QA, PR. |
 
 3.1 Size on what the request changes, not on how far the code around it reaches. Adding a field that passes through existing layers is S when each layer has 3 production files or fewer to touch.
@@ -54,7 +54,7 @@ Count production files only. Test files, fixtures and docs do not count toward t
 3.7.1 A large single-repo task is split at Handoff into stacked slices of 1 to 3 Work Orders when it passes `limits.split_orders` orders or `limits.split_criteria` criteria (orchestrator §9). Size it L as usual; do not shrink a task to avoid the split.
 3.8 Time estimate. Record in §3.3 the expected wall-clock time of the chosen lane: S about 10 minutes, M about 25 minutes, L 60 minutes or more. Add 10 minutes per review fix round.
 3.9 Pattern task. An M feature that copies a sibling feature already in the code, with no schema, design or dependency change, is a pattern task. The orchestrator sets it after Explore, from the scouts' `SIBLING:` line. It skips the order check, reviews at QUICK depth, and QA checks only the criteria no test covers. It keeps M's spec, because the spec is what says which sibling to copy.
-3.10 Critical. A change is critical when the request or ticket says so, or it touches authentication, money, data migration or a toolchain pin, or the repo's docs define it as critical. Record it in the Task Card §3. A critical change runs FULL bars and critical targets.
+3.10 Critical. Triage decides it, from the project's critical rules: a change is critical when the request or ticket says so, or it touches authentication, money, data migration or a toolchain pin, or the standing decisions or the repo's ADRs and docs define it as critical. Record YES or NO with the reason in the Task Card §3. A critical change runs FULL bars and critical targets; under `gates.full_bars: verify` the full suites stay deferred to `/tempo:verify`. A later stage that thinks a NO task is critical asks Jorge, naming the whole suites it would run, and never turns it on itself.
 
 ## 4 Routes
 

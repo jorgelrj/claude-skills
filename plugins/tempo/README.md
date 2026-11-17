@@ -376,6 +376,33 @@ The state, run and process scripts imported `fcntl` and called `killpg`, `/proc`
 - Opt-in `sync:` per tracker. `assign: true` and `start: <status>` assign the ticket to you and move it when the task starts building (after setup in a full run, or when a planned task is approved for build); `pr: <status>` moves it when the PR opens. Jira goes through atlassian-multi's `atl.py`; GitHub uses `gh issue edit` and the Status field of the Projects board in `project: <owner>/<number>` (gh needs the `project` scope). A tracker that refuses prints a `WARN:` and the task goes on. Child and slice tasks never sync; their parent does. Config skill 2.5.2 and 2.5.3, orchestrator 1.6 and 1.10.
 - `tempo_config.py ticket` and `sync` do the work. `tests/test_config.py` covers the pick, the lint and the opt-out paths.
 
+### Faster test step (0.26.0)
+
+From the 2026-11-17 audit of pod1um runs (Mac and two Windows machines). Each touched package's whole test folder still runs once at the last integrate; a test-only fix round after it re-runs only the files it touched.
+
+- **Scoped platform target once per task.** A target with `run: final` prints only with `targets --final`, which the orchestrator passes at the integrate after the last wave. Builders and QA never run target lines.
+- **`tests.always` and `tests.slow`.**
+  - `bars` prints `ALWAYS:` lines: guard tests that every narrow integrate runs, whatever packages the diff touches.
+  - `bars` also prints `SLOW:` lines for slow test files the diff hits. Builders, WAVE integrates and QA run those files by `--plain-name` group. They run whole once, in the last integrate's package run.
+- **Narrower integrates.**
+  - WAVE integrates run the work orders' §5 tests, the mirror tests and the ALWAYS files, never a whole folder.
+  - LAST (and a FIX that touches production code) runs each touched package's whole folder and `build`.
+  - A test-only FIX runs those files and the package's typecheck.
+- **Check roles.** Builders and WAVE integrates run `commands.typecheck` (one package, plus the packages that depend on a touched shared module). LAST, FULL and `/tempo:verify` run `build`.
+- **QA reuses clean runs.** `tempo_run.py` prints `TREE: <sha> clean|dirty` and records `head` and `clean` in `run-end`. QA cites an integrator run only on the same clean head, and only one that passed. FULL, critical, verify, screenshot, docker-backed and golden runs are always re-run.
+- **Critical belongs to the Task Card.** Under `gates.full_bars: verify`, `targets` prints no whole suite except with `--verify`, which only `/tempo:verify` passes. `tempo_state.py set --critical on` once the task has left TRIAGE needs `--gate '<Jorge's answer>'`. The architect replies `CRITICAL?:` instead of handing the call on.
+- **Stalls and duplicates.**
+  - `tempo_state.py watch --file F --agent ID` runs in the background beside each agent. It prints `STALL:` when nothing moves and no test runs, and `DONE:` when the agent finishes. `guard_spawn.py` allows it.
+  - `tempo_config.py dupes` lists open PRs and live branches of the same ticket at claim time, before each integrate and before the first push. On a hit it stops and asks.
+- **Run safety.**
+  - `tempo_run.py` gives every run a default `--timeout` of 3 h.
+  - The FAILURES hint prints only on a non-zero exit.
+  - `tempo_run.py --task DIR status` lists the task's runs.
+  - `check` warns when the repo path has a space, since melos splits it on Windows.
+- **Sizing.** Locale and generated files don't count toward size. A lane-M task gets 1 or 2 work orders by default.
+- **Not in this version:** the HIGH-only `fix_severity` (it needs the final read), a cache of passed runs, and a cap on concurrent runs (measure first).
+- **Upgrade order.** A config that uses `tests:` or `run: final` fails `check` on 0.25 and older, so update every machine before such a config lands.
+
 ## How it runs inside Claude Code
 
 - The main session is the orchestrator. Subagents cannot start other subagents, so the orchestrator starts every agent, including the parallel scouts, builders and reviewers.

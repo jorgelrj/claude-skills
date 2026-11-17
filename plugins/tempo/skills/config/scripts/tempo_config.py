@@ -25,15 +25,21 @@ Commands:
                                          prefixes of its remote branches, else {type}/{ticket}); tempo/ names
                                          are local work branches only and never name the task branch
   cmd     NAME [--var k=v ...]           print one command as a shell line, env exported first
-  targets [--paths P ...] [--ref REF] [--full] [--critical] [--scoped-only]
+  targets [--paths P ...] [--ref REF] [--full] [--critical] [--final] [--scoped-only] [--verify]
                                          print the platform test runs for the changed paths: scoped to the
                                          tests those paths touch or mirror when a target has scoped_command.
                                          Targets with run: critical (advisory targets by default) print only
-                                         with --critical or --full. --scoped-only: a target that would print
+                                         with --critical or --full; run: final also with --final (the integrate
+                                         after the last wave). --scoped-only: a target that would print
                                          its whole command prints `# DEFERRED whole suite` instead
   bars    [--paths P ...] [--critical]   print the bars an integrate runs: BARS: FULL|NARROW and why. With
                                          gates.full_bars: verify it is NARROW, plus a DEFERRED: line when the
-                                         change would have run the whole suite
+                                         change would have run the whole suite. Then one ALWAYS: line per
+                                         tests.always file and one SLOW: line per tests.slow file the paths
+                                         touch or mirror
+  dupes   --ticket KEY --branch B ...    list open PRs and remote branches that already carry the ticket
+                                         (DUPE: pr|branch <ref> <url>), other than the task's own branches
+                                         and branches whose PRs all merged or closed; exit 3 when any. WARN and exit 0 when gh or the remote cannot answer
   setup   --worktree PATH                print the shell steps that prepare a new worktree
   teardown --worktree PATH               print the shell steps that release a worktree's resources
   repos                                  list workspace repos in dependency order
@@ -46,7 +52,7 @@ Commands:
                                          via gh and its Projects board). Prints ASSIGNED:/MOVED:/WARN:/SYNC: OFF
                                          lines and exits 0 whatever the tracker answers
 Common option: --repo PATH (default: current directory).
-Exit codes: 0 ok, 1 invalid config or usage error, 2 missing dependency.
+Exit codes: 0 ok, 1 invalid config or usage error, 2 missing dependency, 3 dupes found.
 """
 import argparse
 import copy
@@ -233,6 +239,28 @@ def _run(cmd, cwd):
         lines = (r.stderr or r.stdout).strip().splitlines()
         raise RuntimeError(lines[-1] if lines else f"exit {r.returncode}")
     return r.stdout
+
+
+def find_dupes(ticket, own, prs, heads):
+    """DUPE lines for open PRs (gh pr list JSON, any state) and remote heads (ls-remote text) that name the
+    ticket, other than the task's own branches. A branch whose PRs are all merged or closed is stale, not a
+    dupe. PD-12 never matches PD-123."""
+    key = re.compile(r"(?<![A-Za-z0-9])" + re.escape(ticket) + r"(?![0-9])", re.I)
+    out, seen = [], set(own)
+    for pr in prs:
+        ref = pr.get("headRefName") or ""
+        if pr.get("state", "OPEN") != "OPEN":
+            continue
+        if ref not in seen and (key.search(ref) or key.search(pr.get("title") or "")):
+            out.append(f"DUPE: pr {ref} {pr.get('url') or ''}".rstrip())
+            seen.add(ref)
+    seen |= {pr.get("headRefName") for pr in prs}  # an open one already printed; the rest ended
+    for line in heads.splitlines():
+        ref = line.split("\t", 1)[-1].removeprefix("refs/heads/")
+        if ref not in seen and key.search(ref):
+            out.append(f"DUPE: branch {ref}")
+            seen.add(ref)
+    return out
 
 
 def atl_script():
@@ -813,7 +841,9 @@ def main(argv=None):
     t.add_argument("--ref", help="find test files in this commit (default: the files git tracks in the checkout)")
     t.add_argument("--full", action="store_true", help="print each target's full command, never the scoped one")
     t.add_argument("--critical", action="store_true", help="include the targets that run for critical changes only")
+    t.add_argument("--final", action="store_true", help="include run: final targets (the integrate after the last wave)")
     t.add_argument("--scoped-only", action="store_true", help="never print a whole command: a `# DEFERRED whole suite` line instead")
+    t.add_argument("--verify", action="store_true", help="/tempo:verify only: print whole commands even under gates.full_bars: verify")
     bs = add("bars"); bs.add_argument("--paths", nargs="*", default=[]); bs.add_argument("--critical", action="store_true")
     s = add("setup"); s.add_argument("--worktree", required=True)
     td = add("teardown"); td.add_argument("--worktree", required=True)
@@ -821,6 +851,8 @@ def main(argv=None):
     dc = add("docs"); dc.add_argument("--format", choices=["list", "json"], default="list")
     g = add("migrate"); g.add_argument("file")
     tk = add("ticket"); tk.add_argument("--text", required=True)
+    du = add("dupes"); du.add_argument("--ticket", required=True)
+    du.add_argument("--branch", action="append", required=True, help="the task's own branch; repeat for a split task's slices")
     sy = add("sync"); sy.add_argument("event", choices=["start", "pr"]); sy.add_argument("--text", required=True)
     a = p.parse_args(argv)
 
@@ -834,6 +866,9 @@ def main(argv=None):
                     print("\n".join(errs)); print(f"FAIL: {len(errs)} finding(s)"); return 1
                 print(f"PASS: {len(a.files)} file(s)"); return 0
             cfg, info = resolve(a.repo)
+            if " " in (info.get("repo") or ""):
+                info["warnings"].append(f"repo path '{info['repo']}' contains a space: melos splits it on Windows; "
+                                        "a checkout path without spaces avoids that")
             for w in info["warnings"] + worktree_gaps(info.get("repo"), cfg):
                 print("WARN: " + w)
             print("PASS: " + ", ".join(info["files"])); return 0
@@ -920,11 +955,12 @@ def main(argv=None):
         if a.cmd == "targets":
             files = None
             for tg in cfg.get("targets") or []:
-                if not (a.critical or a.full) and tg.get("run", "critical" if tg.get("advisory") else "routine") == "critical":
+                run = tg.get("run", "critical" if tg.get("advisory") else "routine")
+                if not (a.critical or a.full) and (run == "critical" or (run == "final" and not a.final)):
                     continue
                 tail = "\tadvisory" if tg.get("advisory") else ""
                 full = f"{tg['name']}\t{env_prefix(cfg.get('env'))}{tg['command']}{tail}"
-                if a.scoped_only:
+                if a.scoped_only or ((cfg.get("gates") or {}).get("full_bars") == "verify" and not a.verify):
                     full = f"{tg['name']}\t# DEFERRED whole suite{tail}"
                 if a.paths is None:
                     print(full); continue
@@ -961,7 +997,35 @@ def main(argv=None):
                 print(f"BARS: FULL  WHY: gates.full_paths matches {' '.join(hit[:5])}")
             else:
                 print("BARS: NARROW  WHY: routine change")
+            tests = cfg.get("tests") or {}
+            for f in tests.get("always") or []:
+                print(f"ALWAYS: {f}")
+            slow = tests.get("slow") or []
+            if slow and a.paths:
+                # A slow file runs whole when changed or when its mirror source (foo.dart -> foo_test.dart) changed.
+                runs, _ = scoped_runs({}, a.paths, tracked_files(info["repo"] or a.repo) + slow)
+                hit = set(a.paths) | {f"{pkg}/{t}" if pkg else t for pkg, ts in runs for t in ts}
+                for f in slow:
+                    if f in hit:
+                        print(f"SLOW: {f}")
             return 0
+
+        if a.cmd == "dupes":
+            cwd = info.get("repo") or a.repo
+            prs, heads = None, None
+            try:
+                prs = json.loads(_run(["gh", "pr", "list", "--state", "all", "--limit", "200", "--search", a.ticket,
+                                       "--json", "number,headRefName,url,title,state"], cwd) or "[]")
+            except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as e:
+                print(f"WARN: open PRs not checked: gh did not answer ({e})")
+            try:
+                heads = _run(["git", "ls-remote", "--heads", "origin"], cwd)
+            except (OSError, RuntimeError, subprocess.TimeoutExpired) as e:
+                print(f"WARN: remote branches not checked: origin did not answer ({e})")
+            found = find_dupes(a.ticket, a.branch, prs or [], heads or "")
+            for line in found:
+                print(line)
+            return 3 if found else 0
 
         if a.cmd == "teardown":
             wt = Path(a.worktree)

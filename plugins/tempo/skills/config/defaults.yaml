@@ -9,6 +9,9 @@ commands:
   lint: null
   run_app: null
 targets: []        # extra platform test runs: [{name, command, paths, scoped_command?, advisory?, run?}]
+tests:
+  always: []       # test files run at every NARROW integrate, whatever packages it touches
+  slow: []         # test files run filtered by builders and QA, whole once at the integrate after the last wave
 gates:
   full_bars: on_demand    # on_demand: Integrate runs NARROW bars; the full suite runs for critical changes and on /tempo:verify. integrate: every task's final integrate runs it. verify: never inside a task, only on /tempo:verify or the branch the task merges into
   full_paths:             # a change to one of these is wide enough to run FULL bars

@@ -12,8 +12,8 @@ Inputs: {{report-nn.md list}} · Issued by: integrator
 - `{{path}}`: {{how it was resolved, or RETURNED TO BUILD}}. NIL if none.
 
 ## 4 Verification
-- `{{full test command}}`: exit {{code}}
-- `{{build or typecheck command}}`: exit {{code}}
+- `{{test command}}`: exit {{code}}, run {{id}}, TREE {{sha}} {{clean | dirty}}
+- `{{typecheck or build command}}`: exit {{code}}, run {{id}}
 
 ## 5 Result
 {{PASS | FAIL}}

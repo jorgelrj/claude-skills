@@ -29,6 +29,8 @@ Usage: tempo_run.py [--task DIR] [--heavy] [--slots N] [--label L] [--log-dir DI
                     [--timeout SECONDS] [--max SECONDS] -- COMMAND [ARG ...]
        tempo_run.py [--task DIR] wait ID [--max SECONDS]
        tempo_run.py [--task DIR] stop ID
+       tempo_run.py --task DIR status
+  status prints each run of the task: RUNNING for a live one, the RUN and TREE lines of an ended one.
   stop ends one run: its worker and every process marked with it, nothing else. It is the only way to
   cancel a run. Never pkill or killall: they match by name across the machine, and other tasks share it.
   --task names the task folder (.tempo/<task-id>), so teardown and sweep find what the run left.
@@ -36,12 +38,17 @@ Usage: tempo_run.py [--task DIR] [--heavy] [--slots N] [--label L] [--log-dir DI
   several run as an argument list. --max defaults to 110, inside the Bash tool's default 2-minute timeout; 0 blocks until the run ends.
 Prints:
   RUN: <label>  EXIT: <code>  TIME: <m:ss>  WAITED: <m:ss>  LOG: <path>
-  FAILURES: <count shown>   then up to 40 failure lines, or FAILURES: NIL
+  TREE: <sha> clean|dirty   the git HEAD of the run's folder when it started, and whether the tree had no change
+                            (untracked files count); TREE: none outside git
+  FAILURES: <count shown>   then up to 40 failure lines, or FAILURES: NIL; only when EXIT is not 0
   TAIL:                     then the last --tail lines (default 25)
   KILLED: signal <n>. ...   first line when the exit is 137 or 143 (SIGKILL, SIGTERM from outside), or the worker died
 or, while it runs:
   RUNNING: <label>  ID: <id>  ELAPSED: <m:ss>  STATE: <waiting for a slot | running>
 FAILURES are hints matched by pattern; EXIT decides whether the run passed.
+QA cites an integrator's run instead of running it again only when its TREE is clean, its sha is QA's HEAD,
+it passed and QA's tree is clean too.
+--timeout defaults to 3 hours, so a hung run always ends; agents leave it off.
 Exit: the command's exit code (128 + n when signal n ended it); 75 while it still runs; 124 when --timeout killed it;
 2 on a usage error.
 """
@@ -92,6 +99,9 @@ def last_part(line):
     return parts(line)[-1]
 
 
+DEFAULT_TIMEOUT = 10800  # 3 hours, /tempo:verify's value
+
+
 def decide_heavy(cmd, flag, cfg):
     """Whether the run takes a heavy slot: yes for the config's whole suites, no for its scoped or cheap commands, else `flag`."""
     every = parts(cmd[0] if len(cmd) == 1 else " ".join(cmd))
@@ -109,6 +119,25 @@ def decide_heavy(cmd, flag, cfg):
     return flag
 
 
+def tree(cwd):
+    """(HEAD sha, clean) of the git tree at cwd, or (None, None) outside git. Untracked files make it dirty."""
+    try:
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=cwd, capture_output=True, text=True,
+                              stdin=subprocess.DEVNULL, timeout=30)
+        if head.returncode:
+            return None, None
+        # the task folder is TEMPO's own; no lock, so a parallel agent's git add never fails on index.lock
+        st = subprocess.run(["git", "--no-optional-locks", "status", "--porcelain", "--", ":/", ":(top,exclude).tempo"],
+                            cwd=cwd, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120)
+        return head.stdout.strip(), st.returncode == 0 and not st.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return None, None
+
+
+def tree_line(opts):
+    return f"TREE: {opts['head']} {'clean' if opts.get('clean') else 'dirty'}" if opts.get("head") else "TREE: none"
+
+
 def killed_line(sig):
     return f"KILLED: signal {sig}. Stopped from outside, not a test failure. Run it again once."
 
@@ -122,7 +151,7 @@ def run_end(run, opts, code, seconds, waited=0.0, killed=False, leftovers=0):
     except (OSError, AttributeError):  # Windows has no load average
         load = None
     tempo_procs.event(opts["task"], ev="run-end", id=run.name, exit=code, seconds=round(seconds), waited=round(waited),
-                      load1=load, killed=killed, leftovers=leftovers)
+                      load1=load, killed=killed, leftovers=leftovers, head=opts.get("head"), clean=opts.get("clean"))
 
 
 def clock(seconds):
@@ -206,15 +235,17 @@ def worker(run, opts, cmd):
     stopped, kept = reap_leftovers(run.name, locals().get("proc"))
 
     fails, total, tail = summary(log, opts["tail"])
-    rows = [f"RUN: {opts['label']}  EXIT: {code}  TIME: {clock(took)}  WAITED: {clock(waited)}  LOG: {log.as_posix()}"]
+    rows = [f"RUN: {opts['label']}  EXIT: {code}  TIME: {clock(took)}  WAITED: {clock(waited)}  LOG: {log.as_posix()}",
+            tree_line(opts)]
     if killed:
         rows.insert(0, killed_line(code - 128))
     if waited >= 1 and holder:
         rows.append(f"WAITED FOR: {holder}")
-    if fails:
+    # on exit 0 the failure patterns are noise (a test named "failed", a logged Exception) and mislead agents
+    if code and fails:
         rows.append(f"FAILURES: {len(fails)}" + (f" of {total} (see the log for the rest)" if total > len(fails) else ""))
         rows += fails
-    else:
+    elif code:
         rows.append("FAILURES: NIL")
     if stopped:
         rows.append(f"LEFTOVERS: stopped {len(stopped)} the command left running: " + "; ".join(stopped)[:400])
@@ -261,7 +292,7 @@ def wait(run, max_seconds):
                 (run / "code").write_text("1", encoding="utf-8")
                 run_end(run, opts, 1, time.time() - opts["started"], killed=True, leftovers=len(stopped))
                 # written down, so the next wait prints the same and the event is logged once
-                (run / "result.txt").write_text(f"{killed_line('unknown')}\nRUN: {opts['label']}  EXIT: 1  WORKER DIED  LOG: {opts['log']}\n", encoding="utf-8")
+                (run / "result.txt").write_text(f"{killed_line('unknown')}\nRUN: {opts['label']}  EXIT: 1  WORKER DIED  LOG: {opts['log']}\n{tree_line(opts)}\n", encoding="utf-8")
                 continue
             state = (run / "state").read_text(encoding="utf-8") if (run / "state").exists() else "starting"
             print(f"RUNNING: {opts['label']}  ID: {Path(run).as_posix()}  ELAPSED: {clock(time.time() - opts['started'])}  STATE: {state}")
@@ -292,10 +323,29 @@ def stop(run):
     left = tempo_procs.kill_all(pids, grace=5)
     if not (run / "result.txt").exists():  # the worker died before it wrote a summary
         (run / "code").write_text("130", encoding="utf-8")
-        (run / "result.txt").write_text(f"RUN: {opts['label']}  EXIT: 130  STOPPED by tempo_run.py stop  LOG: {opts['log']}\n", encoding="utf-8")
+        (run / "result.txt").write_text(f"RUN: {opts['label']}  EXIT: 130  STOPPED by tempo_run.py stop  LOG: {opts['log']}\n{tree_line(opts)}\n", encoding="utf-8")
         run_end(run, opts, 130, time.time() - opts["started"])
     print(f"STOPPED: {opts['label']}  PROCESSES: {len(pids) - len(left)}" + (f"  STILL ALIVE: {left}" if left else ""))
     return 1 if left else 0
+
+
+def status(task):
+    """Each run the task's events.jsonl names: the RUNNING line, or the RUN and TREE lines of its summary."""
+    ev = Path(task) / "events.jsonl"
+    rows = ev.read_text(encoding="utf-8", errors="replace").splitlines() if ev.is_file() else []
+    runs = [Path(e["dir"]) for e in map(json.loads, rows) if e.get("ev") == "run" and e.get("dir")]
+    runs = [r for r in runs if (r / "opts.json").exists()]  # the OS may have cleaned old run folders
+    for run in runs:
+        if (run / "result.txt").exists():
+            print("\n".join(x for x in (run / "result.txt").read_text(encoding="utf-8").splitlines()
+                            if x.startswith(("RUN:", "TREE:", "KILLED:"))))
+        elif not (o := json.loads((run / "opts.json").read_text(encoding="utf-8"))).get("pid"):
+            print(f"RUNNING: {o['label']}  ID: {run.as_posix()}  STATE: starting")  # no worker yet: never call it dead
+        else:
+            wait(run, 0.01)  # prints RUNNING, or reports a dead worker once
+    if not runs:
+        print("RUNS: NIL")
+    return 0
 
 
 def alive(pid):
@@ -320,6 +370,8 @@ def main(argv=None):
         return wait(a.id, a.max)
     if argv[:1] == ["stop"] and len(argv) == 2:
         return stop(argv[1])
+    if argv == ["status"] and task:
+        return status(task)
     p = argparse.ArgumentParser(prog="tempo_run.py", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--heavy", action="store_true", help="take a machine-wide slot first")
@@ -328,7 +380,7 @@ def main(argv=None):
     p.add_argument("--label", help="a few words naming the run (default: the command)")
     p.add_argument("--log-dir", help="folder for the log (default: a new private temp folder)")
     p.add_argument("--tail", type=int, default=25)
-    p.add_argument("--timeout", type=int, help="seconds before the command is killed (exit 124)")
+    p.add_argument("--timeout", type=int, help=f"seconds before the command is killed (exit 124); default {DEFAULT_TIMEOUT}")
     p.add_argument("--max", type=int, default=110, help="seconds this call blocks; 0: until the run ends")
     p.add_argument("command", nargs=argparse.REMAINDER)
     a = p.parse_args(argv)
@@ -343,15 +395,18 @@ def main(argv=None):
             heavy = decide_heavy(cmd, a.heavy, cfg["config"])
         except Exception:  # no config, or tempo_config.py cannot run here: the caller's flag decides, as before
             pass
+    # a hung run ends on its own; the default clears a whole suite or package folder several times over under load
+    a.timeout = a.timeout or DEFAULT_TIMEOUT
     label = a.label or " ".join(cmd)[:80]
     run = Path(tempfile.mkdtemp(prefix="tempo-run-"))
     log_dir = Path(a.log_dir) if a.log_dir else run
     log_dir.mkdir(parents=True, exist_ok=True)
     slug = re.sub(r"[^A-Za-z0-9]+", "-", label).strip("-")[:40] or "run"
     log = log_dir.resolve() / f"{time.strftime('%H%M%S')}-{slug}.log"
+    head, tidy = tree(os.getcwd())
     opts = {"label": label, "log": log.as_posix(), "heavy": heavy, "slots": a.slots, "tail": a.tail,
             "timeout": a.timeout, "cmd": cmd, "cwd": os.getcwd(), "started": time.time(),
-            "task": os.path.abspath(task) if task else None}
+            "task": os.path.abspath(task) if task else None, "head": head, "clean": tidy}
     (run / "opts.json").write_text(json.dumps(opts), encoding="utf-8")
     owner = tempo_procs.find_owner()
     if task:

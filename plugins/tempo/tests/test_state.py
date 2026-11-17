@@ -5,6 +5,7 @@ Everything happens in temp folders, with TEMPO_CACHE pointed at one.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -149,6 +150,79 @@ class Counters(Base):
         self.state("bump", "review"), self.state("bump", "review"), self.state("bump", "review")
         self.assertEqual(self.state("bump", "review", code=1), "LIMIT: review rounds 4 of 3; raise LOOP-LIMIT\n")
         self.assertIn("HARD STOP: review rounds 5 of 3 plus 1 extensions", self.state("bump", "review", code=2))
+
+
+class Critical(Base):
+    def test_critical_on_past_triage_needs_the_gate(self):
+        self.init()
+        self.state("set", "--critical", "on")  # during TRIAGE: from the Task Card, no gate
+        self.state("set", "--critical", "off")  # off is never gated
+        self.state("set", "--stage", "BUILD")
+        r = subprocess.run(self.cmd("set", "--critical", "on"), capture_output=True, text=True, env=self.env)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("critical after triage needs Jorge's gate: pass --gate '<his answer>'", r.stderr)
+        self.assertFalse(self.json().get("critical"))
+        self.state("set", "--critical", "on", "--gate", "yes, run the web suite")
+        st = self.json()
+        self.assertTrue(st["critical"])
+        self.assertEqual([(g["stage"], g["answer"]) for g in st["gates"]], [("BUILD", "yes, run the web suite")])
+        ev = [json.loads(x) for x in (self.d / "events.jsonl").read_text().splitlines()]
+        self.assertEqual(ev[-1]["gate"], "yes, run the web suite")
+        self.assertIn("| BUILD | GATE critical on | Jorge: yes, run the web suite", (self.d / "state.md").read_text())
+        self.state("set", "--critical", "off")
+        self.state("set", "--stage", "TRIAGE")  # moving back does not reopen the ungated call
+        r = subprocess.run(self.cmd("set", "--critical", "on"), capture_output=True, text=True, env=self.env)
+        self.assertEqual(r.returncode, 1, r.stdout)
+
+
+class Watch(Base):
+    def watch(self, out, idle, *extra, **kw):
+        return subprocess.Popen(self.cmd("watch", "--file", out, "--idle", idle, "--poll", "0.2", *extra), stdout=subprocess.PIPE,
+                                text=True, env=self.env, **kw)
+
+    def test_done_when_the_agent_is_off_the_in_flight_list(self):
+        self.init()
+        out = self.tmp / "agent.output"
+        out.write_text("x")
+        self.state("agent", "start", "a1", "--label", "builder-WO-01", "--output", ".tempo/T-001/wo-01-report.md")
+        p = self.watch(out, 30, "--agent", "a1")
+        time.sleep(0.6)
+        self.assertIsNone(p.poll())  # still in flight
+        self.state("agent", "done", "a1")
+        self.assertEqual(p.communicate(timeout=10)[0], f"DONE: {out}\n")
+
+    def test_stall_gone_and_a_busy_file(self):
+        self.init()
+        out = self.tmp / "agent.output"
+        out.write_text("x")
+        p = self.watch(out, 1)
+        self.assertRegex(p.communicate(timeout=10)[0], rf"^STALL: {re.escape(str(out))} unchanged for \d+s and no test run active\n$")
+        p = self.watch(out, 30)
+        time.sleep(0.5)
+        out.unlink()
+        self.assertEqual(p.communicate(timeout=10)[0], f"GONE: {out}\n")
+        out.write_text("x")
+        p = self.watch(out, 1.5)
+        for _ in range(8):  # 3.2 s of an agent that keeps writing: never a stall
+            time.sleep(0.4)
+            out.write_text(out.read_text() + "x")
+            self.assertIsNone(p.poll())
+        self.assertIn("STALL:", p.communicate(timeout=10)[0])  # then it goes quiet
+
+    def test_a_live_run_of_the_task_is_activity(self):
+        self.init()
+        out = self.tmp / "agent.output"
+        out.write_text("x")
+        run = self.tmp / "tempo-run-live"
+        run.mkdir()
+        (run / "opts.json").write_text(json.dumps({"log": str(run / "out.log"), "pid": os.getpid()}))
+        with open(self.d / "events.jsonl", "a") as f:
+            f.write(json.dumps({"ev": "run", "dir": str(run)}) + "\n")
+        p = self.watch(out, 1)
+        time.sleep(2.5)
+        self.assertIsNone(p.poll())  # the worker (this test) is alive and the run has no result
+        (run / "result.txt").write_text("done")
+        self.assertIn("STALL:", p.communicate(timeout=10)[0])
 
 
 class Ship(Base):

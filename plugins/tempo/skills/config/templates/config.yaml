@@ -39,8 +39,12 @@ pr:
 #     command: cd app && flutter test --platform chrome            # the whole suite (rarely run)
 #     scoped_command: cd {package} && flutter test --platform chrome {tests}   # just the tests a change touches
 #     advisory: true              # red on the base branch: only failures the base lacks block
-#     run: critical               # critical changes and /tempo:verify only (default for advisory); routine: every integrate
+#     run: critical               # critical changes and /tempo:verify only (default for advisory); final: once after the last wave; routine: every integrate
 #     paths: [app/lib/**, app/test/**]
+
+# tests:                        # repo-relative test files that need their own handling
+#   always: []                  # run at every NARROW integrate, whatever it touches
+#   slow: []                    # run filtered while building, whole once after the last wave
 
 gates:
   full_bars: on_demand          # on_demand: full suite for critical changes and /tempo:verify; integrate: every task

@@ -96,9 +96,14 @@ class Heavy(Base):
             r = self.run_py(SCRIPTS / "tempo_run.py", *args)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             (run,) = set(self.tmp.glob("tempo-run-*")) - before
-            return json.loads((run / "opts.json").read_text())["heavy"]
+            opts = json.loads((run / "opts.json").read_text())
+            timeouts.append(opts["timeout"])
+            return opts["heavy"]
 
+        timeouts = []
         self.assertIs(heavy("--heavy", "--", "echo lint"), True)  # no --task: the flag, as before
+        self.assertIs(heavy("--timeout", "60", "--", "echo lint"), False)
+        self.assertEqual(timeouts, [10800, 60])  # a run with no --timeout still ends, after 3 hours
         self.assertIs(heavy("--", "echo suite"), False)
         (d.parent / "config.yaml").write_text("commands: [")
         self.assertIs(heavy("--task", d, "--heavy", "--", "echo lint"), True)  # a config that cannot be read: the flag
@@ -114,7 +119,7 @@ class Heavy(Base):
 
 
 class Killed(Base):
-    KEYS = {"at", "ev", "id", "exit", "seconds", "waited", "load1", "killed", "leftovers"}
+    KEYS = {"at", "ev", "id", "exit", "seconds", "waited", "load1", "killed", "leftovers", "head", "clean"}
 
     def test_a_kill_from_outside_prints_killed_and_every_run_logs_its_end(self):
         d = self.task()
@@ -168,6 +173,71 @@ class Killed(Base):
         self.assertEqual([(e["exit"], e["killed"]) for e in self.events(d)], [(137, False)])
 
 
+class Summary(Base):
+    def run_in(self, cwd, cmd, *args):
+        return subprocess.run([sys.executable, str(SCRIPTS / "tempo_run.py"), *map(str, args), "--", cmd], capture_output=True,
+                              text=True, env=self.env, cwd=cwd)
+
+    def test_tree_names_the_head_and_whether_the_tree_was_clean(self):
+        repo = self.tmp / "git"
+        repo.mkdir()
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=repo,
+                                        check=True, capture_output=True, text=True).stdout.strip()
+        git("init", "-q"); (repo / "a.txt").write_text("a"); git("add", "."); git("commit", "-qm", "a")
+        head = git("rev-parse", "HEAD")
+        d = repo / ".tempo" / "T-001"  # the task folder inside the repo, not ignored: TEMPO's own files never dirty it
+        d.mkdir(parents=True)
+        r = self.run_in(repo, "exit 0", "--task", d)
+        self.assertEqual(r.stdout.splitlines()[1], f"TREE: {head} clean", r.stdout)
+        self.assertEqual([(e["head"], e["clean"]) for e in self.events(d)], [(head, True)])
+        (repo / "sub").mkdir()
+        r = self.run_in(repo / "sub", "exit 0")  # a run in a subfolder still sees a change at the top
+        self.assertEqual(r.stdout.splitlines()[1], f"TREE: {head} clean", r.stdout)
+        (repo / "a.txt").write_text("changed")
+        r = self.run_in(repo / "sub", "exit 0")
+        self.assertEqual(r.stdout.splitlines()[1], f"TREE: {head} dirty", r.stdout)
+        git("checkout", "a.txt")
+        (repo / "new.txt").write_text("untracked")  # an untracked file makes the tree dirty
+        r = self.run_in(repo, "exit 0")
+        self.assertEqual(r.stdout.splitlines()[1], f"TREE: {head} dirty", r.stdout)
+        out = self.tmp / "nogit"
+        out.mkdir()
+        r = self.run_in(out, "exit 0")
+        self.assertEqual(r.stdout.splitlines()[1], "TREE: none", r.stdout)
+
+    def test_status_lists_the_task_runs(self):
+        d = self.task()
+        self.assertEqual(self.run_py(SCRIPTS / "tempo_run.py", "--task", d, "status").stdout, "RUNS: NIL\n")
+        self.run_py(SCRIPTS / "tempo_run.py", "--task", d, "--label", "quick", "--", "exit 0")
+        r = self.run_py(SCRIPTS / "tempo_run.py", "--task", d, "--label", "slow", "--max", "1", "--", "sleep 5")
+        self.assertEqual(r.returncode, 75, r.stdout + r.stderr)
+        self.addCleanup(self.run_py, SCRIPTS / "tempo_run.py", "stop", r.stdout.split("ID: ")[1].split("  ")[0])
+        out = self.run_py(SCRIPTS / "tempo_run.py", "--task", d, "status").stdout.splitlines()
+        self.assertEqual([x.split()[0] for x in out], ["RUN:", "TREE:", "RUNNING:"], out)
+        self.assertTrue(out[0].startswith("RUN: quick  EXIT: 0") and out[2].startswith("RUNNING: slow"), out)
+        # a run whose worker is not spawned yet (no pid) is starting, not dead
+        young = self.tmp / "tempo-run-young"
+        young.mkdir()
+        (young / "opts.json").write_text(json.dumps({"label": "young", "log": "x", "started": 0, "task": str(d)}))
+        with open(Path(d) / "events.jsonl", "a") as f:
+            f.write(json.dumps({"ev": "run", "dir": str(young)}) + "\n")
+        out = self.run_py(SCRIPTS / "tempo_run.py", "--task", d, "status").stdout
+        self.assertIn("RUNNING: young  ID: ", out)
+        self.assertIn("STATE: starting", out)
+        self.assertFalse((young / "result.txt").exists())
+
+    def test_failures_show_only_when_the_run_failed(self):
+        line = "echo 'Exception in a log line'; echo 'a test named failed works'; exit"
+        ok = self.run_in(self.tmp, f"{line} 0")
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+        self.assertNotIn("FAILURES", ok.stdout)
+        self.assertIn("TAIL:", ok.stdout)
+        bad = self.run_in(self.tmp, f"{line} 1")
+        self.assertEqual(bad.returncode, 1, bad.stderr)
+        self.assertIn("FAILURES: 2\nException in a log line\na test named failed works\n", bad.stdout)
+        self.assertIn("FAILURES: NIL", self.run_in(self.tmp, "exit 1").stdout)
+
+
 class Stop(Base):
     @unittest.skipIf(sys.platform == "win32", "uses pgrep; check 6 of the Windows handoff covers stop there")
     def test_stop_ends_only_its_own_run(self):
@@ -197,8 +267,9 @@ class Stop(Base):
 
 
 class Guard(Base):
-    def hook(self, command, **env):
-        r = self.run_py(PLUGIN / "hooks" / "guard_spawn.py", stdin=json.dumps({"tool_input": {"command": command}}), **env)
+    def hook(self, command, bg=False, **env):
+        ti = {"command": command, "run_in_background": bg}
+        r = self.run_py(PLUGIN / "hooks" / "guard_spawn.py", stdin=json.dumps({"tool_input": ti}), **env)
         self.assertEqual(r.returncode, 0, r.stderr)
         return r.stdout
 
@@ -225,6 +296,14 @@ class Guard(Base):
             self.assertEqual(self.hook(cmd, TEMPO_OWNER="4242"), "", cmd)
         out = json.loads(self.hook("nohup sleep 9 &", TEMPO_OWNER="4242"))["hookSpecificOutput"]
         self.assertIn("outlives", out["permissionDecisionReason"])  # the detach guard still answers its own way
+        # the orchestrator's stall watcher (SKILL 2.7.0) is the one background command it allows by name
+        for cmd in ("python3 /p/tempo_state.py watch .tempo/T-001 --file /o", 'python3 "C:/My Home/tempo_state.py" watch d --file o'):
+            self.assertEqual(self.hook(cmd, bg=True, TEMPO_OWNER="4242"), "", cmd)
+        self.assertIn("deny", self.hook("python3 /p/tempo_state.py log .tempo/T-001", bg=True, TEMPO_OWNER="4242"))
+        amp, nh = chr(38), "no" + "hup"  # the watcher's name does not carry a second command or a detach past the guard
+        for cmd in (f"python3 /p/tempo_state.py watch d --file o; sleep 99 {amp}", f"python3 /p/tempo_state.py watch d --file o; {nh} x",
+                    f"sleep 99 {amp}{amp} python3 /p/tempo_state.py watch d --file o", f"python3 /p/tempo_state.py watch d --file o {amp}"):
+            self.assertIn("deny", self.hook(cmd, bg=True, TEMPO_OWNER="4242"), cmd)
 
 
 if __name__ == "__main__":

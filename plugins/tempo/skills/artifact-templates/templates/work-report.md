@@ -10,6 +10,7 @@ Issued by: builder
 
 ## 3 Verification
 - `{{command from WO §5}}`: exit {{code}}. {{last relevant output line, quoted}}
+- TREE: {{sha}} {{clean | dirty}}
 
 ## 4 Criteria status
 - {{AC tag}}: {{PASS | FAIL}}. Evidence: {{test name or output}}

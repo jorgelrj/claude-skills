@@ -19,7 +19,8 @@ Spec: {{absolute path of spec.md, repro.md or the plan slice}}. Read its Terms s
 
 ## 5 Verification
 - `{{exact command, scoped to this order's test files or packages; never the full suite}}` passes.
-- `{{non-advisory platform target, scoped to this order's tests, when the order touches its paths}}` passes.
+- `{{typecheck with the package filled: this order's packages, plus the dependents of a shared module it touches}}` passes.
+- SLOW `{{test-one on a SLOW file with --plain-name '<group>' per group the criteria touch, or the whole file with the reason}}` passes.
 
 ## 6 Stop conditions
 Stop before the first edit, or as soon as one of these holds, and write the report with Result BLOCKED:
