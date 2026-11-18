@@ -160,8 +160,8 @@
         },
         "required_checks": {
           "type": "array",
-          "items": {"type": "string", "minLength": 1},
-          "description": "Checks CI-WAIT waits for before it reads a round (limits.ci_rounds above 0): until one reports it counts as pending. Name the ones that appear late, such as a commit status posted when its run ends (ai-review)."
+          "items": {"type": "string", "pattern": "^[^;&|`$()<>\\n\"']+$"},
+          "description": "Checks CI-WAIT waits for before it reads a round (limits.ci_rounds above 0): until one reports it counts as pending. Name the ones that appear late, such as a commit status posted when its run ends (ai-review). No shell characters or parentheses: the spawn guard allows the watcher only with plain arguments, so require a gate check such as ci-gate rather than a matrix job named 'flutter (core)'."
         }
       }
     },

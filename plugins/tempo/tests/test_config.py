@@ -207,6 +207,10 @@ class Config(unittest.TestCase):
         self.assertIn("limits.ci_rounds is 0", self.cfg("check"))
         self.write(OLD.replace("draft: false", "draft: true") + "limits:\n  ci_rounds: 2\n")
         self.assertIn("a draft PR never merges", self.cfg("check"))
+        self.write(OLD.replace("  draft: false", "  draft: false\n  required_checks: [ci-gate, ai-review]") + "limits:\n  ci_rounds: 2\n")
+        self.assertNotIn("WARN", self.cfg("check"))
+        self.write(OLD.replace("  draft: false", "  draft: false\n  required_checks: ['flutter (core)']"))
+        self.assertIn("pr.required_checks.0", self.cfg("check", code=1))  # the spawn guard refuses parentheses
 
     def test_a_run_ci_target_never_prints_without_verify(self):
         self.write(OLD.replace("    run: critical\n", "    run: ci\n"))

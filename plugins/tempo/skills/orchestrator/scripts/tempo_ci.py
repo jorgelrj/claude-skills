@@ -14,7 +14,8 @@ Usage: tempo_ci.py <command> --pr N [--repo DIR]
                                           DRAFT: <url>             a draft never merges: `gh pr ready`
                                           RED: <check>, ...        a check failed or was cancelled, and none is pending
                                           TIMEOUT: green|pending <checks>   nothing decided within --max
-                                          ERROR: <gh error>        every poll in the window failed (auth, repo, network)
+                                          ERROR: <gh error>        every poll of the window failed, two or more
+                                                                   (auth, repo, network); one failed poll is a blip
                                         --require names a check that must report before a verdict: until it
                                         appears it counts as pending (a commit status such as ai-review shows
                                         up only when its run ends).
@@ -25,9 +26,10 @@ Usage: tempo_ci.py <command> --pr N [--repo DIR]
                                         write the evidence of the red checks to FILE: the last --lines lines
                                         (default 80) of `gh run view --log-failed` per failed job, and the
                                         CRITICAL and HIGH findings of the review JSON in the artifact NAME
-                                        (default ai-review) of the review's run: the run in a check's link first,
-                                        then runs on the PR head, then pull_request_target runs (recorded on
-                                        the base, not the head) whose title is the PR's. Prints
+                                        (default ai-review) of the review's run: only the run in the review check's
+                                        link when it has one; else runs on the PR head, then the newest
+                                        pull_request_target run (recorded on the base, not the head) whose
+                                        title is the PR's. Prints
                                         `CI: FILE  FAILED: <n>  BLOCKING: <n>  NO-EVIDENCE: <checks or NIL>`.
 Exit 0 ok, 1 gh failed or usage error.
 """
@@ -104,7 +106,7 @@ def waiting(checks):
 
 
 def watch(cwd, pr, poll, max_s, require=()):
-    end, answered = time.time() + max_s, False
+    end, answered, fails = time.time() + max_s, False, 0
     while True:
         try:
             checks = with_required(pr_checks(cwd, pr), require)
@@ -112,11 +114,12 @@ def watch(cwd, pr, poll, max_s, require=()):
             state, answered = waiting(checks), True
         except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as e:
             v, state = None, f"pending (gh did not answer: {e})"  # a network blip is not a verdict
-            err = e
+            err, fails = e, fails + 1
         if v:
             print(f"{v[0]}: {v[1]}"); return 0
         if time.time() + poll > end:
-            print(f"TIMEOUT: {state}" if answered else f"ERROR: gh did not answer in the window: {err}"); return 0
+            print(f"ERROR: gh did not answer in the window: {err}" if not answered and fails > 1 else f"TIMEOUT: {state}")
+            return 0
         time.sleep(poll)
 
 
@@ -129,14 +132,15 @@ def review_findings(data):
 def review_runs(cwd, head, checks, artifact, md):
     """Run ids that may hold the review artifact, most likely first, without repeats.
 
-    The review check's own link (its status target_url, the run URL) comes first: a pull_request_target run is
-    recorded on the base's head commit, so `run list --commit <PR head>` misses it. Then every other check's run,
-    the runs on the head, and the pull_request_target runs whose title is the PR's title."""
-    ids = []
-    for c in sorted(checks, key=lambda c: artifact not in (c.get("name") or "")):
-        m = RUN_LINK.search(c.get("link") or "")
+    The review check's link (its status target_url, the run URL) names the run that set the verdict, and only that
+    run counts: an older run of the same PR holds findings on a superseded commit. Without a link: the runs on the
+    head, then the newest pull_request_target run titled as the PR (such a run is recorded on the base's head
+    commit, so `run list --commit <PR head>` misses it)."""
+    for c in checks:
+        m = RUN_LINK.search(c.get("link") or "") if artifact in (c.get("name") or "") else None
         if m:
-            ids.append(m.group(1))
+            return [m.group(1)]
+    ids = []
     for what, args in (("on the head", ["--commit", head.get("headRefOid") or ""]),
                        ("from pull_request_target", ["--event", "pull_request_target"])):
         try:
@@ -144,8 +148,9 @@ def review_runs(cwd, head, checks, artifact, md):
         except RuntimeError as e:
             md.append(f"- runs {what} not listed: {e}")
             continue
-        ids += [str(r["databaseId"]) for r in runs
-                if "--commit" in args or (r.get("displayTitle") or None) == head.get("title")]
+        if "--event" in args:  # gh lists the newest first; older runs reviewed a superseded commit
+            runs = [r for r in runs if (r.get("displayTitle") or None) == head.get("title")][:1]
+        ids += [str(r["databaseId"]) for r in runs]
     return list(dict.fromkeys(ids))
 
 

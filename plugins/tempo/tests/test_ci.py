@@ -103,8 +103,9 @@ class Stub(unittest.TestCase):
 
     def test_watch_survives_gh_that_does_not_answer(self):
         (self.tmp / "bin" / "gh").write_text("#!/bin/sh\necho 'connection refused' >&2\nexit 1\n")
+        self.assertIn("TIMEOUT: pending (gh did not answer", self.ci("watch", "--poll", "0.1", "--max", "0.1"))  # one blip
         self.assertIn("ERROR: gh did not answer in the window: gh pr view: connection refused",
-                      self.ci("watch", "--poll", "0.1", "--max", "0.1"))
+                      self.ci("watch", "--poll", "0.05", "--max", "0.3"))
 
     def test_watch_waits_for_a_required_check_that_has_not_reported(self):
         self.put("checks.json", [{"name": "ci-gate", "bucket": "fail"}]); self.put("checks.exit", "1")
@@ -150,6 +151,10 @@ class Stub(unittest.TestCase):
         self.put("runs-prt.json", [{"databaseId": 40, "displayTitle": "another PR"}, {"databaseId": 42, "displayTitle": PR["title"]}])
         self.assertEqual(self.ci("collect", "--out", out), f"CI: {out}  FAILED: 1  BLOCKING: 1  NO-EVIDENCE: NIL\n")
         self.assertNotIn("run download 40 ", (self.tmp / "calls.txt").read_text())
+        # the review's own run has no artifact (an indeterminate review): an older run's findings do not count
+        self.put("checks.json", [{"name": "ai-review", "bucket": "fail", "state": "FAILURE",
+                                  "link": "https://g/o/r/actions/runs/43"}])
+        self.assertIn("NO-EVIDENCE: ai-review", self.ci("collect", "--out", out))
 
 
 if __name__ == "__main__":
