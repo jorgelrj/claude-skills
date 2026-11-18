@@ -48,6 +48,7 @@ worktree:
   link: []
   setup: []
   teardown: []
+  before_run: []
   env: {}
 limits:
   max_parallel_builders: 3

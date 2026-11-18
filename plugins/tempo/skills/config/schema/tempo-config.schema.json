@@ -189,6 +189,13 @@
           },
           "description": "Commands run inside a worktree before SHIP removes it, for what setup created. {worktree} as in setup."
         },
+        "before_run": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Commands tempo_run.py runs at the root of a task worktree before each command, never in the main checkout: clears what one run leaves that breaks the next (generated plugin sources, a stray Podfile). A failing step is named in the summary and does not stop the run."
+        },
         "env": {
           "$ref": "#/$defs/env"
         }
