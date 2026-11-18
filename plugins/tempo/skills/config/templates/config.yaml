@@ -33,6 +33,7 @@ pr:
   tool: gh                      # gh | none
   title: "{type}({ticket}): {summary}"
   language: en
+  # required_checks: [ci-gate, ai-review]   # CI-WAIT waits until these report (a late commit status is not yet pending)
 
 # targets:                      # extra platform test runs, e.g. Flutter on Chrome
 #   - name: web

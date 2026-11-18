@@ -5,7 +5,8 @@ Used by the CI-WAIT stage (orchestrator 3.12.1), which runs after SHIP when `lim
 TEMPO never merges: the repo's CI (or Jorge) does. This script only reads the PR with `gh`.
 
 Usage: tempo_ci.py <command> --pr N [--repo DIR]
-  watch   --pr N [--poll S] [--max S]   poll `gh pr view` and `gh pr checks` every --poll seconds (default 60)
+  watch   --pr N [--poll S] [--max S] [--require NAME]...
+                                        poll `gh pr view` and `gh pr checks` every --poll seconds (default 60)
                                         for at most --max seconds (default 3600), then print one line and exit 0:
                                           MERGED: <url>            the PR merged; the task may end
                                           CLOSED: <url>            closed without a merge
@@ -13,6 +14,10 @@ Usage: tempo_ci.py <command> --pr N [--repo DIR]
                                           DRAFT: <url>             a draft never merges: `gh pr ready`
                                           RED: <check>, ...        a check failed or was cancelled, and none is pending
                                           TIMEOUT: green|pending <checks>   nothing decided within --max
+                                          ERROR: <gh error>        every poll in the window failed (auth, repo, network)
+                                        --require names a check that must report before a verdict: until it
+                                        appears it counts as pending (a commit status such as ai-review shows
+                                        up only when its run ends).
                                         The orchestrator runs it as a background Bash command; the spawn guard
                                         allows it by name (the whole command only). --max 100 runs it in the
                                         foreground under the 110 s cap instead.
@@ -20,7 +25,9 @@ Usage: tempo_ci.py <command> --pr N [--repo DIR]
                                         write the evidence of the red checks to FILE: the last --lines lines
                                         (default 80) of `gh run view --log-failed` per failed job, and the
                                         CRITICAL and HIGH findings of the review JSON in the artifact NAME
-                                        (default ai-review) of a run on the PR head. Prints
+                                        (default ai-review) of the review's run: the run in a check's link first,
+                                        then runs on the PR head, then pull_request_target runs (recorded on
+                                        the base, not the head) whose title is the PR's. Prints
                                         `CI: FILE  FAILED: <n>  BLOCKING: <n>  NO-EVIDENCE: <checks or NIL>`.
 Exit 0 ok, 1 gh failed or usage error.
 """
@@ -51,7 +58,7 @@ def gh(cwd, *args, ok=(0,)):
 
 
 def pr_view(cwd, pr):
-    return json.loads(gh(cwd, "pr", "view", str(pr), "--json", "state,isDraft,mergeStateStatus,headRefOid,url"))
+    return json.loads(gh(cwd, "pr", "view", str(pr), "--json", "state,isDraft,mergeStateStatus,headRefOid,url,title"))
 
 
 def pr_checks(cwd, pr):
@@ -63,6 +70,12 @@ def pr_checks(cwd, pr):
             return []
         raise
     return json.loads(out or "[]")
+
+
+def with_required(checks, require=()):
+    """The checks plus a pending entry for each required check that has not reported yet."""
+    seen = {c.get("name") for c in checks}
+    return checks + [{"name": n, "bucket": "pending"} for n in require if n not in seen]
 
 
 def verdict(pr, checks):
@@ -90,19 +103,20 @@ def waiting(checks):
     return "green (every check passed; the PR is not merged yet)"
 
 
-def watch(cwd, pr, poll, max_s):
-    end = time.time() + max_s
+def watch(cwd, pr, poll, max_s, require=()):
+    end, answered = time.time() + max_s, False
     while True:
         try:
-            checks = pr_checks(cwd, pr)
+            checks = with_required(pr_checks(cwd, pr), require)
             v = verdict(pr_view(cwd, pr), checks)
-            state = waiting(checks)
+            state, answered = waiting(checks), True
         except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as e:
             v, state = None, f"pending (gh did not answer: {e})"  # a network blip is not a verdict
+            err = e
         if v:
             print(f"{v[0]}: {v[1]}"); return 0
         if time.time() + poll > end:
-            print(f"TIMEOUT: {state}"); return 0
+            print(f"TIMEOUT: {state}" if answered else f"ERROR: gh did not answer in the window: {err}"); return 0
         time.sleep(poll)
 
 
@@ -112,9 +126,33 @@ def review_findings(data):
     return [f for f in items or [] if isinstance(f, dict) and str(f.get("severity", "")).upper() in BLOCKING]
 
 
+def review_runs(cwd, head, checks, artifact, md):
+    """Run ids that may hold the review artifact, most likely first, without repeats.
+
+    The review check's own link (its status target_url, the run URL) comes first: a pull_request_target run is
+    recorded on the base's head commit, so `run list --commit <PR head>` misses it. Then every other check's run,
+    the runs on the head, and the pull_request_target runs whose title is the PR's title."""
+    ids = []
+    for c in sorted(checks, key=lambda c: artifact not in (c.get("name") or "")):
+        m = RUN_LINK.search(c.get("link") or "")
+        if m:
+            ids.append(m.group(1))
+    for what, args in (("on the head", ["--commit", head.get("headRefOid") or ""]),
+                       ("from pull_request_target", ["--event", "pull_request_target"])):
+        try:
+            runs = json.loads(gh(cwd, "run", "list", *args, "--limit", "30", "--json", "databaseId,displayTitle") or "[]")
+        except RuntimeError as e:
+            md.append(f"- runs {what} not listed: {e}")
+            continue
+        ids += [str(r["databaseId"]) for r in runs
+                if "--commit" in args or (r.get("displayTitle") or None) == head.get("title")]
+    return list(dict.fromkeys(ids))
+
+
 def collect(cwd, pr, out, lines, artifact):
     head = pr_view(cwd, pr)
-    failed = [c for c in pr_checks(cwd, pr) if c.get("bucket") in ("fail", "cancel")]
+    checks = pr_checks(cwd, pr)
+    failed = [c for c in checks if c.get("bucket") in ("fail", "cancel")]
     md = [f"# CI evidence: PR {head.get('url')}", f"Head: {head.get('headRefOid')}", ""]
     no_evidence = []
     for c in failed:
@@ -135,17 +173,11 @@ def collect(cwd, pr, out, lines, artifact):
             no_evidence.append(c["name"])
         md.append("")
     blocking = []
-    try:
-        runs = json.loads(gh(cwd, "run", "list", "--commit", head.get("headRefOid") or "", "--limit", "30",
-                             "--json", "databaseId,workflowName") or "[]")
-    except RuntimeError as e:
-        runs = []
-        md.append(f"- runs on the head not listed: {e}")
     found = False
-    for run in runs:
+    for run_id in review_runs(cwd, head, checks, artifact, md):
         with tempfile.TemporaryDirectory() as tmp:
             try:
-                gh(cwd, "run", "download", str(run["databaseId"]), "-n", artifact, "-D", tmp)
+                gh(cwd, "run", "download", run_id, "-n", artifact, "-D", tmp)
             except RuntimeError:
                 continue  # this run has no such artifact
             found = True
@@ -158,7 +190,7 @@ def collect(cwd, pr, out, lines, artifact):
             break
     md.append(f"## Review findings, CRITICAL and HIGH ({artifact})")
     if not found:
-        md.append(f"- NIL: no run on the head has an artifact named {artifact}")
+        md.append(f"- NIL: no run of this PR has an artifact named {artifact}")
     for f in blocking:
         where = f"{f.get('file') or '?'}:{f.get('line') or '?'}"
         md.append(f"- {str(f.get('severity')).upper()} {where} {f.get('title') or ''}: {f.get('detail') or f.get('message') or ''}"
@@ -183,6 +215,7 @@ def main(argv=None):
         if name == "watch":
             s.add_argument("--poll", type=float, default=60)
             s.add_argument("--max", type=float, default=3600)
+            s.add_argument("--require", action="append", default=[])
         else:
             s.add_argument("--out", required=True)
             s.add_argument("--lines", type=int, default=80)
@@ -190,7 +223,7 @@ def main(argv=None):
     a = p.parse_args(argv)
     try:
         if a.cmd == "watch":
-            return watch(a.repo, a.pr, a.poll, a.max)
+            return watch(a.repo, a.pr, a.poll, a.max, a.require)
         return collect(a.repo, a.pr, a.out, a.lines, a.artifact)
     except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as e:
         print(f"ERROR: {e}"); return 1

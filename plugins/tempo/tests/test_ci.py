@@ -15,7 +15,8 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "skills" / "orchestrator" / "scr
 sys.path.insert(0, str(SCRIPTS))
 import tempo_ci  # noqa: E402
 
-# The stub answers from JSON files in $STUB: pr.json, checks.json (+ checks.exit), log.txt, runs.json, review.json.
+# The stub answers from files in $STUB: pr.json, checks.json (+ checks.exit), log.txt, runs.json (runs on the head),
+# runs-prt.json (pull_request_target runs), review.json (the artifact of run 42).
 GH = """#!/usr/bin/env python3
 import os, sys, pathlib
 d, a = pathlib.Path(os.environ["STUB"]), sys.argv[1:]
@@ -28,7 +29,7 @@ def out(name, code=0):
 if a[:2] == ["pr", "view"]: out("pr.json")
 if a[:2] == ["pr", "checks"]: out("checks.json", int((d / "checks.exit").read_text()) if (d / "checks.exit").exists() else 0)
 if a[:2] == ["run", "view"]: out("log.txt")
-if a[:2] == ["run", "list"]: out("runs.json")
+if a[:2] == ["run", "list"]: out("runs-prt.json" if "--event" in a else "runs.json")
 if a[:2] == ["run", "download"]:
     if a[2] != "42" or not (d / "review.json").exists():
         sys.stderr.write("no artifact matches any of the names\\n"); sys.exit(1)
@@ -37,7 +38,8 @@ if a[:2] == ["run", "download"]:
 sys.exit(2)
 """
 
-PR = {"state": "OPEN", "isDraft": False, "mergeStateStatus": "CLEAN", "headRefOid": "abc123", "url": "https://x/pull/7"}
+PR = {"state": "OPEN", "isDraft": False, "mergeStateStatus": "CLEAN", "headRefOid": "abc123", "url": "https://x/pull/7",
+      "title": "feat(PD-1): a change"}
 
 
 class Verdict(unittest.TestCase):
@@ -56,6 +58,10 @@ class Verdict(unittest.TestCase):
                          ("RED", "ai-review, web"))
         self.assertEqual(tempo_ci.waiting([]), "pending (no checks reported yet)")
         self.assertTrue(tempo_ci.waiting(green).startswith("green"))
+        # a required check that has not reported yet (a commit status posts when its run ends) counts as pending
+        fast_fail = tempo_ci.with_required([{"name": "ci-gate", "bucket": "fail"}], ["ci-gate", "ai-review"])
+        self.assertIsNone(tempo_ci.verdict(PR, fast_fail))
+        self.assertEqual(tempo_ci.waiting(tempo_ci.with_required(green, ["ai-review"])), "pending ai-review")
 
     def test_review_findings_keeps_critical_and_high(self):
         items = [{"severity": "HIGH", "file": "a"}, {"severity": "medium"}, {"severity": "critical"}, "junk"]
@@ -97,7 +103,13 @@ class Stub(unittest.TestCase):
 
     def test_watch_survives_gh_that_does_not_answer(self):
         (self.tmp / "bin" / "gh").write_text("#!/bin/sh\necho 'connection refused' >&2\nexit 1\n")
-        self.assertIn("TIMEOUT: pending (gh did not answer", self.ci("watch", "--poll", "0.1", "--max", "0.1"))
+        self.assertIn("ERROR: gh did not answer in the window: gh pr view: connection refused",
+                      self.ci("watch", "--poll", "0.1", "--max", "0.1"))
+
+    def test_watch_waits_for_a_required_check_that_has_not_reported(self):
+        self.put("checks.json", [{"name": "ci-gate", "bucket": "fail"}]); self.put("checks.exit", "1")
+        self.assertEqual(self.ci("watch", "--poll", "0.1", "--max", "0.1", "--require", "ai-review"),
+                         "TIMEOUT: pending ai-review; red so far: ci-gate\n")
 
     def test_collect_writes_log_tails_and_blocking_findings(self):
         self.put("checks.json", [
@@ -121,7 +133,23 @@ class Stub(unittest.TestCase):
         self.assertIn("run view --job 11 --log-failed", (self.tmp / "calls.txt").read_text())
         (self.tmp / "review.json").unlink()  # an indeterminate review: red, and nothing to fix
         self.assertIn("NO-EVIDENCE: ai-review", self.ci("collect", "--out", out))
-        self.assertIn("no run on the head has an artifact named ai-review", out.read_text())
+        self.assertIn("no run of this PR has an artifact named ai-review", out.read_text())
+
+    def test_collect_finds_the_review_run_off_the_head(self):
+        # pull_request_target runs on the base's head commit, so no run on the PR head holds the review
+        self.put("checks.json", [{"name": "ai-review", "bucket": "fail", "state": "FAILURE",
+                                  "link": "https://g/o/r/actions/runs/42"}])
+        self.put("runs.json", [{"databaseId": 41, "displayTitle": PR["title"]}])
+        self.put("review.json", {"findings": [{"severity": "CRITICAL", "file": "a.ts", "line": 2, "title": "Leak"}]})
+        out = self.tmp / "r.md"
+        self.assertEqual(self.ci("collect", "--out", out), f"CI: {out}  FAILED: 1  BLOCKING: 1  NO-EVIDENCE: NIL\n")
+        downloads = [c for c in (self.tmp / "calls.txt").read_text().splitlines() if c.startswith("run download")]
+        self.assertTrue(downloads[0].startswith("run download 42 "), downloads)  # the link's run, tried first
+        # no link: the pull_request_target run with the PR's title
+        self.put("checks.json", [{"name": "ai-review", "bucket": "fail", "state": "FAILURE", "link": ""}])
+        self.put("runs-prt.json", [{"databaseId": 40, "displayTitle": "another PR"}, {"databaseId": 42, "displayTitle": PR["title"]}])
+        self.assertEqual(self.ci("collect", "--out", out), f"CI: {out}  FAILED: 1  BLOCKING: 1  NO-EVIDENCE: NIL\n")
+        self.assertNotIn("run download 40 ", (self.tmp / "calls.txt").read_text())
 
 
 if __name__ == "__main__":

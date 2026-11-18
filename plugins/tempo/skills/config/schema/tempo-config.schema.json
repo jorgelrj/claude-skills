@@ -157,6 +157,11 @@
         "body_template": {
           "type": "string",
           "description": "Path to a markdown file used as the PR body layout, relative to the repo root. Default: .github/pull_request_template.md when present."
+        },
+        "required_checks": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "description": "Checks CI-WAIT waits for before it reads a round (limits.ci_rounds above 0): until one reports it counts as pending. Name the ones that appear late, such as a commit status posted when its run ends (ai-review)."
         }
       }
     },

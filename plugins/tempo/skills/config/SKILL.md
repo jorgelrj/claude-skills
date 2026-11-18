@@ -64,7 +64,7 @@ task:
   - `gates.full_bars: ci` makes every integrate LOCAL: the touched tests and their mirrors, one typecheck of the touched packages, lint. No whole package, no build, no platform target, critical or not.
   - `commands.test_local` is the test-one command for that tier, with the same placeholders, pointed at a runner that skips what only CI runs (widget or browser tests). Under `ci`, `cmd test_one` prints it.
   - `targets[].run: ci` marks a target only CI runs; it never prints here, `/tempo:verify` included.
-  - `limits.ci_rounds` above 0 adds the CI-WAIT stage after SHIP (orchestrator 3.12.1): TEMPO watches the PR's checks, fixes red checks and blocking review findings in plain commits, at most that many rounds, and ends the task once the PR is merged. TEMPO never merges. Set `pr.draft: false`; `check` warns about a draft, about `ci` without `ci_rounds`, and about `pr.tool: none`.
+  - `limits.ci_rounds` above 0 adds the CI-WAIT stage after SHIP (orchestrator 3.12.1): TEMPO watches the PR's checks, fixes red checks and blocking review findings in plain commits, at most that many rounds, and ends the task once the PR is merged. TEMPO never merges. List the checks that report late, such as a commit status posted when its run ends, in `pr.required_checks`, so a round waits for them. Set `pr.draft: false`; `check` warns about a draft, about `ci` without `ci_rounds`, and about `pr.tool: none`.
   - None of these set, a repo runs as before.
 
 ## 3 The script
