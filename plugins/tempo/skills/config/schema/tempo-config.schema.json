@@ -681,7 +681,7 @@
           "run": {
             "type": "string",
             "enum": ["routine", "final", "critical", "ci"],
-            "description": "routine: runs at every integrate, scoped. final: runs once, scoped, at the integrate after the last wave (targets --final). critical: runs only for critical changes and on /tempo:verify. ci: never inside a task; the PR's CI runs it, and only /tempo:verify runs it here. Default: critical for an advisory target, routine otherwise."
+            "description": "routine: runs at every integrate, scoped. final: runs once, scoped, at the integrate after the last wave (targets --final). critical: runs only for critical changes and on /tempo:verify. ci: never on this machine, /tempo:verify included; the PR's CI runs it. Default: critical for an advisory target, routine otherwise."
           },
           "advisory": {
             "type": "boolean",

@@ -197,6 +197,10 @@ class Config(unittest.TestCase):
         self.write(OLD.replace("  build:", "  test_local: cd {package} && flutter test -x widget {tests}\n  build:")
                    + "gates:\n  full_bars: ci\nlimits:\n  ci_rounds: 3\n")
         self.assertEqual(self.cfg("cmd", "test_one"), "cd {package} && flutter test -x widget {tests}\n")
+        (self.repo / ".tempo" / "config.local.yaml").write_text(  # a slow laptop caps the command its tier runs
+            "commands:\n  test_local: cd {package} && flutter test -j 2 -x widget {tests}\n  test_one: cd {package} && flutter test -j 2 {tests}\n")
+        self.assertEqual(self.cfg("cmd", "test_one"), "cd {package} && flutter test -j 2 -x widget {tests}\n")
+        (self.repo / ".tempo" / "config.local.yaml").unlink()
         self.write(OLD.replace("  build:", "  test_local: cd {package} && flutter test -x widget {tests}\n  build:"))
         self.assertEqual(self.cfg("cmd", "test_one"), "cd {package} && flutter test {tests}\n")  # other tiers ignore it
         self.write(OLD + "gates:\n  full_bars: ci\n")
@@ -209,7 +213,7 @@ class Config(unittest.TestCase):
         for flags in ((), ("--critical",), ("--full",), ("--critical", "--full", "--final")):
             self.assertNotIn("e2e", self.cfg("targets", *flags, "--paths", "app/lib/foo.dart"), flags)
             self.assertNotIn("e2e", self.cfg("targets", *flags), flags)
-        self.assertIn("e2e\tcd app && melos run e2e", self.cfg("targets", "--full", "--verify"))
+        self.assertNotIn("e2e", self.cfg("targets", "--full", "--verify"))  # not even /tempo:verify runs it
 
     def test_the_machine_override_merges_last_and_its_absence_changes_nothing(self):
         before = self.cfg("resolve")

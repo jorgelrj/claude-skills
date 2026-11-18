@@ -37,6 +37,7 @@ Every artifact follows the `document-standard` skill: structured markdown in the
 | `review/order-NN.md` | `raw-findings.md` | reviewer (lens ORDER) | the order's builder (FIX), the SPEC reviewer |
 | `findings-rN.md` | `findings.md` | verifier | orchestrator, builders |
 | `qa-rN.md` | `qa.md` | qa | orchestrator |
+| `findings-ci-N.md` | `findings.md` | orchestrator, from `ci/round-N.md` (`tempo_ci.py collect`) in CI-WAIT | builders, architect |
 | `pr.md` | `pr-summary.md` | orchestrator | Jorge, becomes the PR body |
 | `esc-N.md` | `escalation.md` | any agent, sent by orchestrator | Jorge |
 

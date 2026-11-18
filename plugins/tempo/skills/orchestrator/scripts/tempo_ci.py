@@ -11,7 +11,7 @@ Usage: tempo_ci.py <command> --pr N [--repo DIR]
                                           CLOSED: <url>            closed without a merge
                                           CONFLICT: <url>          the PR conflicts with its base (CI does not run)
                                           DRAFT: <url>             a draft never merges: `gh pr ready`
-                                          RED: <check>, ...        a check failed or was cancelled
+                                          RED: <check>, ...        a check failed or was cancelled, and none is pending
                                           TIMEOUT: green|pending <checks>   nothing decided within --max
                                         The orchestrator runs it as a background Bash command; the spawn guard
                                         allows it by name (the whole command only). --max 100 runs it in the
@@ -77,15 +77,16 @@ def verdict(pr, checks):
     if pr.get("isDraft"):
         return "DRAFT", url
     red = [c["name"] for c in checks if c.get("bucket") in ("fail", "cancel")]
-    if red:
+    if red and not any(c.get("bucket") == "pending" for c in checks):  # one round reads every check's verdict
         return "RED", ", ".join(red)
     return None
 
 
 def waiting(checks):
     pending = [c["name"] for c in checks if c.get("bucket") == "pending"]
+    red = [c["name"] for c in checks if c.get("bucket") in ("fail", "cancel")]
     if pending or not checks:
-        return "pending " + (", ".join(pending) or "(no checks reported yet)")
+        return "pending " + (", ".join(pending) or "(no checks reported yet)") + (f"; red so far: {', '.join(red)}" if red else "")
     return "green (every check passed; the PR is not merged yet)"
 
 

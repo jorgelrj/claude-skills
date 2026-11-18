@@ -35,8 +35,8 @@ Commands:
                                          with --critical or --full; run: final also with --final (the integrate
                                          after the last wave). --scoped-only: a target that would print
                                          its whole command prints `# DEFERRED whole suite` instead.
-                                         Under gates.full_bars: ci a target prints `# DEFERRED to CI`, and a
-                                         run: ci target never prints; both run their commands with --verify only
+                                         Under gates.full_bars: ci a target prints `# DEFERRED to CI` (its
+                                         command with --verify); a run: ci target never prints
   bars    [--paths P ...] [--critical]   print the bars an integrate runs: BARS: FULL|NARROW and why. With
                                          gates.full_bars: verify it is NARROW, plus a DEFERRED: line when the
                                          change would have run the whole suite. With gates.full_bars: ci it is
@@ -1008,8 +1008,8 @@ def main(argv=None):
             files = None
             for tg in cfg.get("targets") or []:
                 run = tg.get("run", "critical" if tg.get("advisory") else "routine")
-                if run == "ci" and not a.verify:
-                    continue  # never on this machine: the PR's CI runs it
+                if run == "ci":
+                    continue  # never on this machine, /tempo:verify included: the PR's CI runs it
                 if not (a.critical or a.full) and (run == "critical" or (run == "final" and not a.final)):
                     continue
                 tail = "\tadvisory" if tg.get("advisory") else ""

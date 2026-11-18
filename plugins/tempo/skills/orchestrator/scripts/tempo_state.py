@@ -90,7 +90,7 @@ WO_STATUSES = ["ISSUED", "BUILDING", "DONE", "BLOCKED"]
 UNFILLED = re.compile(r"<[A-Za-z_-]+>|\{[A-Za-z_]+\}|[-_/]$|(^|/)\.md$|[-_]\.md$")
 # Stops autopilot never accepts (orchestrator 4.5.1). decide refuses them, and refuses a question
 # that reads like a source the ticket names could not be opened: a stand-in for it is not a decision.
-STOP_KINDS = {"NO-REPRO", "BEHAVIOUR-CHANGE", "OUT-OF-ORDER-DECISION", "HARD-TO-UNDO", "MISSING-SOURCE", "GATE-PR"}
+STOP_KINDS = {"NO-REPRO", "BEHAVIOUR-CHANGE", "OUT-OF-ORDER-DECISION", "HARD-TO-UNDO", "MISSING-SOURCE", "GATE-PR", "CI-STUCK"}
 MISSING_SOURCE = re.compile(
     r"not (found|available|accessible|visible|reachable)|\b40[134]\b|no access|access denied|"
     r"can(not|'t|\u2019t) (open|access|find|fetch|see)|missing (source|asset|attachment|design|prototype|file|image|icon)|"

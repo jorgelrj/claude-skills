@@ -45,6 +45,9 @@ class Verdict(unittest.TestCase):
         green = [{"name": "ci-gate", "bucket": "pass"}]
         self.assertIsNone(tempo_ci.verdict(PR, green))  # green but not merged: keep waiting
         self.assertIsNone(tempo_ci.verdict(PR, [{"name": "ci-gate", "bucket": "pending"}]))
+        early = [{"name": "flutter", "bucket": "fail"}, {"name": "ai-review", "bucket": "pending"}]
+        self.assertIsNone(tempo_ci.verdict(PR, early))  # the review still runs: wait, so one round sees both
+        self.assertEqual(tempo_ci.waiting(early), "pending ai-review; red so far: flutter")
         self.assertEqual(tempo_ci.verdict({**PR, "state": "MERGED"}, []), ("MERGED", PR["url"]))
         self.assertEqual(tempo_ci.verdict({**PR, "state": "CLOSED"}, green), ("CLOSED", PR["url"]))
         self.assertEqual(tempo_ci.verdict({**PR, "mergeStateStatus": "DIRTY"}, green), ("CONFLICT", PR["url"]))
