@@ -118,6 +118,44 @@ class Heavy(Base):
         self.assertEqual([e["heavy"] for e in self.events(d, "run")], [True, False, True])
 
 
+class BeforeRun(Base):
+    def repo(self):
+        main = self.tmp / "repo"
+        git = lambda *a: subprocess.run(["git", "-C", str(main), *a], check=True, capture_output=True)
+        main.mkdir()
+        git("init", "-q"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x")
+        git("worktree", "add", "-q", "--detach", str(self.tmp / "wt"))
+        (self.tmp / "wt" / "sub").mkdir()
+        return main, self.tmp / "wt"
+
+    def test_steps_run_at_a_worktree_root_and_never_in_the_main_checkout(self):
+        main, wt = self.repo()
+        steps = ["touch swept", "exit 3"]
+        self.assertEqual(tempo_run.before_run(steps, wt / "sub"), ["BEFORE RUN: exit 3: exit 3"])
+        self.assertTrue((wt / "swept").exists())
+        self.assertEqual(tempo_run.before_run(steps, main), [])
+        self.assertFalse((main / "swept").exists())
+        self.assertEqual(tempo_run.before_run(steps, self.tmp), [])  # outside git
+        self.assertEqual(tempo_run.before_run([], wt), [])
+
+    def test_a_task_run_sweeps_first_and_names_a_failed_step(self):
+        main, wt = self.repo()
+        if not shutil.which("uv"):
+            try:
+                import jsonschema, yaml  # noqa: F401
+            except ImportError:
+                self.skipTest("tempo_config.py needs uv, or PyYAML and jsonschema")
+        d = main / ".tempo" / "T-001"
+        d.mkdir(parents=True)
+        (d.parent / "config.yaml").write_text("version: 1\nworktree:\n  before_run:\n    - rm -f stray\n    - exit 4\n")
+        (wt / "stray").write_text("x")
+        r = subprocess.run([sys.executable, str(SCRIPTS / "tempo_run.py"), "--task", str(d), "--max", "0", "--",
+                            "test ! -e stray"], cwd=wt, capture_output=True, text=True, env=self.env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("BEFORE RUN: exit 4: exit 4", r.stdout)
+        self.assertIn(" clean", r.stdout)  # TREE is taken after the sweep
+
+
 class Killed(Base):
     KEYS = {"at", "ev", "id", "exit", "seconds", "waited", "load1", "killed", "leftovers", "head", "clean"}
 

@@ -402,6 +402,13 @@ From the 2026-11-17 audit of pod1um runs (Mac and two Windows machines). Each to
 - **Sizing.** Locale and generated files don't count toward size. A lane-M task gets 1 or 2 work orders by default.
 - **Not in this version:** the HIGH-only `fix_severity` (it needs the final read), a cache of passed runs, and a cap on concurrent runs (measure first).
 - **Upgrade order.** A config that uses `tests:` or `run: final` fails `check` on 0.25 and older, so update every machine before such a config lands.
+### Sweep before each run (0.26.1)
+
+From PD-47 in pod1um: Flutter runs in a task worktree leave plugin sources under `build/ios/SourcePackages/` and an untracked `ios/Podfile`. The next run's pub resolution and `dart format` pick them up and fail, and every prompt had to tell agents to clear them by hand.
+
+- **`worktree.before_run`.** `tempo_run.py` runs these commands at the root of a linked worktree before each command it runs, and before it records `TREE`. They never run in the main checkout or outside git.
+- A step that fails prints `BEFORE RUN: exit <n>: <step>` in the summary. The command runs anyway.
+- **Upgrade order.** A config that sets `worktree.before_run` fails `check` on 0.26.0 and older, so update every machine first.
 
 ## How it runs inside Claude Code
 

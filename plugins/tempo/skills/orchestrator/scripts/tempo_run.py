@@ -40,6 +40,8 @@ Prints:
   RUN: <label>  EXIT: <code>  TIME: <m:ss>  WAITED: <m:ss>  LOG: <path>
   TREE: <sha> clean|dirty   the git HEAD of the run's folder when it started, and whether the tree had no change
                             (untracked files count); TREE: none outside git
+  BEFORE RUN: exit <n>: <step>   a worktree.before_run step that failed; the command ran anyway. The steps run at
+                            the root of a linked worktree before each command, never in the main checkout
   FAILURES: <count shown>   then up to 40 failure lines, or FAILURES: NIL; only when EXIT is not 0
   TAIL:                     then the last --tail lines (default 25)
   KILLED: signal <n>. ...   first line when the exit is 137 or 143 (SIGKILL, SIGTERM from outside), or the worker died
@@ -117,6 +119,33 @@ def decide_heavy(cmd, flag, cfg):
     if part in {last_part(c[k]) for k in ("typecheck", "lint") if c.get(k)}:
         return False
     return flag
+
+
+def before_run(cmds, cwd):
+    """Runs worktree.before_run at the root of the linked worktree holding cwd; never in a main checkout or outside git.
+    Returns a BEFORE RUN line for each step that failed."""
+    if not cmds:
+        return []
+    def git(*a):
+        r = subprocess.run(["git", "rev-parse", "--path-format=absolute", *a], cwd=cwd, capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, timeout=30)
+        return r.stdout.strip() if r.returncode == 0 else None
+    try:
+        top, gdir, common = git("--show-toplevel"), git("--git-dir"), git("--git-common-dir")
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if not top or gdir == common:  # the main checkout has one git dir; a linked worktree has its own
+        return []
+    bad = []
+    for c in cmds:
+        try:
+            code = subprocess.run(tempo_os.shell(c), cwd=top, capture_output=True, stdin=subprocess.DEVNULL,
+                                  timeout=60).returncode
+        except (OSError, subprocess.TimeoutExpired):
+            code = "timeout"
+        if code:
+            bad.append(f"BEFORE RUN: exit {code}: {c}"[:300])
+    return bad
 
 
 def tree(cwd):
@@ -239,6 +268,7 @@ def worker(run, opts, cmd):
             tree_line(opts)]
     if killed:
         rows.insert(0, killed_line(code - 128))
+    rows += opts.get("before") or []
     if waited >= 1 and holder:
         rows.append(f"WAITED FOR: {holder}")
     # on exit 0 the failure patterns are noise (a test named "failed", a logged Exception) and mislead agents
@@ -388,11 +418,12 @@ def main(argv=None):
     if not cmd:
         p.print_usage(sys.stderr); return 2
     task = task or a.task
-    heavy = a.heavy
+    heavy, steps = a.heavy, []
     if task:
         try:
             cfg = json.loads(tempo_procs.cfg(Path(task).resolve().parent.parent, "resolve", "--format", "json"))
             heavy = decide_heavy(cmd, a.heavy, cfg["config"])
+            steps = (cfg["config"].get("worktree") or {}).get("before_run") or []
         except Exception:  # no config, or tempo_config.py cannot run here: the caller's flag decides, as before
             pass
     # a hung run ends on its own; the default clears a whole suite or package folder several times over under load
@@ -403,10 +434,11 @@ def main(argv=None):
     log_dir.mkdir(parents=True, exist_ok=True)
     slug = re.sub(r"[^A-Za-z0-9]+", "-", label).strip("-")[:40] or "run"
     log = log_dir.resolve() / f"{time.strftime('%H%M%S')}-{slug}.log"
+    before = before_run(steps, os.getcwd())  # first, so TREE sees the tree the command runs on
     head, tidy = tree(os.getcwd())
     opts = {"label": label, "log": log.as_posix(), "heavy": heavy, "slots": a.slots, "tail": a.tail,
             "timeout": a.timeout, "cmd": cmd, "cwd": os.getcwd(), "started": time.time(),
-            "task": os.path.abspath(task) if task else None, "head": head, "clean": tidy}
+            "task": os.path.abspath(task) if task else None, "head": head, "clean": tidy, "before": before}
     (run / "opts.json").write_text(json.dumps(opts), encoding="utf-8")
     owner = tempo_procs.find_owner()
     if task:
