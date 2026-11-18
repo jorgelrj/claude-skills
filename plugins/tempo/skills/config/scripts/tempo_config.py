@@ -771,16 +771,19 @@ def package_of(rel, packages):
 
 def scoped_runs(tg, changed, files):
     """Group the tests a target should run by package. Changed test files run as they are;
-    a changed source file runs the tests whose name mirrors it (foo.dart -> foo_test.dart)."""
+    a changed source file runs the tests whose name mirrors it (foo.dart -> foo_test.dart), and the
+    split files of that test (foo_<area>_test.dart) unless foo_<area> is a source file of its own."""
     globs = tg.get("test_globs") or TEST_GLOBS
     markers = tg.get("package_markers") or PACKAGE_MARKERS
     packages = {f.rsplit("/", 1)[0] if "/" in f else "" for f in files if f.rsplit("/", 1)[-1] in markers}
     present = set(files)
-    tests_by_stem = {}
+    tests_by_stem, source_stems = {}, set()
     for f in files:
+        stem = f.rsplit("/", 1)[-1].split(".", 1)[0]
         if is_test(f, globs):
-            stem = f.rsplit("/", 1)[-1].split(".", 1)[0]
             tests_by_stem.setdefault(stem, []).append(f)
+        else:
+            source_stems.add((package_of(f, packages), stem))
     picked, unmapped = {}, []
     for rel in changed:
         pkg = package_of(rel, packages)
@@ -794,6 +797,10 @@ def scoped_runs(tg, changed, files):
         stem = rel.rsplit("/", 1)[-1].split(".", 1)[0]
         mirrors = [t for c in (f"{stem}_test", f"test_{stem}", stem) for t in tests_by_stem.get(c, [])
                    if package_of(t, packages) == pkg and t != rel]
+        mirrors += [t for c, ts in tests_by_stem.items()
+                    if c.startswith(f"{stem}_") and c.endswith("_test") and len(c) > len(stem) + 5
+                    and (pkg, c[:-5]) not in source_stems
+                    for t in ts if package_of(t, packages) == pkg]
         if mirrors:
             picked.setdefault(pkg, set()).update(mirrors)
         else:

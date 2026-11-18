@@ -152,6 +152,16 @@ class Config(unittest.TestCase):
         self.assertEqual(self.cfg("bars", "--paths", "app/lib/bar.dart", "app/test/bar_test.dart"), narrow)
         self.assertEqual(self.cfg("bars"), narrow)
 
+    def test_a_split_test_mirrors_its_page_but_not_a_source_of_its_own(self):
+        for f in ("app/test/foo_panels_test.dart", "app/lib/foo_bar.dart", "app/test/foo_bar_test.dart"):
+            (self.repo / f).write_text("")
+        subprocess.run(["git", "-C", str(self.repo), "add", "app"], check=True)
+        self.write(OLD + "tests:\n  slow: [app/test/foo_panels_test.dart, app/test/foo_bar_test.dart]\n")
+        narrow = "BARS: NARROW  WHY: routine change\n"
+        # foo_panels_test splits foo_test; foo_bar_test mirrors foo_bar.dart, so a change to foo.dart leaves it out.
+        self.assertEqual(self.cfg("bars", "--paths", "app/lib/foo.dart"), narrow + "SLOW: app/test/foo_panels_test.dart\n")
+        self.assertEqual(self.cfg("bars", "--paths", "app/lib/foo_bar.dart"), narrow + "SLOW: app/test/foo_bar_test.dart\n")
+
     def test_check_warns_when_the_repo_path_has_a_space(self):
         self.assertNotIn("WARN", self.cfg("check"))
         self.repo = self.repo.rename(self.tmp / "my repo")
