@@ -4,16 +4,17 @@ version: 1
 commands:
   test: null        # detected from the repo when null
   test_one: null
+  test_local: null  # gates.full_bars: ci only: the test-one command that skips what only CI runs
   build: null
   typecheck: null
   lint: null
   run_app: null
-targets: []        # extra platform test runs: [{name, command, paths, scoped_command?, advisory?, run?}]
+targets: []        # extra platform test runs: [{name, command, paths, scoped_command?, advisory?, run?}]; run: ci never runs locally
 tests:
   always: []       # test files run at every NARROW integrate, whatever packages it touches
   slow: []         # test files run filtered by builders and QA, whole once at the integrate after the last wave
 gates:
-  full_bars: on_demand    # on_demand: Integrate runs NARROW bars; the full suite runs for critical changes and on /tempo:verify. integrate: every task's final integrate runs it. verify: never inside a task, only on /tempo:verify or the branch the task merges into
+  full_bars: on_demand    # on_demand: Integrate runs NARROW bars; the full suite runs for critical changes and on /tempo:verify. integrate: every task's final integrate runs it. verify: never inside a task, only on /tempo:verify or the branch the task merges into. ci: LOCAL bars (touched tests, one typecheck, lint); the PR's CI runs the rest
   full_paths:             # a change to one of these is wide enough to run FULL bars
     - "**/pubspec.lock"
     - "**/melos.yaml"
@@ -56,6 +57,7 @@ limits:
   review_extensions: 1
   narrow_fix_lines: 40
   qa_rounds: 3
+  ci_rounds: 0            # above 0: after SHIP the task waits on the PR's checks (CI-WAIT), fixes them, and ends when the PR merges
   repro_hypotheses: 3
   repro_minutes: 30
   split_orders: 4         # more Work Orders than this: HANDOFF splits the task into stacked slices (0 = off)

@@ -410,6 +410,19 @@ From PD-47 in pod1um: Flutter runs in a task worktree leave plugin sources under
 - A step that fails prints `BEFORE RUN: exit <n>: <step>` in the summary. The command runs anyway.
 - **Upgrade order.** A config that sets `worktree.before_run` fails `check` on 0.26.0 and older, so update every machine first.
 
+### CI tier and CI-WAIT (0.27.0)
+
+For a repo whose PR checks run the suites and an AI review, so a weak laptop runs only what proves the change. Every key is opt-in; a config without them runs as 0.26.0 did.
+
+- **Light local tier, `gates.full_bars: ci`.** `bars` prints `BARS: LOCAL` and `DEFERRED: ci`. Every integrate runs the touched tests and their mirrors, the ALWAYS files, one typecheck of the touched packages and lint: no whole package, no build, no platform target, no baseline compare. The architect writes tests only CI can run as `CI` lines that nobody runs locally, and QA records their criteria as `CI`.
+- **`commands.test_local`.** The test-one command for that tier, with the same placeholders, pointed at a runner that skips what only CI runs. Under `ci`, `cmd test_one` prints it.
+- **`targets[].run: ci`.** A target only CI runs. Under `full_bars: ci` every other target prints `# DEFERRED to CI`; `/tempo:verify` still runs them all.
+- **The machine file, `.tempo/config.local.yaml`.** Merged last, kept out of git, and read from the main checkout by a linked worktree that has none. A slow laptop sets `limits.max_parallel_builders: 1` and a `-j 2` in its own `commands.test_one`.
+- **CI-WAIT, `limits.ci_rounds` above 0.** After SHIP the task does not end. `tempo_ci.py watch` (a background command the spawn guard allows by name) waits on `gh pr checks` and the PR state, up to an hour per call. On a red check, `tempo_ci.py collect` writes the failed jobs' log tails and the CRITICAL and HIGH findings of the `ai-review` artifact. These become `findings-ci-N.md`, which goes through the usual fix routing as plain commits, one CI round each, up to `ci_rounds`. A red check with no evidence is re-run once. A conflict with the base is merged in (integrator UPDATE), never rebased. Worktrees stay until `gh` reports the PR merged; then teardown, prune and DONE. Past the limit, or when the PR cannot move without a person, TEMPO raises CI-STUCK. TEMPO still never merges.
+- **Tracker sync `merged`.** Moves the ticket when CI-WAIT sees the merge. Leave it unset when the repo's CI moves the ticket.
+- **State and dashboard.** `tempo_state.py` knows the stage CI-WAIT, `init`/`set --ci-limit` and `bump ci`; the dashboard shows CI-WAIT under Ship. `/tempo:resume` on a CI-WAIT task starts the watcher again, and `ci-limit <N>` raises the limit.
+- **Upgrade order.** A config that uses any of these keys fails `check` on 0.26 and older, so update every machine before such a config lands.
+
 ## How it runs inside Claude Code
 
 - The main session is the orchestrator. Subagents cannot start other subagents, so the orchestrator starts every agent, including the parallel scouts, builders and reviewers.

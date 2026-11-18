@@ -335,12 +335,14 @@ class Guard(Base):
         out = json.loads(self.hook("nohup sleep 9 &", TEMPO_OWNER="4242"))["hookSpecificOutput"]
         self.assertIn("outlives", out["permissionDecisionReason"])  # the detach guard still answers its own way
         # the orchestrator's stall watcher (SKILL 2.7.0) is the one background command it allows by name
-        for cmd in ("python3 /p/tempo_state.py watch .tempo/T-001 --file /o", 'python3 "C:/My Home/tempo_state.py" watch d --file o'):
+        for cmd in ("python3 /p/tempo_state.py watch .tempo/T-001 --file /o", 'python3 "C:/My Home/tempo_state.py" watch d --file o',
+                    "python3 /p/tempo_ci.py watch --pr 7 --repo /r --max 3600"):
             self.assertEqual(self.hook(cmd, bg=True, TEMPO_OWNER="4242"), "", cmd)
         self.assertIn("deny", self.hook("python3 /p/tempo_state.py log .tempo/T-001", bg=True, TEMPO_OWNER="4242"))
         amp, nh = chr(38), "no" + "hup"  # the watcher's name does not carry a second command or a detach past the guard
         for cmd in (f"python3 /p/tempo_state.py watch d --file o; sleep 99 {amp}", f"python3 /p/tempo_state.py watch d --file o; {nh} x",
-                    f"sleep 99 {amp}{amp} python3 /p/tempo_state.py watch d --file o", f"python3 /p/tempo_state.py watch d --file o {amp}"):
+                    f"sleep 99 {amp}{amp} python3 /p/tempo_state.py watch d --file o", f"python3 /p/tempo_state.py watch d --file o {amp}",
+                    "python3 /p/tempo_ci.py collect --pr 7 --out o", f"python3 /p/tempo_ci.py watch --pr 7; {nh} x"):
             self.assertIn("deny", self.hook(cmd, bg=True, TEMPO_OWNER="4242"), cmd)
 
 

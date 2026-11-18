@@ -42,6 +42,10 @@
           "$ref": "#/$defs/command",
           "description": "Runs one test or pattern. Use {pattern}, and {module} for multi-module builds."
         },
+        "test_local": {
+          "$ref": "#/$defs/command",
+          "description": "The local tier's test-one command, with the same placeholders as test_one, pointed at a runner that skips what only CI runs (widget or browser tests, for example). Under gates.full_bars: ci, `cmd test_one` prints it. null: test_one."
+        },
         "build": {
           "$ref": "#/$defs/command"
         },
@@ -207,8 +211,8 @@
       "properties": {
         "full_bars": {
           "type": "string",
-          "enum": ["on_demand", "integrate", "verify"],
-          "description": "When TEMPO runs the full suite. on_demand: Integrate runs NARROW bars; the full suite runs for critical changes and on /tempo:verify. integrate: every task's final integrate runs it. verify: never inside a task, critical or not; bars prints a DEFERRED line, targets print scoped runs only, and the full suite runs on the branch the task merges into or on /tempo:verify."
+          "enum": ["on_demand", "integrate", "verify", "ci"],
+          "description": "When TEMPO runs the full suite. on_demand: Integrate runs NARROW bars; the full suite runs for critical changes and on /tempo:verify. integrate: every task's final integrate runs it. verify: never inside a task, critical or not; bars prints a DEFERRED line, targets print scoped runs only, and the full suite runs on the branch the task merges into or on /tempo:verify. ci: the light local tier for a repo whose PR checks run the suites: every integrate runs only the touched tests and their mirrors (test_local when set), one typecheck of the touched packages and lint; no whole package, no build, no platform target; bars prints BARS: LOCAL and DEFERRED: ci. Pair it with limits.ci_rounds, so the task waits for those checks."
         },
         "full_paths": {
           "type": "array",
@@ -293,6 +297,12 @@
           "maximum": 500,
           "description": "Above this Spec size in KB, each Work Order carries the Spec terms and design bullets it needs, so the builder does not read the whole Spec. 0 turns it off."
         },
+        "ci_rounds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10,
+          "description": "Above 0, the task waits on the PR after SHIP (stage CI-WAIT): it fixes red checks and blocking review findings in plain commits, at most this many rounds, and ends only when the PR is merged. TEMPO never merges. 0 (default): the task ends when the PR opens."
+        },
         "order_check": {
           "type": "boolean",
           "description": "After each Work Order builds, a quick reviewer checks that order's diff (correctness, edge inputs, its rules) and its builder fixes what it finds before the order integrates. M and L lanes."
@@ -336,6 +346,7 @@
                   "assign": {"type": "boolean", "description": "Assign the ticket to you when the task starts building."},
                   "start": {"type": "string", "description": "Status (Jira: transition or target status name) when the task starts building."},
                   "pr": {"type": "string", "description": "Status when the task's PR opens."},
+                  "merged": {"type": "string", "description": "Status when CI-WAIT sees the PR merged (limits.ci_rounds above 0). Leave it out when the repo's CI moves the ticket on merge."},
                   "project": {"type": "string", "pattern": "^[^/\\s]+/[0-9]+$", "description": "GitHub only: owner/number of the Projects board whose Status field moves, e.g. my-org/4."}
                 }
               }
@@ -669,8 +680,8 @@
           },
           "run": {
             "type": "string",
-            "enum": ["routine", "final", "critical"],
-            "description": "routine: runs at every integrate, scoped. final: runs once, scoped, at the integrate after the last wave (targets --final). critical: runs only for critical changes and on /tempo:verify. Default: critical for an advisory target, routine otherwise."
+            "enum": ["routine", "final", "critical", "ci"],
+            "description": "routine: runs at every integrate, scoped. final: runs once, scoped, at the integrate after the last wave (targets --final). critical: runs only for critical changes and on /tempo:verify. ci: never inside a task; the PR's CI runs it, and only /tempo:verify runs it here. Default: critical for an advisory target, routine otherwise."
           },
           "advisory": {
             "type": "boolean",

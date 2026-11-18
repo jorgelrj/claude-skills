@@ -1,0 +1,125 @@
+"""Tests for tempo_ci.py (the CI-WAIT watcher and evidence collector) against a stub gh.
+
+Run: python3 -m unittest discover -s <plugin>/tests -v
+"""
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+SCRIPTS = Path(__file__).resolve().parents[1] / "skills" / "orchestrator" / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+import tempo_ci  # noqa: E402
+
+# The stub answers from JSON files in $STUB: pr.json, checks.json (+ checks.exit), log.txt, runs.json, review.json.
+GH = """#!/usr/bin/env python3
+import os, sys, pathlib
+d, a = pathlib.Path(os.environ["STUB"]), sys.argv[1:]
+with open(d / "calls.txt", "a") as f:
+    f.write(" ".join(a) + "\\n")
+def out(name, code=0):
+    p = d / name
+    sys.stdout.write(p.read_text() if p.exists() else "")
+    sys.exit(code)
+if a[:2] == ["pr", "view"]: out("pr.json")
+if a[:2] == ["pr", "checks"]: out("checks.json", int((d / "checks.exit").read_text()) if (d / "checks.exit").exists() else 0)
+if a[:2] == ["run", "view"]: out("log.txt")
+if a[:2] == ["run", "list"]: out("runs.json")
+if a[:2] == ["run", "download"]:
+    if a[2] != "42" or not (d / "review.json").exists():
+        sys.stderr.write("no artifact matches any of the names\\n"); sys.exit(1)
+    dest = pathlib.Path(a[a.index("-D") + 1]); dest.mkdir(parents=True, exist_ok=True)
+    (dest / "review.json").write_text((d / "review.json").read_text()); sys.exit(0)
+sys.exit(2)
+"""
+
+PR = {"state": "OPEN", "isDraft": False, "mergeStateStatus": "CLEAN", "headRefOid": "abc123", "url": "https://x/pull/7"}
+
+
+class Verdict(unittest.TestCase):
+    def test_each_state_has_its_line(self):
+        green = [{"name": "ci-gate", "bucket": "pass"}]
+        self.assertIsNone(tempo_ci.verdict(PR, green))  # green but not merged: keep waiting
+        self.assertIsNone(tempo_ci.verdict(PR, [{"name": "ci-gate", "bucket": "pending"}]))
+        self.assertEqual(tempo_ci.verdict({**PR, "state": "MERGED"}, []), ("MERGED", PR["url"]))
+        self.assertEqual(tempo_ci.verdict({**PR, "state": "CLOSED"}, green), ("CLOSED", PR["url"]))
+        self.assertEqual(tempo_ci.verdict({**PR, "mergeStateStatus": "DIRTY"}, green), ("CONFLICT", PR["url"]))
+        self.assertEqual(tempo_ci.verdict({**PR, "isDraft": True}, green), ("DRAFT", PR["url"]))
+        self.assertEqual(tempo_ci.verdict(PR, green + [{"name": "ai-review", "bucket": "fail"}, {"name": "web", "bucket": "cancel"}]),
+                         ("RED", "ai-review, web"))
+        self.assertEqual(tempo_ci.waiting([]), "pending (no checks reported yet)")
+        self.assertTrue(tempo_ci.waiting(green).startswith("green"))
+
+    def test_review_findings_keeps_critical_and_high(self):
+        items = [{"severity": "HIGH", "file": "a"}, {"severity": "medium"}, {"severity": "critical"}, "junk"]
+        self.assertEqual(len(tempo_ci.review_findings({"findings": items})), 2)
+        self.assertEqual(len(tempo_ci.review_findings(items)), 2)
+        self.assertEqual(tempo_ci.review_findings({}), [])
+
+
+@unittest.skipIf(os.name == "nt", "the gh stub is a script with a shebang")
+class Stub(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="tempo-ci-test-")).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        (self.tmp / "bin").mkdir()
+        (self.tmp / "bin" / "gh").write_text(GH)
+        (self.tmp / "bin" / "gh").chmod(0o755)
+        self.env = {**os.environ, "STUB": str(self.tmp), "PATH": f"{self.tmp / 'bin'}{os.pathsep}{os.environ['PATH']}"}
+        self.put("pr.json", PR)
+
+    def put(self, name, data):
+        (self.tmp / name).write_text(data if isinstance(data, str) else json.dumps(data))
+
+    def ci(self, *args):
+        r = subprocess.run([sys.executable, str(SCRIPTS / "tempo_ci.py"), *map(str, args), "--pr", "7", "--repo", str(self.tmp)],
+                           capture_output=True, text=True, env=self.env, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        return r.stdout
+
+    def test_watch_waits_on_green_and_stops_on_merge_or_red(self):
+        self.put("checks.json", [{"name": "ci-gate", "bucket": "pass", "state": "SUCCESS"}])
+        self.assertEqual(self.ci("watch", "--poll", "0.1", "--max", "0.3"),
+                         "TIMEOUT: green (every check passed; the PR is not merged yet)\n")
+        self.put("checks.json", [{"name": "ci-gate", "bucket": "pending"}]); self.put("checks.exit", "8")
+        self.assertEqual(self.ci("watch", "--poll", "0.1", "--max", "0.1"), "TIMEOUT: pending ci-gate\n")
+        self.put("checks.json", [{"name": "ci-gate", "bucket": "fail"}]); self.put("checks.exit", "1")
+        self.assertEqual(self.ci("watch", "--poll", "5", "--max", "60"), "RED: ci-gate\n")
+        self.put("pr.json", {**PR, "state": "MERGED"})
+        self.assertEqual(self.ci("watch", "--poll", "5", "--max", "60"), f"MERGED: {PR['url']}\n")
+
+    def test_watch_survives_gh_that_does_not_answer(self):
+        (self.tmp / "bin" / "gh").write_text("#!/bin/sh\necho 'connection refused' >&2\nexit 1\n")
+        self.assertIn("TIMEOUT: pending (gh did not answer", self.ci("watch", "--poll", "0.1", "--max", "0.1"))
+
+    def test_collect_writes_log_tails_and_blocking_findings(self):
+        self.put("checks.json", [
+            {"name": "flutter (core)", "bucket": "fail", "state": "FAILURE", "link": "https://g/o/r/actions/runs/9/job/11"},
+            {"name": "ai-review", "bucket": "fail", "state": "FAILURE", "link": "https://g/o/r/pull/7"},
+            {"name": "server", "bucket": "pass", "state": "SUCCESS", "link": "https://g/o/r/actions/runs/9/job/12"}])
+        self.put("checks.exit", "1")
+        self.put("log.txt", "\n".join(f"line {i}" for i in range(200)) + "\nExpected: 2 Actual: 3\n")
+        self.put("runs.json", [{"databaseId": 41, "workflowName": "pr-tests"}, {"databaseId": 42, "workflowName": "pr-review"}])
+        self.put("review.json", {"findings": [
+            {"severity": "HIGH", "file": "lib/a.dart", "line": 4, "title": "Null crash", "detail": "x is null on logout"},
+            {"severity": "MEDIUM", "file": "lib/b.dart", "line": 1, "title": "Naming"}]})
+        out = self.tmp / "ci" / "round-1.md"
+        self.assertEqual(self.ci("collect", "--out", out, "--lines", "5"),
+                         f"CI: {out}  FAILED: 2  BLOCKING: 1  NO-EVIDENCE: NIL\n")
+        text = out.read_text()
+        self.assertIn("Expected: 2 Actual: 3", text)
+        self.assertNotIn("line 150", text)  # only the tail
+        self.assertIn("HIGH lib/a.dart:4 Null crash: x is null on logout", text)
+        self.assertNotIn("Naming", text)
+        self.assertIn("run view --job 11 --log-failed", (self.tmp / "calls.txt").read_text())
+        (self.tmp / "review.json").unlink()  # an indeterminate review: red, and nothing to fix
+        self.assertIn("NO-EVIDENCE: ai-review", self.ci("collect", "--out", out))
+        self.assertIn("no run on the head has an artifact named ai-review", out.read_text())
+
+
+if __name__ == "__main__":
+    unittest.main()
