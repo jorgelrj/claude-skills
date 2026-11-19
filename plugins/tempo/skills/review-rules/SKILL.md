@@ -40,7 +40,7 @@ description: How TEMPO finds and applies a project's rules files (CLAUDE.md, REV
 - Error paths: what happens when the call fails, times out or returns empty.
 - Concurrency and state: races, stale state, missing awaits.
 - Tests: does a test exist for each changed branch, and does it assert the right thing.
-- Tests that never run. For each test file the diff adds or changes, check that a configured command runs it: the test command, or a platform target whose paths cover it. A test the test command skips (`@TestOn('browser')`, a tag the command excludes, a folder outside its globs, an e2e suite) with no target or script that runs it proves nothing: MEDIUM, naming the missing run.
+- Tests that never run. For each test file the diff adds or changes, check that a configured command runs it: the test command, a platform target whose paths cover it, or, under `gates.full_bars: ci`, a CI check of the repo (`.github/workflows/`, or the CI config the repo uses) whose run covers it. A test that only CI runs is not a test that never runs. A test the test command skips (`@TestOn('browser')`, a tag the command excludes, a folder outside its globs, an e2e suite) with no target or script that runs it proves nothing: MEDIUM, naming the missing run.
 
 ### 3.2 SECURITY
 Use the `/security-review` lens:

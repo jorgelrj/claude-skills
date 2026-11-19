@@ -10,7 +10,7 @@ Rendered by tempo_state.py from state.json. Do not edit.
 - Parent: {{workspace task folder, or NIL}}
 
 ## 2 Stage
-- Current: {{TRIAGE | EXPLORE | INVESTIGATE | REPRODUCE | ROOT-CAUSE | SPEC | HANDOFF | PLAN | PLANNED | BUILD | INTEGRATE | REVIEW | QA | SHIP | REPOS | JOINT-QA | DONE}}
+- Current: {{TRIAGE | EXPLORE | INVESTIGATE | REPRODUCE | ROOT-CAUSE | SPEC | HANDOFF | PLAN | PLANNED | BUILD | INTEGRATE | REVIEW | QA | SHIP | CI-WAIT | REPOS | JOINT-QA | DONE}}
 - Status: {{RUNNING | WAITING-ON-JORGE | FAILED | ABORTED | DONE}}
 
 ## 3 Stage log

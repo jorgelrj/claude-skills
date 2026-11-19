@@ -11,6 +11,8 @@ Files, later wins:
   3. the toolchain named by the merged settings      (workspace toolchains:)
   4. <workspace>/.tempo/workspace.yaml  repos.<name>:  (matched by path)
   5. <repo>/.tempo/config.yaml
+  6. <repo>/.tempo/config.local.yaml  this machine's own overrides (git-ignored; a linked worktree without one
+                                      uses the main checkout's), e.g. limits.max_parallel_builders: 1
 
 Run with `uv run tempo_config.py ...` (installs pyyaml and jsonschema on the fly)
 or `python3 tempo_config.py ...` when both are installed.
@@ -24,17 +26,21 @@ Commands:
                                          The task branch follows the repo's convention (config, else the
                                          prefixes of its remote branches, else {type}/{ticket}); tempo/ names
                                          are local work branches only and never name the task branch
-  cmd     NAME [--var k=v ...]           print one command as a shell line, env exported first
+  cmd     NAME [--var k=v ...]           print one command as a shell line, env exported first. Under
+                                         gates.full_bars: ci, test_one prints commands.test_local when it is set
   targets [--paths P ...] [--ref REF] [--full] [--critical] [--final] [--scoped-only] [--verify]
                                          print the platform test runs for the changed paths: scoped to the
                                          tests those paths touch or mirror when a target has scoped_command.
                                          Targets with run: critical (advisory targets by default) print only
                                          with --critical or --full; run: final also with --final (the integrate
                                          after the last wave). --scoped-only: a target that would print
-                                         its whole command prints `# DEFERRED whole suite` instead
+                                         its whole command prints `# DEFERRED whole suite` instead.
+                                         Under gates.full_bars: ci a target prints `# DEFERRED to CI` (its
+                                         command with --verify); a run: ci target never prints
   bars    [--paths P ...] [--critical]   print the bars an integrate runs: BARS: FULL|NARROW and why. With
                                          gates.full_bars: verify it is NARROW, plus a DEFERRED: line when the
-                                         change would have run the whole suite. Then one ALWAYS: line per
+                                         change would have run the whole suite. With gates.full_bars: ci it is
+                                         LOCAL plus a DEFERRED: ci line. Then one ALWAYS: line per
                                          tests.always file and one SLOW: line per tests.slow file the paths
                                          touch or mirror
   dupes   --ticket KEY --branch B ...    list open PRs and remote branches that already carry the ticket
@@ -47,7 +53,7 @@ Commands:
   migrate FILE                           convert a legacy .tempo/config.md to YAML on stdout
   ticket  --text REQUEST                 print the ticket the request names first and its tracker
                                          (task.trackers, else task.tracker and task.ticket_pattern)
-  sync    start|pr --text REQUEST        assign the request's ticket and move it to the status that tracker's
+  sync    start|pr|merged --text REQUEST assign the request's ticket and move it to the status that tracker's
                                          sync: sets for the event (Jira via atlassian-multi's atl.py, GitHub
                                          via gh and its Projects board). Prints ASSIGNED:/MOVED:/WARN:/SYNC: OFF
                                          lines and exits 0 whatever the tracker answers
@@ -91,6 +97,7 @@ CONFIG_DIR = HERE.parent
 SCHEMA_PATH = CONFIG_DIR / "schema" / "tempo-config.schema.json"
 DEFAULTS_PATH = CONFIG_DIR / "defaults.yaml"
 REPO_FILE = Path(".tempo/config.yaml")
+LOCAL_FILE = Path(".tempo/config.local.yaml")
 LEGACY_FILE = Path(".tempo/config.md")
 WORKSPACE_FILE = Path(".tempo/workspace.yaml")
 DOC_SUFFIXES = {".md", ".mdx", ".markdown", ".rst", ".txt", ".adoc"}
@@ -336,6 +343,19 @@ def git_root(start):
         return None
 
 
+def local_file(repo):
+    """This machine's override file: the repo's own, else the main checkout's when repo is a linked worktree."""
+    if (repo / LOCAL_FILE).is_file():
+        return repo / LOCAL_FILE
+    try:
+        common = subprocess.run(["git", "-C", str(repo), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                capture_output=True, text=True, check=True).stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+    main = Path(common).parent / LOCAL_FILE
+    return main if Path(common).name == ".git" and main.is_file() else None
+
+
 def find_workspace(start):
     cur = Path(start).resolve()
     for d in [cur, *cur.parents]:
@@ -469,6 +489,18 @@ def resolve(repo_arg):
             info["warnings"].append(f"{lpath} is the legacy format; run `tempo_config.py migrate {lpath} > {rpath}`")
             for u in unmapped:
                 info["warnings"].append(f"{lpath}: unmapped line kept out of the config: {u}")
+        mpath = local_file(repo)
+        if mpath:
+            mc = load_yaml(mpath)
+            mc.setdefault("version", 1)  # optional here: the file only overrides
+            errors += validate(mc, mpath)
+            mc.pop("version", None)
+            layers_after_tc.append(mc)
+            info["files"].append(str(mpath))
+            tracked = subprocess.run(["git", "-C", str(mpath.parents[1]), "ls-files", "--error-unmatch", str(LOCAL_FILE)],
+                                     capture_output=True, text=True)
+            if tracked.returncode == 0:
+                info["warnings"].append(f"{mpath} is committed; it holds one machine's settings, so untrack it (git rm --cached) and ignore it")
 
     merged = {}
     for layer in layers_before_tc + layers_after_tc:
@@ -697,6 +729,23 @@ TEST_GLOBS = ["*_test.*", "*.test.*", "*.spec.*", "test_*.py", "*Test.java", "*T
 PACKAGE_MARKERS = ["pubspec.yaml", "package.json", "go.mod", "Cargo.toml", "pyproject.toml", "pom.xml", "build.gradle", "build.gradle.kts"]
 
 
+def full_bars(cfg):
+    return (cfg.get("gates") or {}).get("full_bars")
+
+
+def ci_gaps(cfg):
+    """Settings that make the local tier or CI-WAIT a trap."""
+    out, rounds = [], (cfg.get("limits") or {}).get("ci_rounds") or 0
+    if full_bars(cfg) == "ci" and not rounds:
+        out.append("gates.full_bars is ci but limits.ci_rounds is 0: nothing waits for the CI that now runs the "
+                   "whole suites; set limits.ci_rounds (3 is a start)")
+    if rounds and (cfg.get("pr") or {}).get("draft"):
+        out.append("limits.ci_rounds waits for the PR to merge, and a draft PR never merges; set pr.draft: false")
+    if rounds and (cfg.get("pr") or {}).get("tool") == "none":
+        out.append("limits.ci_rounds is set but pr.tool is none: there is no PR to wait on")
+    return out
+
+
 def tracked_files(repo, ref=None):
     args = ["git", "-C", str(repo), "ls-tree", "-r", "--name-only", ref] if ref else ["git", "-C", str(repo), "ls-files"]
     out = subprocess.run(args, capture_output=True, text=True)
@@ -722,16 +771,19 @@ def package_of(rel, packages):
 
 def scoped_runs(tg, changed, files):
     """Group the tests a target should run by package. Changed test files run as they are;
-    a changed source file runs the tests whose name mirrors it (foo.dart -> foo_test.dart)."""
+    a changed source file runs the tests whose name mirrors it (foo.dart -> foo_test.dart), and the
+    split files of that test (foo_<area>_test.dart) unless foo_<area> is a source file of its own."""
     globs = tg.get("test_globs") or TEST_GLOBS
     markers = tg.get("package_markers") or PACKAGE_MARKERS
     packages = {f.rsplit("/", 1)[0] if "/" in f else "" for f in files if f.rsplit("/", 1)[-1] in markers}
     present = set(files)
-    tests_by_stem = {}
+    tests_by_stem, source_stems = {}, set()
     for f in files:
+        stem = f.rsplit("/", 1)[-1].split(".", 1)[0]
         if is_test(f, globs):
-            stem = f.rsplit("/", 1)[-1].split(".", 1)[0]
             tests_by_stem.setdefault(stem, []).append(f)
+        else:
+            source_stems.add((package_of(f, packages), stem))
     picked, unmapped = {}, []
     for rel in changed:
         pkg = package_of(rel, packages)
@@ -745,6 +797,10 @@ def scoped_runs(tg, changed, files):
         stem = rel.rsplit("/", 1)[-1].split(".", 1)[0]
         mirrors = [t for c in (f"{stem}_test", f"test_{stem}", stem) for t in tests_by_stem.get(c, [])
                    if package_of(t, packages) == pkg and t != rel]
+        mirrors += [t for c, ts in tests_by_stem.items()
+                    if c.startswith(f"{stem}_") and c.endswith("_test") and len(c) > len(stem) + 5
+                    and (pkg, c[:-5]) not in source_stems
+                    for t in ts if package_of(t, packages) == pkg]
         if mirrors:
             picked.setdefault(pkg, set()).update(mirrors)
         else:
@@ -853,7 +909,7 @@ def main(argv=None):
     tk = add("ticket"); tk.add_argument("--text", required=True)
     du = add("dupes"); du.add_argument("--ticket", required=True)
     du.add_argument("--branch", action="append", required=True, help="the task's own branch; repeat for a split task's slices")
-    sy = add("sync"); sy.add_argument("event", choices=["start", "pr"]); sy.add_argument("--text", required=True)
+    sy = add("sync"); sy.add_argument("event", choices=["start", "pr", "merged"]); sy.add_argument("--text", required=True)
     a = p.parse_args(argv)
 
     try:
@@ -869,7 +925,7 @@ def main(argv=None):
             if " " in (info.get("repo") or ""):
                 info["warnings"].append(f"repo path '{info['repo']}' contains a space: melos splits it on Windows; "
                                         "a checkout path without spaces avoids that")
-            for w in info["warnings"] + worktree_gaps(info.get("repo"), cfg):
+            for w in info["warnings"] + worktree_gaps(info.get("repo"), cfg) + ci_gaps(cfg):
                 print("WARN: " + w)
             print("PASS: " + ", ".join(info["files"])); return 0
 
@@ -946,7 +1002,10 @@ def main(argv=None):
             print(json.dumps(out, indent=2, ensure_ascii=False)); return 0
 
         if a.cmd == "cmd":
-            command = (cfg.get("commands") or {}).get(a.name)
+            commands = cfg.get("commands") or {}
+            command = commands.get(a.name)
+            if a.name == "test_one" and full_bars(cfg) == "ci" and commands.get("test_local"):
+                command = commands["test_local"]  # the local tier: what CI runs is not run here
             if command is None:
                 print(f"NIL: command '{a.name}' is not set", file=sys.stderr); return 1
             vals = dict(v.split("=", 1) for v in a.var)
@@ -956,17 +1015,23 @@ def main(argv=None):
             files = None
             for tg in cfg.get("targets") or []:
                 run = tg.get("run", "critical" if tg.get("advisory") else "routine")
+                if run == "ci":
+                    continue  # never on this machine, /tempo:verify included: the PR's CI runs it
                 if not (a.critical or a.full) and (run == "critical" or (run == "final" and not a.final)):
                     continue
                 tail = "\tadvisory" if tg.get("advisory") else ""
                 full = f"{tg['name']}\t{env_prefix(cfg.get('env'))}{tg['command']}{tail}"
-                if a.scoped_only or ((cfg.get("gates") or {}).get("full_bars") == "verify" and not a.verify):
+                if a.scoped_only or (full_bars(cfg) == "verify" and not a.verify):
                     full = f"{tg['name']}\t# DEFERRED whole suite{tail}"
+                if full_bars(cfg) == "ci" and not a.verify:
+                    full = f"{tg['name']}\t# DEFERRED to CI{tail}"  # not even scoped: the PR's CI runs it
                 if a.paths is None:
                     print(full); continue
                 hit = [f for f in a.paths if any(_matches(f, pat) for pat in tg["paths"])]
                 if not hit:
                     continue
+                if full_bars(cfg) == "ci" and not a.verify:
+                    print(full); continue
                 if a.full or not tg.get("scoped_command"):
                     print(full); continue
                 if files is None:
@@ -983,7 +1048,10 @@ def main(argv=None):
         if a.cmd == "bars":
             gates = cfg.get("gates") or {}
             hit = [f for f in a.paths if any(_matches(f, pat) for pat in gates.get("full_paths") or [])]
-            if gates.get("full_bars") == "verify":  # the whole suite never runs inside the task
+            if gates.get("full_bars") == "ci":  # the local tier: whole suites, build and targets run in the PR's CI
+                print("BARS: LOCAL  WHY: gates.full_bars is ci")
+                print("DEFERRED: ci" + (" (critical change)" if a.critical else ""))
+            elif gates.get("full_bars") == "verify":  # the whole suite never runs inside the task
                 print("BARS: NARROW  WHY: gates.full_bars is verify")
                 if a.critical:
                     print("DEFERRED: critical change")

@@ -5,7 +5,7 @@ Raised by: {{agent}} · From: {{artifact that raised it}}
 {{One question Jorge can answer with one word or a letter.}}
 
 ## 2 Kind
-{{GATE-CLARIFY | GATE-SPEC | GATE-PR | NO-REPRO | BEHAVIOUR-CHANGE | OUT-OF-ORDER-DECISION | LOOP-LIMIT | FIX-CHAIN | HARD-TO-UNDO | MISSING-SOURCE}}
+{{GATE-CLARIFY | GATE-SPEC | GATE-PR | NO-REPRO | BEHAVIOUR-CHANGE | OUT-OF-ORDER-DECISION | LOOP-LIMIT | FIX-CHAIN | HARD-TO-UNDO | MISSING-SOURCE | CI-STUCK}}
 
 ## 3 Context
 - {{What happened, one fact per bullet, with artifact § references}}

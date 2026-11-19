@@ -34,7 +34,7 @@ SCRIPTS = os.path.join(os.path.dirname(HERE), "skills", "orchestrator", "scripts
 WORDS = re.compile(r"(^|[;&|(\s])(nohup|setsid|disown)(\s|;|$)")
 QUOTED = re.compile(r"'[^']*'|\"(?:\\.|[^\"\\])*\"")
 AMP = re.compile(r"(?<![&>|<])&(?![&>])")
-WATCH = re.compile(r"""[^;&|`$()<>\n]*tempo_state\.py["']?\s+watch\s[^;&|`$()<>\n]*""")
+WATCH = re.compile(r"""[^;&|`$()<>\n]*tempo_(?:state|ci)\.py["']?\s+watch\s[^;&|`$()<>\n]*""")
 # pkill, killall, and the same thing spelled with pgrep: kill $(pgrep ...), kill `pgrep ...`, pgrep ... | xargs kill
 # Only where a command starts (line start, after ; & | ( $( or a backtick, also behind sudo or xargs): a grep for
 # the word, a file name or a message that mentions it is not a kill.
@@ -60,7 +60,7 @@ def main():
                 return 0
             if re.search(r"tempo_procs\.py|tempo_run\.py|TEMPO_ALLOW_DETACH=1", command):
                 return 0
-            # The stall watcher (orchestrator 2.7.0) runs as a background Bash command; only when it is the whole command.
+            # The stall watcher (orchestrator 2.7.0) and the CI watcher (3.12.1) run as background Bash commands; only when one is the whole command.
             if bg and not detaches(command) and WATCH.fullmatch(command.strip()):
                 return 0
         sys.path.insert(0, SCRIPTS)

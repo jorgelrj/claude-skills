@@ -34,7 +34,7 @@ This is the one writing rule that pays for itself in review rounds.
 2. Commands are exact and copy-pasteable, in backticks.
 3. One term, one meaning. The Spec §2 Terms is the task's only glossary. Other documents cite a term by name; they do not copy the glossary.
 4. Do not copy whole sections from one document into another. Cite them. A Work Order carries its own criteria, scope and steps, and cites the spec for terms, design and background.
-5. Results use PASS, FAIL, BLOCKED or NIL, so the orchestrator can read them.
+5. Results use PASS, FAIL, BLOCKED or NIL, so the orchestrator can read them. A QA criterion MAY also read CI: under LOCAL bars only the PR's CI runs its test.
 6. Evidence is quotable: a command and its exit code, a test name, a file and line, or a screenshot path.
 
 ## 4 Size

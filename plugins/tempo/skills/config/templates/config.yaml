@@ -33,6 +33,7 @@ pr:
   tool: gh                      # gh | none
   title: "{type}({ticket}): {summary}"
   language: en
+  # required_checks: [ci-gate, ai-review]   # CI-WAIT waits until these report (a late commit status is not yet pending)
 
 # targets:                      # extra platform test runs, e.g. Flutter on Chrome
 #   - name: web
@@ -47,7 +48,7 @@ pr:
 #   slow: []                    # run filtered while building, whole once after the last wave
 
 gates:
-  full_bars: on_demand          # on_demand: full suite for critical changes and /tempo:verify; integrate: every task
+  full_bars: on_demand          # on_demand: full suite for critical changes and /tempo:verify; integrate: every task; ci: the PR's CI runs it (see limits.ci_rounds)
   # full_paths: []              # files whose change forces full bars (default: lockfiles and toolchain pins)
 
 worktree:                       # a new worktree has only tracked files
@@ -68,6 +69,7 @@ limits:
   review_extensions: 1
   narrow_fix_lines: 40
   qa_rounds: 3
+  ci_rounds: 0                  # above 0: wait on the PR's checks after SHIP, fix them, end when merged (needs pr.draft: false)
   repro_hypotheses: 3
   repro_minutes: 30
 

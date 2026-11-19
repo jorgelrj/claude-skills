@@ -263,6 +263,24 @@ class Ship(Base):
 
 
 class OldState(Base):
+    def test_ci_wait_stage_and_its_counter(self):
+        self.init()
+        self.assertNotIn("ci", self.json()["counters"])  # no --ci-limit: the state an older TEMPO writes
+        self.assertNotIn("CI rounds", self.state("show"))
+        self.assertNotIn("LIMIT", self.state("bump", "ci"))  # no limit set: counts, never stops
+        self.state("set", "--ci-limit", "2", "--pr", "https://example.test/pull/1", "--stage", "CI-WAIT")
+        self.assertEqual((self.json()["stage"], self.json()["status"]), ("CI-WAIT", "RUNNING"))
+        self.assertIn("CI rounds: 1 of 2", self.state("show"))
+        self.state("bump", "ci")
+        self.assertEqual(self.state("bump", "ci", code=1), "LIMIT: ci rounds 3 of 2; raise CI-STUCK\n")
+        self.state("log", "CI-WAIT", "ci/round-3.md", "PASS")
+        self.state("set", "--stage", "DONE")
+        self.assertEqual(self.json()["status"], "DONE")
+
+    def test_init_with_a_ci_limit(self):
+        self.init("--ci-limit", "3")
+        self.assertEqual((self.json()["counters"]["ci"], self.json()["counters"]["ci_limit"]), (0, 3))
+
     def test_a_0_21_0_state_accepts_every_old_command(self):
         self.d.mkdir(parents=True)
         (self.d / "state.json").write_text(json.dumps(OLD_STATE, indent=2, ensure_ascii=False) + "\n")

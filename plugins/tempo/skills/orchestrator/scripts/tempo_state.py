@@ -14,9 +14,9 @@ Usage: tempo_state.py <command> <task-dir> [args]
                                               is already there, so the caller resumes it)
   init      <dir> --task ID --flow FEATURE|BUG|WORKSPACE --title T --base-branch B --base-commit H
             [--task-branch NAME] [--mode FULL|PLAN-ONLY] [--parent DIR] [--review-limit N] [--qa-limit N]
-            [--review-extensions N] [--autopilot]
+            [--review-extensions N] [--autopilot] [--ci-limit N]
   set       <dir> [--lane L] [--stage S] [--status S] [--next TEXT] [--mode M] [--title T]
-            [--task-branch B] [--base-commit H] [--pr URL] [--review-limit N] [--review-extensions N]
+            [--task-branch B] [--base-commit H] [--pr URL] [--review-limit N] [--review-extensions N] [--ci-limit N]
             [--autopilot on|off] [--critical on|off [--gate ANSWER]] [--pattern on|off]
                                                  (DONE clears the agents still listed in flight, and the next
                                                   action unless --next comes with it. --pr logs SHIP when the last
@@ -40,8 +40,9 @@ Usage: tempo_state.py <command> <task-dir> [args]
                                                    (EXPLORE also closes the scouts, REVIEW the round's reviewers);
                                                    the same stage and artifact again right after extends that entry;
                                                    warns when STAGE is not the current stage)
-  bump      <dir> review|qa|reissue               (exit 1: past the limit, raise LOOP-LIMIT;
-                                                   exit 2: past limit + extensions, HARD STOP)
+  bump      <dir> review|qa|reissue|ci            (exit 1: past the limit, raise LOOP-LIMIT;
+                                                   exit 2: past limit + extensions, HARD STOP.
+                                                   ci counts CI-WAIT fix rounds; past --ci-limit it exits 1: raise CI-STUCK)
   wo        <dir> WO-NN [--worktree P] [--branch B] [--status S]
                                                  (an order issued again after DONE starts a new timed run)
   wait      <dir> ESC-FILE | --clear            (a wait stops the task's services: tempo_procs.py teardown --services-only)
@@ -80,7 +81,7 @@ def teardown(d, services_only):
         print(f"TEARDOWN: error {e}; run /tempo:sweep", file=sys.stderr)
 
 STAGES = ["TRIAGE", "EXPLORE", "INVESTIGATE", "REPRODUCE", "ROOT-CAUSE", "SPEC", "HANDOFF", "PLAN",
-          "PLANNED", "SLICES", "BUILD", "INTEGRATE", "REVIEW", "QA", "SHIP", "REPOS", "JOINT-QA", "DONE"]
+          "PLANNED", "SLICES", "BUILD", "INTEGRATE", "REVIEW", "QA", "SHIP", "CI-WAIT", "REPOS", "JOINT-QA", "DONE"]
 STATUSES = ["RUNNING", "WAITING-ON-JORGE", "FAILED", "ABORTED", "DONE"]
 ENDED = ("DONE", "FAILED", "ABORTED")
 RESULTS = ["PASS", "FAIL", "BLOCKED"]
@@ -89,7 +90,7 @@ WO_STATUSES = ["ISSUED", "BUILDING", "DONE", "BLOCKED"]
 UNFILLED = re.compile(r"<[A-Za-z_-]+>|\{[A-Za-z_]+\}|[-_/]$|(^|/)\.md$|[-_]\.md$")
 # Stops autopilot never accepts (orchestrator 4.5.1). decide refuses them, and refuses a question
 # that reads like a source the ticket names could not be opened: a stand-in for it is not a decision.
-STOP_KINDS = {"NO-REPRO", "BEHAVIOUR-CHANGE", "OUT-OF-ORDER-DECISION", "HARD-TO-UNDO", "MISSING-SOURCE", "GATE-PR"}
+STOP_KINDS = {"NO-REPRO", "BEHAVIOUR-CHANGE", "OUT-OF-ORDER-DECISION", "HARD-TO-UNDO", "MISSING-SOURCE", "GATE-PR", "CI-STUCK"}
 MISSING_SOURCE = re.compile(
     r"not (found|available|accessible|visible|reachable)|\b40[134]\b|no access|access denied|"
     r"can(not|'t|\u2019t) (open|access|find|fetch|see)|missing (source|asset|attachment|design|prototype|file|image|icon)|"
@@ -170,7 +171,8 @@ def render(s):
     c = s["counters"]
     section(4, "Loop counters", [f"Review rounds: {c['review']} of {c['review_limit']}. Extensions: {c.get('review_extensions', 1)}",
                                  f"QA rounds: {c['qa']} of {c['qa_limit']}",
-                                 f"Document re-issues: {c['reissue']}"])
+                                 f"Document re-issues: {c['reissue']}"] +
+            ([f"CI rounds: {c.get('ci', 0)} of {c['ci_limit']}"] if c.get("ci_limit") else []))
     section(5, "Work orders", [wo_line(k, v) for k, v in sorted(s["work_orders"].items())])
     section(6, "Waiting on Jorge", [s["waiting"]] if s.get("waiting") else [])
     section(7, "Next action", [s["next"]] if s.get("next") else [])
@@ -251,14 +253,17 @@ def adopt(d):
 
 
 def new_state(task, flow, title, base_branch, base_commit, task_branch=None, mode="FULL", parent=None,
-              review_limit=3, qa_limit=3, review_extensions=1, autopilot=False):
-    return {"version": 1, "task": task, "flow": flow, "lane": None, "mode": mode, "title": title,
+              review_limit=3, qa_limit=3, review_extensions=1, autopilot=False, ci_limit=0):
+    s = {"version": 1, "task": task, "flow": flow, "lane": None, "mode": mode, "title": title,
             "started": now(), "stage_since": now(), "base_branch": base_branch, "base_commit": base_commit,
             "task_branch": task_branch, "parent": parent, "pr": None, "stage": "TRIAGE", "status": "RUNNING",
             "log": [], "counters": {"review": 0, "review_limit": review_limit, "review_extensions": review_extensions,
                          "qa": 0, "qa_limit": qa_limit, "reissue": 0},
             "work_orders": {}, "waiting": None, "next": None, "agents": {}, "children": {},
             "autopilot": autopilot, "decisions": []}
+    if ci_limit:  # only a task that waits on CI carries the counter, so older readers see the state they know
+        s["counters"].update(ci=0, ci_limit=ci_limit)
+    return s
 
 
 def activity(d, path):
@@ -310,6 +315,8 @@ def watch(d, path, idle, poll, agent=None):
 def past_limit(c, counter):
     """(exit code, line) when a loop counter is past its limit, else (0, None)."""
     lim = c.get(counter + "_limit")
+    if counter == "ci":  # CI rounds have no extensions: past the limit, escalate
+        return (1, f"LIMIT: ci rounds {c['ci']} of {lim}; raise CI-STUCK") if lim and c["ci"] > lim else (0, None)
     ext = c.get("review_extensions", 1) if counter == "review" else 0  # tasks from before 0.4.0 lack the key
     if lim and c[counter] > lim + ext:
         return 2, f"HARD STOP: {counter} rounds {c[counter]} of {lim} plus {ext} extensions; ship open findings as known risks"
@@ -363,11 +370,13 @@ def main(argv=None):
     i.add_argument("--task-branch"); i.add_argument("--parent")
     i.add_argument("--review-limit", type=int, default=3); i.add_argument("--qa-limit", type=int, default=3)
     i.add_argument("--review-extensions", type=int, default=1); i.add_argument("--autopilot", action="store_true")
+    i.add_argument("--ci-limit", type=int, default=0, help="limits.ci_rounds: CI-WAIT fix rounds (0: the task never waits on CI)")
     s_ = sp.add_parser("set"); s_.add_argument("dir")
     s_.add_argument("--lane", choices=["S", "M", "L", "TBD"]); s_.add_argument("--stage", choices=STAGES)
     s_.add_argument("--status", choices=STATUSES); s_.add_argument("--next"); s_.add_argument("--mode", choices=["FULL", "PLAN-ONLY"])
     s_.add_argument("--title"); s_.add_argument("--task-branch"); s_.add_argument("--base-commit"); s_.add_argument("--pr")
     s_.add_argument("--review-limit", type=int); s_.add_argument("--review-extensions", type=int)
+    s_.add_argument("--ci-limit", type=int, help="limits.ci_rounds, for a task started before CI-WAIT existed")
     s_.add_argument("--autopilot", choices=["on", "off"])
     s_.add_argument("--critical", choices=["on", "off"]); s_.add_argument("--pattern", choices=["on", "off"])
     s_.add_argument("--gate", help="Jorge's answer to the gate that turned critical on after TRIAGE")
@@ -380,7 +389,7 @@ def main(argv=None):
     dc.add_argument("--from", dest="source")
     dc.add_argument("--not-a-source", help="why a question that mentions something missing is not a source of truth")
     l = sp.add_parser("log"); l.add_argument("dir"); l.add_argument("stage", choices=STAGES); l.add_argument("artifact"); l.add_argument("result", choices=RESULTS)
-    b = sp.add_parser("bump"); b.add_argument("dir"); b.add_argument("counter", choices=["review", "qa", "reissue"])
+    b = sp.add_parser("bump"); b.add_argument("dir"); b.add_argument("counter", choices=["review", "qa", "reissue", "ci"])
     w = sp.add_parser("wo"); w.add_argument("dir"); w.add_argument("wo")
     w.add_argument("--worktree"); w.add_argument("--branch"); w.add_argument("--status", choices=WO_STATUSES)
     wt = sp.add_parser("wait"); wt.add_argument("dir"); wt.add_argument("file", nargs="?"); wt.add_argument("--clear", action="store_true")
@@ -429,7 +438,7 @@ def main(argv=None):
             sys.exit(f"tempo_state: {d}/state.json exists; resume the task instead")
         d.mkdir(parents=True, exist_ok=True)
         st = new_state(a.task, a.flow, a.title, a.base_branch, a.base_commit, a.task_branch, a.mode,
-                       a.parent, a.review_limit, a.qa_limit, a.review_extensions, a.autopilot)
+                       a.parent, a.review_limit, a.qa_limit, a.review_extensions, a.autopilot, a.ci_limit)
         st["next"] = "Run TRIAGE"
         save(d, st); emit(st); print(f"STATE: {d.as_posix()}/state.md  STAGE: TRIAGE"); return 0
 
@@ -456,6 +465,7 @@ def main(argv=None):
         if a.base_commit: st["base_commit"] = a.base_commit
         if a.review_limit is not None: st["counters"]["review_limit"] = a.review_limit
         if a.review_extensions is not None: st["counters"]["review_extensions"] = a.review_extensions
+        if a.ci_limit is not None: st["counters"].update(ci=st["counters"].get("ci", 0), ci_limit=a.ci_limit)
         if a.autopilot: st["autopilot"] = a.autopilot == "on"
         if a.critical: st["critical"] = a.critical == "on"
         if a.pattern: st["pattern"] = a.pattern == "on"
@@ -506,7 +516,7 @@ def main(argv=None):
             if a.result == "FAIL" and c.get("qa_limit") and c["qa"] >= c["qa_limit"]:  # 3.11: QA stops at the limit
                 note = f"LIMIT: qa rounds {c['qa']} of {c['qa_limit']}; raise LOOP-LIMIT"
     elif a.cmd == "bump":
-        st["counters"][a.counter] += 1
+        st["counters"][a.counter] = st["counters"].get(a.counter, 0) + 1  # a task from before 0.27.0 has no ci key
         code, line = past_limit(st["counters"], a.counter)
         if code:
             save(d, st); emit(st); print(line); return code

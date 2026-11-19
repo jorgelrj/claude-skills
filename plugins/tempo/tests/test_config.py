@@ -1,5 +1,6 @@
 """Tests for tempo_config.py: a config written for 0.21.0 still passes, gates.full_bars: verify, task.trackers,
-run: final targets, tests.always and tests.slow, dupes and the space WARN.
+run: final targets, tests.always and tests.slow, dupes and the space WARN, the ci tier, run: ci targets, the
+machine override file and sync merged.
 
 Run: python3 -m unittest discover -s <plugin>/tests -v
 The script needs PyYAML and jsonschema, so it runs the way the plugin runs it, with `uv run`.
@@ -151,6 +152,16 @@ class Config(unittest.TestCase):
         self.assertEqual(self.cfg("bars", "--paths", "app/lib/bar.dart", "app/test/bar_test.dart"), narrow)
         self.assertEqual(self.cfg("bars"), narrow)
 
+    def test_a_split_test_mirrors_its_page_but_not_a_source_of_its_own(self):
+        for f in ("app/test/foo_panels_test.dart", "app/lib/foo_bar.dart", "app/test/foo_bar_test.dart"):
+            (self.repo / f).write_text("")
+        subprocess.run(["git", "-C", str(self.repo), "add", "app"], check=True)
+        self.write(OLD + "tests:\n  slow: [app/test/foo_panels_test.dart, app/test/foo_bar_test.dart]\n")
+        narrow = "BARS: NARROW  WHY: routine change\n"
+        # foo_panels_test splits foo_test; foo_bar_test mirrors foo_bar.dart, so a change to foo.dart leaves it out.
+        self.assertEqual(self.cfg("bars", "--paths", "app/lib/foo.dart"), narrow + "SLOW: app/test/foo_panels_test.dart\n")
+        self.assertEqual(self.cfg("bars", "--paths", "app/lib/foo_bar.dart"), narrow + "SLOW: app/test/foo_bar_test.dart\n")
+
     def test_check_warns_when_the_repo_path_has_a_space(self):
         self.assertNotIn("WARN", self.cfg("check"))
         self.repo = self.repo.rename(self.tmp / "my repo")
@@ -183,6 +194,70 @@ class Config(unittest.TestCase):
         out = self.cfg("dupes", "--ticket", "PD-99", "--branch", "feat/PD-99")
         self.assertEqual(out.splitlines()[0][:40], "WARN: open PRs not checked: gh did not a")
         self.assertNotIn("DUPE", out)
+
+    def test_ci_tier_runs_light_and_defers_targets_to_ci(self):
+        self.write(OLD + "gates:\n  full_bars: ci\nlimits:\n  ci_rounds: 3\n")
+        self.assertNotIn("WARN", self.cfg("check"))
+        self.assertEqual(self.cfg("bars", "--paths", "app/pubspec.lock"), "BARS: LOCAL  WHY: gates.full_bars is ci\nDEFERRED: ci\n")
+        self.assertEqual(self.cfg("bars", "--critical"), "BARS: LOCAL  WHY: gates.full_bars is ci\nDEFERRED: ci (critical change)\n")
+        paths = ("--critical", "--final", "--paths", "app/lib/foo.dart")
+        self.assertEqual(self.cfg("targets", *paths), "web\t# DEFERRED to CI\tadvisory\ne2e\t# DEFERRED to CI\n")
+        self.assertIn("flutter test --platform chrome", self.cfg("targets", *paths, "--verify"))
+        self.assertEqual(self.cfg("cmd", "test_one"), "cd {package} && flutter test {tests}\n")  # no test_local: test_one
+        self.write(OLD.replace("  build:", "  test_local: cd {package} && flutter test -x widget {tests}\n  build:")
+                   + "gates:\n  full_bars: ci\nlimits:\n  ci_rounds: 3\n")
+        self.assertEqual(self.cfg("cmd", "test_one"), "cd {package} && flutter test -x widget {tests}\n")
+        (self.repo / ".tempo" / "config.local.yaml").write_text(  # a slow laptop caps the command its tier runs
+            "commands:\n  test_local: cd {package} && flutter test -j 2 -x widget {tests}\n  test_one: cd {package} && flutter test -j 2 {tests}\n")
+        self.assertEqual(self.cfg("cmd", "test_one"), "cd {package} && flutter test -j 2 -x widget {tests}\n")
+        (self.repo / ".tempo" / "config.local.yaml").unlink()
+        self.write(OLD.replace("  build:", "  test_local: cd {package} && flutter test -x widget {tests}\n  build:"))
+        self.assertEqual(self.cfg("cmd", "test_one"), "cd {package} && flutter test {tests}\n")  # other tiers ignore it
+        self.write(OLD + "gates:\n  full_bars: ci\n")
+        self.assertIn("limits.ci_rounds is 0", self.cfg("check"))
+        self.write(OLD.replace("draft: false", "draft: true") + "limits:\n  ci_rounds: 2\n")
+        self.assertIn("a draft PR never merges", self.cfg("check"))
+        self.write(OLD.replace("  draft: false", "  draft: false\n  required_checks: [ci-gate, ai-review]") + "limits:\n  ci_rounds: 2\n")
+        self.assertNotIn("WARN", self.cfg("check"))
+        self.write(OLD.replace("  draft: false", "  draft: false\n  required_checks: ['flutter (core)']"))
+        self.assertIn("pr.required_checks.0", self.cfg("check", code=1))  # the spawn guard refuses parentheses
+
+    def test_a_run_ci_target_never_prints_without_verify(self):
+        self.write(OLD.replace("    run: critical\n", "    run: ci\n"))
+        for flags in ((), ("--critical",), ("--full",), ("--critical", "--full", "--final")):
+            self.assertNotIn("e2e", self.cfg("targets", *flags, "--paths", "app/lib/foo.dart"), flags)
+            self.assertNotIn("e2e", self.cfg("targets", *flags), flags)
+        self.assertNotIn("e2e", self.cfg("targets", "--full", "--verify"))  # not even /tempo:verify runs it
+
+    def test_the_machine_override_merges_last_and_its_absence_changes_nothing(self):
+        before = self.cfg("resolve")
+        local = self.repo / ".tempo" / "config.local.yaml"
+        local.write_text("limits:\n  max_parallel_builders: 1\ncommands:\n  test_one: cd {package} && flutter test -j 2 {tests}\n")
+        out = self.cfg("check")
+        self.assertTrue(out.rstrip().endswith(str(local)), out)
+        self.assertNotIn("WARN", out)
+        self.assertEqual(self.cfg("cmd", "test_one"), "cd {package} && flutter test -j 2 {tests}\n")
+        self.assertIn('"max_parallel_builders": 1', self.cfg("resolve"))
+        git = ["git", "-C", str(self.repo), "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+        subprocess.run(git + ["commit", "-qm", "x"], check=True)
+        wt = self.tmp / "wt"
+        subprocess.run(git + ["worktree", "add", "-q", "--detach", str(wt)], check=True)
+        (wt / ".tempo").mkdir()
+        (wt / ".tempo" / "config.yaml").write_text(OLD)
+        self.assertIn("-j 2", self.cfg("--repo", wt, "cmd", "test_one"))  # a linked worktree uses the main checkout's
+        subprocess.run(git + ["add", "-f", ".tempo/config.local.yaml"], check=True)
+        self.assertIn("is committed", self.cfg("check"))
+        local.write_text("limits:\n  max_parallel_builders: 0\n")
+        self.assertIn("max_parallel_builders", self.cfg("check", code=1))
+        local.unlink()
+        self.assertEqual(self.cfg("resolve"), before)
+
+    def test_sync_merged_is_a_tracker_event(self):
+        self.write(OLD.split("task:")[0] + TRACKERS.replace("sync: {pr: In review}", "sync: {pr: In review, merged: Done}"))
+        self.assertNotIn("WARN", self.cfg("check"))
+        self.assertEqual(self.cfg("sync", "merged", "--text", "POD-3"), "SYNC: OFF (jira POD-3: nothing set for merged)\n")
+        self.assertEqual(self.cfg("sync", "merged", "--text", "#215"),
+                         "WARN: 215 not moved: sync.project names no GitHub Projects board\n")
 
 
 TRACKERS = """\
