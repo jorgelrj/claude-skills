@@ -410,11 +410,19 @@ From PD-47 in pod1um: Flutter runs in a task worktree leave plugin sources under
 - A step that fails prints `BEFORE RUN: exit <n>: <step>` in the summary. The command runs anyway.
 - **Upgrade order.** A config that sets `worktree.before_run` fails `check` on 0.26.0 and older, so update every machine first.
 
+### Local proof before CI (0.28.0)
+
+CI-WAIT on a real repo spent most of its CI minutes on reds a laptop run would have caught, and re-ran deterministic failures it could not read.
+
+- **LAST runs whole packages under `full_bars: ci`.** The final integrate, and a fix integrate that touches production code, run each touched package's whole unit-test folder, plus the LAST commands a project's standing decisions add (a server's whole unit suite and its touched int and end-to-end specs). Routine waves stay LOCAL. The build and platform targets stay in CI.
+- **`collect` reads a self-cancelled job.** A fail-fast step that cancels its own run leaves the failing job `cancelled`, and `--log-failed` prints nothing. `collect` now reads the job's steps and keeps the failed step's log. Jobs cancelled with no failed step of their own count under a new `CANCELLED: <n>` field, not NO-EVIDENCE, unless nothing in the round failed on its own.
+- **CI-WAIT reproduces before it pushes.** Each failing test from the round runs locally first. A test that fails locally is a finding; one that passes twice locally, outside the diff, is a flake candidate: when it is the round's only red, the run's failed and cancelled jobs are re-run once (`gh run rerun --failed`, which counts as a round), and red again makes it a finding. Format, analyze, lint, typecheck and compile failures are never re-run. The fix push waits until the round's failing tests pass locally, and a round's fixes and any base merge go in one push.
+
 ### CI tier and CI-WAIT (0.27.0)
 
 For a repo whose PR checks run the suites and an AI review, so a weak laptop runs only what proves the change. Every key is opt-in; a config without them runs as 0.26.0 did.
 
-- **Light local tier, `gates.full_bars: ci`.** `bars` prints `BARS: LOCAL` and `DEFERRED: ci`. Every integrate runs the touched tests and their mirrors, the ALWAYS files, one typecheck of the touched packages and lint: no whole package, no build, no platform target, no baseline compare. The architect writes tests only CI can run as `CI` lines that nobody runs locally, and QA records their criteria as `CI`.
+- **Light local tier, `gates.full_bars: ci`.** `bars` prints `BARS: LOCAL` and `DEFERRED: ci`. Every integrate runs the touched tests and their mirrors, the ALWAYS files, one typecheck of the touched packages and lint (from 0.28.0 the final integrate adds each touched package's whole unit folder): no build, no platform target, no baseline compare. The architect writes tests only CI can run as `CI` lines that nobody runs locally, and QA records their criteria as `CI`.
 - **`commands.test_local`.** The test-one command for that tier, with the same placeholders, pointed at a runner that skips what only CI runs. Under `ci`, `cmd test_one` prints it.
 - **`targets[].run: ci`.** A target only CI runs; it never prints here, `/tempo:verify` included. Under `full_bars: ci` every other target prints `# DEFERRED to CI`, and `/tempo:verify` still runs those.
 - **The machine file, `.tempo/config.local.yaml`.** Merged last, kept out of git, and read from the main checkout by a linked worktree that has none. A slow laptop sets `limits.max_parallel_builders: 1` and a `-j 2` in its own `commands.test_one`, or in `commands.test_local` under `full_bars: ci`.

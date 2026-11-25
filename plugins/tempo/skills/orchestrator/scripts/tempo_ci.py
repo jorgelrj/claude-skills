@@ -30,7 +30,11 @@ Usage: tempo_ci.py <command> --pr N [--repo DIR]
                                         link when it has one; else runs on the PR head, then the newest
                                         pull_request_target run (recorded on the base, not the head) whose
                                         title is the PR's. Prints
-                                        `CI: FILE  FAILED: <n>  BLOCKING: <n>  NO-EVIDENCE: <checks or NIL>`.
+                                        `CI: FILE  FAILED: <n>  BLOCKING: <n>  NO-EVIDENCE: <checks or NIL>  CANCELLED: <n>`.
+                                        A job that cancelled its own run after a failed step (a fail-fast step)
+                                        still gives that step's log, read through the job's steps. A job cancelled
+                                        with no failed step of its own counts under CANCELLED, not NO-EVIDENCE,
+                                        unless no check in the round failed on its own (a runner died).
 Exit 0 ok, 1 gh failed or usage error.
 """
 import argparse
@@ -154,12 +158,42 @@ def review_runs(cwd, head, checks, artifact, md):
     return list(dict.fromkeys(ids))
 
 
+MARKS = ("❌", " [E]", "FAIL ", "##[error]")  # a failed flutter test (github, expanded reporters), a vitest file, the runner
+
+
+def failed_step_log(cwd, job):
+    """A job that cancels its own run on a failure ends `cancelled`, and `--log-failed` then prints nothing.
+    Its steps still say which one failed, and when: return that step's lines of the job log (by their
+    timestamps; `gh run view --log` names every step UNKNOWN STEP), failure lines first, and its name."""
+    steps = json.loads(gh(cwd, "api", f"repos/{{owner}}/{{repo}}/actions/jobs/{job}") or "{}").get("steps") or []
+    bad = [s for s in steps if s.get("conclusion") == "failure"]
+    if not bad:
+        return "", None
+    start, end = (bad[0].get("started_at") or "")[:19], (bad[0].get("completed_at") or "9999")[:19]
+    text = []
+    for row in gh(cwd, "run", "view", "--job", job, "--log").splitlines():
+        line = row.split("\t", 2)[-1].lstrip("\ufeff")
+        if start <= line[:19] <= end:
+            text.append(line.split(" ", 1)[1] if " " in line else "")
+    # The times are whole seconds, so a neighbouring step can share an edge second: split at each step's
+    # `##[group]Run` header and keep the part that holds the failure (else the longest).
+    parts, cur = [], []
+    for t in text:
+        if t.startswith("##[group]Run ") and cur:
+            parts.append(cur); cur = []
+        cur.append(t)
+    parts.append(cur)
+    text = max(parts, key=lambda p: (sum(any(m in t for m in MARKS[:3]) for t in p), len(p)))
+    marked = [t for t in text if any(m in t for m in MARKS) and not t.startswith("\x1b[36;1m")][:20]  # not the echoed script
+    return "\n".join(marked + (["..."] if marked else []) + text), bad[0].get("name")
+
+
 def collect(cwd, pr, out, lines, artifact):
     head = pr_view(cwd, pr)
     checks = pr_checks(cwd, pr)
     failed = [c for c in checks if c.get("bucket") in ("fail", "cancel")]
     md = [f"# CI evidence: PR {head.get('url')}", f"Head: {head.get('headRefOid')}", ""]
-    no_evidence = []
+    no_evidence, cancelled = [], []
     for c in failed:
         md.append(f"## Check {c['name']} ({c.get('state')}) {c.get('link') or ''}".rstrip())
         m = RUN_LINK.search(c.get("link") or "")
@@ -168,12 +202,19 @@ def collect(cwd, pr, out, lines, artifact):
             try:
                 args = ["--job", m.group(2)] if m.group(2) else [m.group(1)]
                 log = gh(cwd, "run", "view", *args, "--log-failed")
+                if not log.strip() and m.group(2):
+                    log, step = failed_step_log(cwd, m.group(2))
+                    if step:
+                        md.append(f"- failed step: {step} (the job then cancelled its own run, so it shows as cancelled)")
             except RuntimeError as e:
                 log = ""
                 md.append(f"- log not read: {e}")
         tail = log.strip().splitlines()[-lines:]
         if tail:
             md += ["```", *tail, "```"]
+        elif c.get("bucket") == "cancel" and m and m.group(2) and not any("- failed step:" in x for x in md[-2:]):
+            md.append("- cancelled with no failed step of its own: another job's failure or a newer push stopped it")
+            cancelled.append(c["name"])
         else:
             no_evidence.append(c["name"])
         md.append("")
@@ -204,9 +245,12 @@ def collect(cwd, pr, out, lines, artifact):
         md.append("- NIL")
     if blocking:  # a failed review check whose findings are here has its evidence
         no_evidence = [n for n in no_evidence if artifact not in n]
+    if len(cancelled) + len(no_evidence) == len(failed) and not blocking:  # nothing failed on its own: a runner died
+        no_evidence, cancelled = no_evidence + cancelled, []
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text("\n".join(md).rstrip() + "\n", encoding="utf-8")
-    print(f"CI: {out}  FAILED: {len(failed)}  BLOCKING: {len(blocking)}  NO-EVIDENCE: {', '.join(no_evidence) or 'NIL'}")
+    print(f"CI: {out}  FAILED: {len(failed)}  BLOCKING: {len(blocking)}  NO-EVIDENCE: {', '.join(no_evidence) or 'NIL'}"
+          f"  CANCELLED: {len(cancelled)}")
     return 0
 
 

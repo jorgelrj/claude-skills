@@ -16,7 +16,8 @@ sys.path.insert(0, str(SCRIPTS))
 import tempo_ci  # noqa: E402
 
 # The stub answers from files in $STUB: pr.json, checks.json (+ checks.exit), log.txt, runs.json (runs on the head),
-# runs-prt.json (pull_request_target runs), review.json (the artifact of run 42).
+# runs-prt.json (pull_request_target runs), review.json (the artifact of run 42), job-<id>.json (a job's steps),
+# joblog.txt (a whole job log, `job<TAB>UNKNOWN STEP<TAB><timestamp> line`).
 GH = """#!/usr/bin/env python3
 import os, sys, pathlib
 d, a = pathlib.Path(os.environ["STUB"]), sys.argv[1:]
@@ -28,7 +29,8 @@ def out(name, code=0):
     sys.exit(code)
 if a[:2] == ["pr", "view"]: out("pr.json")
 if a[:2] == ["pr", "checks"]: out("checks.json", int((d / "checks.exit").read_text()) if (d / "checks.exit").exists() else 0)
-if a[:2] == ["run", "view"]: out("log.txt")
+if a[:2] == ["run", "view"]: out("log.txt" if "--log-failed" in a else "joblog.txt")
+if a[:1] == ["api"]: out("job-" + a[1].rsplit("/", 1)[-1] + ".json")
 if a[:2] == ["run", "list"]: out("runs-prt.json" if "--event" in a else "runs.json")
 if a[:2] == ["run", "download"]:
     if a[2] != "42" or not (d / "review.json").exists():
@@ -125,7 +127,7 @@ class Stub(unittest.TestCase):
             {"severity": "MEDIUM", "file": "lib/b.dart", "line": 1, "title": "Naming"}]})
         out = self.tmp / "ci" / "round-1.md"
         self.assertEqual(self.ci("collect", "--out", out, "--lines", "5"),
-                         f"CI: {out}  FAILED: 2  BLOCKING: 1  NO-EVIDENCE: NIL\n")
+                         f"CI: {out}  FAILED: 2  BLOCKING: 1  NO-EVIDENCE: NIL  CANCELLED: 0\n")
         text = out.read_text()
         self.assertIn("Expected: 2 Actual: 3", text)
         self.assertNotIn("line 150", text)  # only the tail
@@ -136,6 +138,42 @@ class Stub(unittest.TestCase):
         self.assertIn("NO-EVIDENCE: ai-review", self.ci("collect", "--out", out))
         self.assertIn("no run of this PR has an artifact named ai-review", out.read_text())
 
+    def test_collect_reads_a_self_cancelled_job_and_skips_its_cancelled_siblings(self):
+        # pr-tests cancels its own run on a failure: the failing job ends cancelled and --log-failed prints nothing
+        self.put("checks.json", [
+            {"name": "server-int", "bucket": "cancel", "state": "CANCELLED", "link": "https://g/o/r/actions/runs/9/job/11"},
+            {"name": "client (apps/coach 0/6)", "bucket": "cancel", "state": "CANCELLED", "link": "https://g/o/r/actions/runs/9/job/12"}])
+        self.put("checks.exit", "1")
+        self.put("job-11.json", {"steps": [
+            {"name": "Run pnpm build", "conclusion": "success", "started_at": "2026-11-25T10:00:00Z", "completed_at": "2026-11-25T10:00:20Z"},
+            {"name": "Run pnpm test:int", "conclusion": "failure", "started_at": "2026-11-25T10:00:21Z", "completed_at": "2026-11-25T10:03:00Z"},
+            {"name": "Run gh run cancel", "conclusion": "cancelled", "started_at": "2026-11-25T10:03:00Z", "completed_at": "2026-11-25T10:03:01Z"}]})
+        self.put("job-12.json", {"steps": [{"name": "Test the shard", "conclusion": "cancelled"}]})
+        # gh run view --log names every step UNKNOWN STEP: the failed step's lines are found by its time window
+        self.put("joblog.txt", "server-int\tUNKNOWN STEP\t﻿2026-11-25T10:00:10.1Z built ok\n"
+                 "server-int\tUNKNOWN STEP\t2026-11-25T10:01:00.1Z FAIL src/a.int-spec.ts > lists rows\n"
+                 "server-int\tUNKNOWN STEP\t2026-11-25T10:02:59.9Z expected 2 to be 3\n"
+                 "server-int\tUNKNOWN STEP\t2026-11-25T10:03:01.5Z ##[error]The operation was canceled.\n")
+        out = self.tmp / "r.md"
+        self.assertEqual(self.ci("collect", "--out", out), f"CI: {out}  FAILED: 2  BLOCKING: 0  NO-EVIDENCE: NIL  CANCELLED: 1\n")
+        text = out.read_text()
+        self.assertIn("failed step: Run pnpm test:int", text)
+        self.assertIn("FAIL src/a.int-spec.ts > lists rows", text)
+        self.assertIn("expected 2 to be 3", text)
+        self.assertNotIn("built ok", text)  # only the failed step's lines
+        self.assertNotIn("operation was canceled", text)
+        self.assertNotIn("2026-11-25T10:01:00", text)  # timestamps dropped
+        self.assertIn("cancelled with no failed step of its own", text)
+        # a failed step with no lines in its window is no evidence; with nothing else in the round, nothing is
+        self.put("joblog.txt", "")
+        self.assertEqual(self.ci("collect", "--out", out),
+                         f"CI: {out}  FAILED: 2  BLOCKING: 0  NO-EVIDENCE: server-int, client (apps/coach 0/6)  CANCELLED: 0\n")
+        self.assertNotIn("Run pnpm test:int (the job then cancelled its own run, so it shows as cancelled)\n- cancelled", out.read_text())
+        # no job failed on its own (a runner died, or every job was stopped): that is NO-EVIDENCE again
+        self.put("job-11.json", {"steps": [{"name": "Run pnpm test:int", "conclusion": "cancelled"}]})
+        self.assertEqual(self.ci("collect", "--out", out),
+                         f"CI: {out}  FAILED: 2  BLOCKING: 0  NO-EVIDENCE: server-int, client (apps/coach 0/6)  CANCELLED: 0\n")
+
     def test_collect_finds_the_review_run_off_the_head(self):
         # pull_request_target runs on the base's head commit, so no run on the PR head holds the review
         self.put("checks.json", [{"name": "ai-review", "bucket": "fail", "state": "FAILURE",
@@ -143,13 +181,13 @@ class Stub(unittest.TestCase):
         self.put("runs.json", [{"databaseId": 41, "displayTitle": PR["title"]}])
         self.put("review.json", {"findings": [{"severity": "CRITICAL", "file": "a.ts", "line": 2, "title": "Leak"}]})
         out = self.tmp / "r.md"
-        self.assertEqual(self.ci("collect", "--out", out), f"CI: {out}  FAILED: 1  BLOCKING: 1  NO-EVIDENCE: NIL\n")
+        self.assertEqual(self.ci("collect", "--out", out), f"CI: {out}  FAILED: 1  BLOCKING: 1  NO-EVIDENCE: NIL  CANCELLED: 0\n")
         downloads = [c for c in (self.tmp / "calls.txt").read_text().splitlines() if c.startswith("run download")]
         self.assertTrue(downloads[0].startswith("run download 42 "), downloads)  # the link's run, tried first
         # no link: the pull_request_target run with the PR's title
         self.put("checks.json", [{"name": "ai-review", "bucket": "fail", "state": "FAILURE", "link": ""}])
         self.put("runs-prt.json", [{"databaseId": 40, "displayTitle": "another PR"}, {"databaseId": 42, "displayTitle": PR["title"]}])
-        self.assertEqual(self.ci("collect", "--out", out), f"CI: {out}  FAILED: 1  BLOCKING: 1  NO-EVIDENCE: NIL\n")
+        self.assertEqual(self.ci("collect", "--out", out), f"CI: {out}  FAILED: 1  BLOCKING: 1  NO-EVIDENCE: NIL  CANCELLED: 0\n")
         self.assertNotIn("run download 40 ", (self.tmp / "calls.txt").read_text())
         # the review's own run has no artifact (an indeterminate review): an older run's findings do not count
         self.put("checks.json", [{"name": "ai-review", "bucket": "fail", "state": "FAILURE",

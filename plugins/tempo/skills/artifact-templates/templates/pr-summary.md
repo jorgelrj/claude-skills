@@ -19,7 +19,7 @@ Issued by: orchestrator
 
 ## 6 How to verify
 - {{exact command or manual step}}
-- {{When the full suite did not run here: "Full suite not run; run `/tempo:verify` before release.", or under LOCAL bars: "Widget, browser and whole-package tests run in this PR's CI checks."}}
+- {{When the full suite did not run here: "Full suite not run; run `/tempo:verify` before release.", or under LOCAL bars: "Tests only CI runs, the build and the platform targets run in the repo's CI checks."}}
 
 ## 7 Artifacts
 - .tempo/{{task-id}}/ (internal record only: never copied into the PR body)
