@@ -411,6 +411,13 @@ From PD-47 in pod1um: Flutter runs in a task worktree leave plugin sources under
 - A step that fails prints `BEFORE RUN: exit <n>: <step>` in the summary. The command runs anyway.
 - **Upgrade order.** A config that sets `worktree.before_run` fails `check` on 0.26.0 and older, so update every machine first.
 
+### Pushed task branches are rebased, not merged (0.30.0)
+
+When a PR conflicted with its base, CI-WAIT's integrator UPDATE merged the base into the task branch, so PRs carried base merges and Jorge rebased them by hand. The task branch is a working branch built to land on the base, so 0.30.0 takes the base only by rebase:
+
+- **UPDATE rebases.** Mode UPDATE rebases the task branch onto `origin/<base>` with REBASE's rules (mechanical conflicts only, generated files regenerated, typecheck, reset to the old head on any failure). REBASE no longer skips a pushed branch.
+- **Lease push.** After the PR is open, every push of the task branch is `git push --force-with-lease=<branch>:<PR headRefOid>`. A rejected lease (someone else pushed) raises CI-STUCK. No other force-push is allowed, and a pushed branch is still never folded.
+
 ### QA proves it live (0.29.0)
 
 The last three pod1um QA reports (PD-154, PD-156, PD-1603: 64 criteria) passed every criterion by Method TEST. None started the API, opened the web app or ran a phone build, and none saved a screenshot. 0.29.0 makes QA use the product as its user would:
