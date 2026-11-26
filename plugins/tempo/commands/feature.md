@@ -12,7 +12,7 @@ $ARGUMENTS
 1. Load the TEMPO `orchestrator` skill (listed as `tempo:orchestrator` when installed as a plugin) and follow it exactly. It is the stage machine for this command.
 2. Flow hint: `feature`. Triage MAY reclassify the task as a bug. IF it does, THEN follow the bug route the Task Card names.
 3. IF the request starts with `--plan-only`, THEN run in PLAN-ONLY mode (orchestrator 1.0): stop after the plan, build nothing.
-3.0 IF the request carries `--quick` or `--lane S|M|L`, THEN that lane wins over triage's sizing (orchestrator 1.0.1). `--quick` runs lane S: one Work Order from the Task Card, build, correctness review, draft PR.
+3.0 IF the request carries `--quick` or `--lane S|M|L`, THEN that lane wins over triage's sizing (orchestrator 1.0.1). `--quick` runs lane S: one Work Order from the Task Card, build, correctness review, QA, draft PR.
 3.0.1 IF the request carries `--auto` (or `--autopilot`), THEN run on autopilot (orchestrator 1.0.2 and 4.5): take your own recommendation at every gate and escalation, log each one in `decisions.md`, and stop only for the stops orchestrator 4.5.1 keeps. `--no-auto` turns off `task.autopilot` from config for this task.
 3.0.2 Before anything reads code, the orchestrator fetches the base branch and fast-forwards it (orchestrator 1.3.0). IF it cannot, THEN it stops and tells me why. `--offline` uses the local base as it is.
 3.1 IF the request above is empty, THEN ask me what to build and stop.

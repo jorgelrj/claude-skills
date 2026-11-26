@@ -13,7 +13,7 @@ Scope: {{REPO | WORKSPACE}} · Inputs: {{task.md, spec.md or NIL}} · Issued by:
 ## 3 Slices
 ### S-1 · {{repo or WO-nn}} · size {{S|M|L}}
 - Objective: {{one line}}
-- [AC-1] {{criterion, WHEN ..., the system shall ...}}
+- [AC-1] {{criterion in the spec format: WHEN ..., the system shall .... Test: .... Live: ... (or Live: NONE (...)). Design: F-n when it changes a screen}}
 - Files: {{production files the slice changes}}
 - Test files: {{test files the slice adds or changes}}
 - Pattern: {{closest existing file or commit to follow}}
@@ -35,4 +35,4 @@ Scope: {{REPO | WORKSPACE}} · Inputs: {{task.md, spec.md or NIL}} · Issued by:
 - {{Each assumption the slices rely on}}
 
 ## 9 Joint validation
-- {{How the slices are checked together, or NIL for a single repo}}
+- [AC-{{n}}] {{end-to-end criterion in the spec format, numbered after the slice tags. Live: WEB | ANDROID | IOS <screen> ... · Evidence: qa/AC-n.png plus qa/AC-n.http.txt, or Live: NONE (<class>: <why>) for a TEST-depth line}}, or NIL for a single repo

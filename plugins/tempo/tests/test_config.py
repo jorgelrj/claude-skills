@@ -1,6 +1,6 @@
 """Tests for tempo_config.py: a config written for 0.21.0 still passes, gates.full_bars: verify, task.trackers,
 run: final targets, tests.always and tests.slow, dupes and the space WARN, the ci tier, run: ci targets, the
-machine override file and sync merged.
+machine override file, sync merged and the qa surfaces.
 
 Run: python3 -m unittest discover -s <plugin>/tests -v
 The script needs PyYAML and jsonschema, so it runs the way the plugin runs it, with `uv run`.
@@ -259,6 +259,58 @@ class Config(unittest.TestCase):
         self.assertEqual(self.cfg("sync", "merged", "--text", "#215"),
                          "WARN: 215 not moved: sync.project names no GitHub Projects board\n")
 
+    def qa(self, *args, code=0):
+        import json
+        out = self.cfg("qa", *args, code=code)
+        return json.loads(out) if code == 0 else out
+
+    def test_qa_prints_the_surfaces_a_change_needs_in_start_order(self):
+        self.write(OLD + "env:\n  PORT: '3000'\n" + QA)
+        names = lambda d: [s["name"] for s in d["surfaces"]]
+        self.assertEqual(names(self.qa("--paths", "server/x.ts")), ["stack", "api"])
+        self.assertEqual(names(self.qa("--paths", "apps/coach/lib/main.dart")), ["stack", "api", "coach-web"])
+        self.assertEqual(names(self.qa("--paths", "README.md")), ["stack"])  # no paths: always
+        out = self.qa()
+        self.assertEqual(names(out), ["stack", "api", "coach-web", "coach-android"])
+        prefix = 'export PORT="3000"; '
+        self.assertEqual(out["surfaces"][1]["start"], prefix + "cd server && pnpm start:dev")
+        self.assertEqual(out["surfaces"][3]["screenshot"], prefix + "adb exec-out screencap -p > {out}")  # {out} stays for QA
+        self.assertEqual(out["surfaces"][1]["url"], "http://localhost:3000")
+        self.assertEqual(out["accounts"], [{"role": "coach", "user": "c@x.io"}])
+        self.assertEqual(out["seed"], prefix + "pnpm seed")
+        self.assertTrue(out["live"])
+
+    def test_qa_falls_back_to_run_app_and_is_nil_without_either(self):
+        self.assertIn("NIL", subprocess.run([UV, "run", "--quiet", str(CONFIG / "scripts" / "tempo_config.py"), "--repo",
+                                             str(self.repo), "qa"], capture_output=True, text=True, env=self.env).stderr)
+        self.qa(code=1)
+        self.write(OLD.replace("commands:\n", "commands:\n  run_app: npm start\n"))
+        self.assertEqual(self.qa()["surfaces"], [{"name": "app", "kind": "cli", "start": "npm start"}])
+        self.write(OLD + "qa:\n  live: false\n")
+        self.assertEqual(self.qa(), {"live": False, "surfaces": [], "accounts": [], "seed": None})
+
+    def test_qa_needs_must_name_an_earlier_surface(self):
+        self.write(OLD + QA.replace("needs: [stack]", "needs: [coach-web]"))
+        self.assertIn("qa.surfaces.api.needs: 'coach-web' is not a surface listed before it", self.cfg("check", code=1))
+
+    def test_qa_rejects_unknown_keys(self):
+        self.write(OLD + QA.replace("kind: service", "kind: service, port: 5432"))
+        self.assertIn("port", self.cfg("check", code=1))
+        self.write(OLD + QA.replace("kind: service", "kind: database"))
+        self.assertIn("'database' is not one of", self.cfg("check", code=1))
+
+
+QA = """\
+qa:
+  surfaces:
+    - {name: stack, kind: service, start: docker compose up, stop: docker compose down}
+    - {name: api, kind: api, needs: [stack], start: cd server && pnpm start:dev, url: http://localhost:3000, paths: [server/**]}
+    - {name: coach-web, kind: web, needs: [api], start: cd apps/coach && flutter run -d web-server, paths: [apps/coach/**]}
+    - {name: coach-android, kind: android, needs: [api], start: flutter run, screenshot: "adb exec-out screencap -p > {out}", paths: [apps/coach/android/**]}
+  accounts:
+    - {role: coach, user: c@x.io}
+  seed: pnpm seed
+"""
 
 TRACKERS = """\
 task:

@@ -28,6 +28,10 @@ Commands:
                                          are local work branches only and never name the task branch
   cmd     NAME [--var k=v ...]           print one command as a shell line, env exported first. Under
                                          gates.full_bars: ci, test_one prints commands.test_local when it is set
+  qa      [--paths P ...]                print, as JSON, the qa.surfaces QA starts for the changed paths (and
+                                         the earlier surfaces they need) in start order, env exported, plus
+                                         accounts and seed. No surfaces: commands.run_app as one `app`
+                                         surface; neither and qa.live true: NIL and exit 1
   targets [--paths P ...] [--ref REF] [--full] [--critical] [--final] [--scoped-only] [--verify]
                                          print the platform test runs for the changed paths: scoped to the
                                          tests those paths touch or mirror when a target has scoped_command.
@@ -215,6 +219,12 @@ def lint(data, path):
                 out.append(f"{where}.sync: TEMPO syncs jira and github tickets only, not {tr.get('type')}.")
             if sync.get("project") and tr.get("type") != "github":
                 out.append(f"{where}.sync.project: a GitHub Projects board; only a github tracker has one.")
+        seen = set()
+        for sf in (block.get("qa") or {}).get("surfaces") or []:
+            for dep in sf.get("needs") or []:
+                if dep not in seen:
+                    out.append(f"{path}: {loc + '.' if loc else ''}qa.surfaces.{sf.get('name')}.needs: '{dep}' is not a surface listed before it; list order is start order.")
+            seen.add(sf.get("name"))
     return out
 
 
@@ -893,6 +903,7 @@ def main(argv=None):
     n.add_argument("--branch", help="an existing task branch (from state): derive work-order and repro names from it")
     n.add_argument("--wo", type=int, nargs="*", default=[])
     m = add("cmd"); m.add_argument("name"); m.add_argument("--var", action="append", default=[])
+    q = add("qa"); q.add_argument("--paths", nargs="*", help="changed files: only the surfaces they touch, and what those need")
     t = add("targets"); t.add_argument("--paths", nargs="*")
     t.add_argument("--ref", help="find test files in this commit (default: the files git tracks in the checkout)")
     t.add_argument("--full", action="store_true", help="print each target's full command, never the scoped one")
@@ -1010,6 +1021,25 @@ def main(argv=None):
                 print(f"NIL: command '{a.name}' is not set", file=sys.stderr); return 1
             vals = dict(v.split("=", 1) for v in a.var)
             print(env_prefix(cfg.get("env")) + fill(command, vals)); return 0
+
+        if a.cmd == "qa":
+            q = cfg.get("qa") or {}
+            live = q.get("live", True)
+            surfaces = q.get("surfaces") or []
+            if not surfaces and (cfg.get("commands") or {}).get("run_app"):
+                surfaces = [{"name": "app", "kind": "cli", "start": cfg["commands"]["run_app"]}]  # configs from before qa:
+            if live and not surfaces:
+                print("NIL: no qa.surfaces and no commands.run_app: QA cannot run the product", file=sys.stderr); return 1
+            want = {s["name"] for s in surfaces if a.paths is None or not s.get("paths")
+                    or any(_matches(f, pat) for f in a.paths for pat in s["paths"])}
+            for s in reversed(surfaces):  # needs point backwards (lint), so one reverse pass pulls them all in
+                if s["name"] in want:
+                    want |= set(s.get("needs") or [])
+            env = env_prefix(cfg.get("env"))
+            out = [{**s, **{k: env + s[k] for k in ("start", "stop", "health", "screenshot") if s.get(k)}}
+                   for s in surfaces if s["name"] in want]
+            print(json.dumps({"live": live, "surfaces": out, "accounts": q.get("accounts") or [],
+                              "seed": env + q["seed"] if q.get("seed") else None}, indent=2, ensure_ascii=False)); return 0
 
         if a.cmd == "targets":
             files = None

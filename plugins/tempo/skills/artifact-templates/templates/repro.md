@@ -22,8 +22,8 @@ Inputs: {{task.md | hypotheses.md}} · Issued by: reproducer
 - Since when: {{commit hash and subject, from git log or git blame}}
 
 ## 5 Acceptance criteria
-- [AC-1] WHEN {{reproduction steps}}, the system shall {{expected behaviour}}.
-- [AC-2] The reproduction test in §2 passes without edits to the test.
+- [AC-1] WHEN {{reproduction steps}}, the system shall {{expected behaviour}}. Test: {{repro test}}. Live: {{API | WEB | ANDROID | IOS | CLI}} {{url | screen}} · Setup: {{seed, account, flag}} · Do: {{the reproduction steps}} · Expect: {{status and body keys | on-screen state}} · Evidence: qa/AC-1.{{http.txt | png | txt}}. {{Design: F-n when it changes a screen}}
+- [AC-2] The reproduction test in §2 passes without edits to the test. Test: {{repro test}}. Live: NONE (bar: the reproduction test is the proof).
 
 ## 6 Behaviour change
 {{NIL, or: old behaviour, new behaviour, and who it affects. This triggers a gate.}}

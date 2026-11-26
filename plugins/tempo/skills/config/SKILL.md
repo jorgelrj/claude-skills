@@ -67,6 +67,24 @@ task:
   - `limits.ci_rounds` above 0 adds the CI-WAIT stage after SHIP (orchestrator 3.12.1): TEMPO watches the PR's checks, fixes red checks and blocking review findings in plain commits, at most that many rounds, and ends the task once the PR is merged. TEMPO never merges. List the checks that report late, such as a commit status posted when its run ends, in `pr.required_checks`, so a round waits for them. Set `pr.draft: false`; `check` warns about a draft, about `ci` without `ci_rounds`, and about `pr.tool: none`.
   - None of these set, a repo runs as before.
 
+2.8 QA. `qa:` says how QA brings up the product and shows each acceptance criterion working in it.
+  - 2.8.1 `surfaces` lists what QA starts, in start order: a db or emulator `service`, an `api` with `url` and `health`, a `web` app with `url`, an `android` or `ios` app with `screenshot` (`{out}` is the file it writes), a `cli`. Each has `start` and MAY have `ready` (a regex in its output), `stop`, `needs` and `paths`.
+  - 2.8.2 A `needs` entry SHALL name a surface listed before it; `check` fails otherwise. A surface with `paths` applies only when a changed file matches; the surfaces it needs come with it.
+  - 2.8.3 `accounts` (`role`, `user`, `password`) are the sign-ins QA uses, and `seed` is the command that creates them and their data, run once after the surfaces are up. Real passwords go in `config.local.yaml` or `${env:NAME}`, never in `config.yaml`.
+  - 2.8.4 `live: true` is the default. Set `live: false` only for a repo with nothing to run (a library).
+  - 2.8.5 A config with no `qa.surfaces` and a `commands.run_app` still works: `qa` prints it as one surface named `app`.
+
+```yaml
+qa:
+  surfaces:
+    - {name: db, kind: service, start: docker compose up db, stop: docker compose down}
+    - {name: api, kind: api, needs: [db], start: npm run dev, ready: "listening on", url: http://localhost:3000,
+       health: curl -fsS http://localhost:3000/health, paths: [server/**]}
+  accounts:
+    - {role: admin, user: "${env:QA_ADMIN_EMAIL}", password: "${env:QA_PASSWORD}"}
+  seed: npm run seed
+```
+
 ## 3 The script
 
 3.1 Call it as `<cfg>`, defined as:
@@ -80,6 +98,7 @@ task:
 | `<cfg> resolve` | merged config and its sources as JSON (`--format yaml` to read it) |
 | `<cfg> names [--type <feat\|fix\|chore ...>] [--ticket <KEY>] [--slug <words>] [--wo 1 2 ...]` | task, work-order and repro branch names, the branch convention used, commit and PR title templates, PR base and draft. Needs a ticket or a slug; a `T-NNN` given as `--ticket` is ignored. `--suffix s2` names a split task's slice branch; `--branch <task branch>` derives work-order and repro names from an existing task branch |
 | `<cfg> cmd <name> [--var pattern=X --var module=Y]` | one command as a shell line, with `export ...;` for the env first. Under `gates.full_bars: ci`, `test_one` prints `commands.test_local` when it is set |
+| `<cfg> qa [--paths <changed files> ...]` | the surfaces QA starts for this change, in start order (the matching ones plus what they need), with env exported on each command, plus `accounts` and `seed`, as JSON. No `--paths`: every surface. NIL and exit 1 when `qa.live` is true and neither `qa.surfaces` nor `commands.run_app` is set |
 | `<cfg> bars [--paths <changed files> ...] [--critical]` | the bars an integrate runs: `BARS: FULL` or `BARS: NARROW`, and why. FULL when `gates.full_bars` is `integrate`, the change is critical, or a path matches `gates.full_paths`. With `gates.full_bars: ci` (0.27.0) it is always `BARS: LOCAL` plus `DEFERRED: ci`. With `gates.full_bars: verify` (0.23.0) it is always NARROW, and a second line, `DEFERRED: critical change` or `DEFERRED: gates.full_paths matches ...`, says the whole suite was owed and is left to the branch the task merges into or to `/tempo:verify`. Then `ALWAYS: <file>` per `tests.always` entry (run at every NARROW integrate, whatever packages it touches) and `SLOW: <file>` per `tests.slow` entry that `--paths` changes or mirrors (run filtered while building, whole once at the integrate after the last wave) |
 | `<cfg> dupes --ticket <KEY> --branch <task branch> ...` | `DUPE: pr\|branch <ref> <url>` per open PR or remote branch that names the ticket, other than the task's own branches (repeat `--branch` for slices) and branches whose PRs all merged or closed; exit 3 when any. `WARN:` and exit 0 when gh or the remote cannot answer |
 | `<cfg> targets [--paths <changed files> ...] [--ref <commit>] [--full] [--critical] [--final] [--scoped-only]` | the platform test runs for the changed files, as `name<TAB>command` with the env exported, plus `<TAB>advisory` for a target marked so. A target with `run: critical` (an advisory target's default) prints only with `--critical` or `--full`; `run: final` also with `--final` (the integrate after the last wave). A target with `scoped_command` prints one run per package, limited to the changed test files and the tests whose names mirror changed files (`foo.dart` → `foo_test.dart`), found in `--ref` (default: the checkout); changed files no test maps to print as `name<TAB># NO-TESTS ...`. `--full`, or no `--paths`, prints the full commands. `--scoped-only` (the orchestrator adds it under `gates.full_bars: verify`) never prints one: a target that would prints `name<TAB># DEFERRED whole suite`. Under `gates.full_bars: ci` a target prints `name<TAB># DEFERRED to CI` (its command with `--verify`), and a `run: ci` target prints nothing |

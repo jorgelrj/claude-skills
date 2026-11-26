@@ -7,6 +7,10 @@ Exit 0 = PASS, 1 = FAIL (findings printed as file:line: RULE: message), 2 = usag
 The section list for each document type is read from the matching template in
 ../../artifact-templates/templates/, so editing a template changes what is checked.
 Documents in the pre-0.6.0 ICAO layout are reported as LEGACY and pass.
+A QA Report also gets rules METHOD, EVIDENCE, MISSING and RESULT: each criterion names a result
+and a Method, a PASS cites its own qa/ file (qa/AC-n.* or qa/design/AC-n-*) that exists next to
+the report, a + DESIGN line cites a qa/design/AC-n- file, Criteria results holds at least one
+criterion line, and a PASS Result has no FAIL or BLOCKED criterion.
 """
 import os
 import re
@@ -26,6 +30,11 @@ CHANGES_RE = re.compile(r"^##\s+Changes\s*$", re.IGNORECASE)
 LEGACY_RE = re.compile(r"^[A-Z][A-Z ]+[A-Z]\s{2,}.*\bAMDT\s+\d+")
 PLACEHOLDER_RE = re.compile(r"\{\{[^}]*\}\}")
 AC_DEF_RE = re.compile(r"^\s*(?:[-*]|\d+\.)\s+\[(AC-\d+)\]")
+QA_AC_RE = re.compile(r"^\s*(?:[-*]|\d+\.)\s+[*\[]*AC-\d+")  # any criterion-like line; QA_LINE_RE then rejects drift
+QA_LINE_RE = re.compile(r"^\s*-\s+(AC-\d+):\s+(PASS|FAIL|BLOCKED)\.\s+Method:\s+"
+                        r"(?:LIVE-API|LIVE-WEB|LIVE-MOBILE|LIVE-CLI|TEST \((?:cosmetic|additive|refactor|config|guard|docs|bar|race|external|fault)\))(?:\s*\+\s*(?:DESIGN-FLOW|DESIGN))?\.")
+QA_EVIDENCE_RE = re.compile(r"Evidence:\s*(.*?)(?:\s+Supporting:|$)")
+QA_PATH_RE = re.compile(r"qa/[^\s,;`'\")]+")
 
 
 def norm(title):
@@ -119,7 +128,58 @@ def check_file(path, templates):
             if a.group(1) in seen:
                 add(i, "TAG", f"{a.group(1)} is defined twice (first at line {seen[a.group(1)]})")
             seen.setdefault(a.group(1), i)
+
+    if norm(m.group(1)) == "qa report":
+        check_qa(lines, os.path.dirname(os.path.abspath(path)), add)
     return findings, False
+
+
+def check_qa(lines, folder, add):
+    """QA Report: each criterion line names a result and a Method, and a PASS cites its own saved qa/ file."""
+    section, in_fence, crit_line, results, not_pass, result_pass = None, False, None, 0, [], None
+    for i, line in enumerate(lines, start=1):
+        if line.startswith("```"):
+            in_fence = not in_fence
+        if in_fence:
+            continue
+        if line.startswith("## "):
+            s = SECTION_RE.match(line)
+            section = norm(s.group(2)) if s else None
+            if section == "criteria results":
+                crit_line = i
+            continue
+        if section == "result" and result_pass is None and line.strip():
+            result_pass = (i, bool(re.match(r"\s*PASS\b", line)))
+        if section != "criteria results" or not QA_AC_RE.match(line):
+            continue
+        results += 1
+        q = QA_LINE_RE.match(line)
+        if not q:
+            add(i, "METHOD", "criterion line must read '- AC-n: PASS|FAIL|BLOCKED. Method: "
+                "LIVE-API|LIVE-WEB|LIVE-MOBILE|LIVE-CLI|TEST (<class>)[ + DESIGN| + DESIGN-FLOW]. ...'")
+            continue
+        tag = q.group(1)
+        if q.group(2) != "PASS":
+            not_pass.append(tag)
+            continue
+        e = QA_EVIDENCE_RE.search(line)
+        paths = [p.rstrip(".") for p in QA_PATH_RE.findall(e.group(1))] if e else []
+        # own files only: not qa/build-*, qa/progress.md, another criterion's file or an older round's qa/rN/
+        own = re.compile(rf"qa/(?:design/)?{re.escape(tag)}[.-]")
+        saved = [p for p in paths if own.match(p) and os.path.isfile(os.path.join(folder, p))]
+        method = line.split("Method:", 1)[1].split(". ", 1)[0].strip()
+        if not saved and method.startswith("TEST (") and re.search(r"\brun \S+ TREE [0-9a-f]{7,}", e.group(1) if e else ""):
+            continue  # qa 2.1.1: a TEST criterion may cite a clean integrator run
+        if not saved:
+            add(i, "EVIDENCE", f"{tag} is PASS but its Evidence names no saved qa/{tag}.* or qa/design/{tag}-* "
+                "file next to the report" + (f" (cited: {', '.join(paths)})" if paths else ""))
+        elif "DESIGN" in line.split("Method:", 1)[1].split(". ", 1)[0] and not any(
+                p.startswith(f"qa/design/{tag}-") for p in saved):
+            add(i, "EVIDENCE", f"{tag} is PASS + DESIGN but cites no saved qa/design/{tag}-* file")
+    if crit_line is not None and results == 0:
+        add(crit_line, "MISSING", "Criteria results holds no '- AC-n:' criterion line")
+    if result_pass and result_pass[1] and not_pass:
+        add(result_pass[0], "RESULT", f"Result is PASS but {', '.join(not_pass)} are not")
 
 
 def main(argv):

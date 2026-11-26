@@ -13,7 +13,26 @@ commands:                       # null = not available; unset = detect from the 
   build: npm run build
   typecheck: npm run typecheck
   lint: npm run lint
-  run_app: null
+  run_app: null                 # older form of one qa surface; prefer qa: below
+
+# qa:                           # how QA runs the product to show each criterion working (config SKILL 2.8)
+#   live: true                  # false only for a repo with nothing to run (a library)
+#   surfaces:                   # in start order; a surface's needs name earlier ones; replaces the workspace list
+#     - name: api
+#       kind: api                 # service | api | web | android | ios | cli
+#       start: npm run dev
+#       ready: "listening on"     # regex in the start output
+#       url: http://localhost:3000
+#       health: curl -fsS http://localhost:3000/health
+#       paths: [server/**]        # only when a change touches these; none: always
+#     - name: web
+#       kind: web
+#       needs: [api]
+#       start: npm run dev:web
+#       url: http://localhost:5173
+#   accounts:                   # real values in .tempo/config.local.yaml, never here
+#     - {role: admin, user: "${env:QA_ADMIN_EMAIL}", password: "${env:QA_PASSWORD}"}
+#   seed: npm run seed          # run once after the surfaces are up
 
 git:
   base_branch: main

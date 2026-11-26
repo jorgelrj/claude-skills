@@ -10,7 +10,7 @@ The task's only glossary. Work Orders and reviewers cite it by term name.
 - {{Term}}: {{bound to a file, symbol, field, screen or value}}
 
 ## 3 Acceptance criteria
-- [AC-1] WHEN {{trigger}}, the system shall {{response}}. Test: {{test name or command}}.
+- [AC-1] WHEN {{trigger}}, the system shall {{response}}. Test: {{test name or command}}. Live: {{API | WEB | ANDROID | IOS | CLI}} {{url | screen/route}} · Setup: {{seed, account, flag}} · Do: {{request or steps}} · Expect: {{status and body keys | on-screen state}} · Evidence: qa/AC-{{n}}.{{http.txt | png | txt}}, or Live: NONE ({{cosmetic | additive | refactor | config | guard | docs | bar | race | external | fault}}: {{why}}). {{Design: F-n[ → F-m ...] (flow <name>), only when the criterion changes what a screen shows}}
 
 ## 4 Design
 - {{One design decision per bullet, with the file it lands in}}
@@ -30,3 +30,9 @@ The task's only glossary. Work Orders and reviewers cite it by term name.
 NIL when no criterion covers retries, repeated requests, callbacks, scheduled jobs or idempotency keys, no rows gain a second concurrent writer, and no client state outlives a request (write queue, optimistic update, draft). Otherwise, server rows and client units alike, with failure classes (no network, refusal, 429, 5xx, user leaves) as events:
 - Entity: {{entity}} in `{{path}}`. States: {{list}}. Events: {{list, from Context Map §8}}.
 - {{state}} + {{event}} -> {{resulting state and reply}}. {{AC-n | OUT OF SCOPE: reason}}
+
+## 9 Live setup
+- Surfaces: {{each surface from `<cfg> qa`, with its start command and ready line, or the run commands found in the docs}}
+- Seed and accounts: {{seed command, test accounts, token source}}
+- Base URLs and screens: {{http://localhost:PORT, app routes, devices}}
+- Design frames: {{F-n used by the criteria, or NIL}}

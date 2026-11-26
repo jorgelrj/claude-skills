@@ -13,6 +13,11 @@ targets: []        # extra platform test runs: [{name, command, paths, scoped_co
 tests:
   always: []       # test files run at every NARROW integrate, whatever packages it touches
   slow: []         # test files run filtered by builders and QA, whole once at the integrate after the last wave
+qa:
+  live: true       # QA shows each criterion working in the running product; false only for a repo with nothing to run (a library)
+  surfaces: []     # what QA starts and watches, in start order: [{name, kind, start, ready?, stop?, url?, health?, screenshot?, needs?, paths?}]
+  accounts: []     # sign-ins QA uses: [{role, user, password?}]; secrets as ${env:NAME}, real values in config.local.yaml
+  seed: null       # command that creates the data and accounts QA needs, run once after the surfaces are up
 gates:
   full_bars: on_demand    # on_demand: Integrate runs NARROW bars; the full suite runs for critical changes and on /tempo:verify. integrate: every task's final integrate runs it. verify: never inside a task, only on /tempo:verify or the branch the task merges into. ci: LOCAL bars (touched tests, one typecheck, lint); the PR's CI runs the rest
   full_paths:             # a change to one of these is wide enough to run FULL bars

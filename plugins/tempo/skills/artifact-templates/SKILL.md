@@ -60,6 +60,7 @@ Every artifact follows the `document-standard` skill: structured markdown in the
     review/correctness-r1.md  review/security-r1.md  review/spec-r1.md
     findings-r1.md
     qa-r1.md
+    qa/                 (QA evidence: AC-n.http.txt, AC-n.png, AC-n.txt, design/, progress.md)
     pr.md
     esc-1.md
     decisions.md        (autopilot only)

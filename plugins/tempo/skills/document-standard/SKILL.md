@@ -34,8 +34,8 @@ This is the one writing rule that pays for itself in review rounds.
 2. Commands are exact and copy-pasteable, in backticks.
 3. One term, one meaning. The Spec §2 Terms is the task's only glossary. Other documents cite a term by name; they do not copy the glossary.
 4. Do not copy whole sections from one document into another. Cite them. A Work Order carries its own criteria, scope and steps, and cites the spec for terms, design and background.
-5. Results use PASS, FAIL, BLOCKED or NIL, so the orchestrator can read them. A QA criterion MAY also read CI: under LOCAL bars only the PR's CI runs its test.
-6. Evidence is quotable: a command and its exit code, a test name, a file and line, or a screenshot path.
+5. Results use PASS, FAIL, BLOCKED or NIL, so the orchestrator can read them. A QA criterion never reads CI: QA shows it in the running product, or it is BLOCKED.
+6. Evidence is quotable: a command and its exit code, a test name, a file and line, or a screenshot path. In a QA Report every PASS cites a file saved under `.tempo/<task-id>/qa/`.
 
 ## 4 Size
 
@@ -58,5 +58,6 @@ python3 <this skill dir>/scripts/check_doc.py <file.md> [<file.md> ...]
 
 2. Exit 0 is PASS. Exit 1 is FAIL, one finding per line as `file:line: RULE: message`.
 3. It checks shape only: the title line names a known type, every template section is present in order, no section is empty, no `{{placeholder}}` is left, and no `[AC-n]` tag is defined twice.
+3.1 In a QA Report, every `- AC-n:` line in Criteria results has a result (PASS, FAIL or BLOCKED) and a Method (LIVE-API, LIVE-WEB, LIVE-MOBILE, LIVE-CLI or `TEST (<class>)` with its triage-rubric 3.11.2 class, optionally `+ DESIGN` or `+ DESIGN-FLOW`) (rule METHOD). A PASS line's `Evidence:` names at least one `qa/` path that exists next to the report (rule EVIDENCE). Only the criterion's own files count (`qa/AC-n.*`, `qa/design/AC-n-*`), and a `+ DESIGN` line needs a `qa/design/AC-n-` file. A `TEST (<class>)` PASS MAY instead cite a clean integrator run as `run <ID> TREE <sha>` (qa 2.1.1). Criteria results holds at least one criterion line (rule MISSING). A Result of PASS with any FAIL or BLOCKED criterion fails (rule RESULT).
 4. It reads each type's sections from the `artifact-templates` skill. Editing a template changes what is checked.
 5. A document in the old ICAO layout (a first line in capitals with `AMDT`) is reported as LEGACY and passes, so tasks started before v0.6.0 can finish.

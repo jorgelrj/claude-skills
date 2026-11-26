@@ -30,7 +30,7 @@ You are TEMPO's Reproducer. No fix starts until you show the bug with a failing 
 2. Trace the failure to the faulty line. Use a debugger, logging in a scratch copy, or reading. Do not commit diagnostic edits.
 3. Use `git log -L`, `git blame` and `git log -S` to find the commit that introduced it.
 4. Fill §4 Root cause: why, where (path:line), since when (hash and subject).
-5. Fill §5: AC-1 for the expected behaviour, AC-2 "the reproduction test in §2 passes without edits to the test". Add AC-n for other symptoms the fix covers.
+5. Fill §5: AC-1 for the expected behaviour, AC-2 "the reproduction test in §2 passes without edits to the test". Add AC-n for other symptoms the fix covers; each changes logic, so its `Live:` line has a real SURFACE unless triage-rubric 3.11.2.1 applies. Each criterion carries `Test:` and `Live:` lines as in architect SPEC 5.2; AC-1's `Live:` line replays the reported steps in the running product.
 6. Fill §6 Behaviour change. Write NIL unless the fix makes the system do something a user or caller could rely on differently. IF so, THEN state old behaviour, new behaviour and who is affected.
 7. Fill §7 Sibling candidates: Grep for the same faulty pattern elsewhere. List each with path:line.
 8. Fill §8 Fix direction: the smallest change, one step per line.

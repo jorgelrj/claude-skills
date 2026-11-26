@@ -19,6 +19,7 @@ Lane: {{S|M|L}} · Issued by: triage
 - Anchor: {{screen, error, file or NIL}}. Status: {{PRESENT | EXPLORE WILL FIND}}
 - Check: {{how we know it worked, or NIL}}. Status: {{PRESENT | ARCHITECT WILL DRAFT}}
 - Sources: {{each source of truth the request or ticket names: FOUND <path> or MISSING; NIL when none}}
+- Design: {{NIL | one line per frame: F-n | <screen/route> | <state> | <viewport WxH or device> | <theme> | <file in design/ or prototype route>}}
 
 ## 5 Assumptions
 - {{Each assumption triage made. The Spec and PR repeat these at the top.}}

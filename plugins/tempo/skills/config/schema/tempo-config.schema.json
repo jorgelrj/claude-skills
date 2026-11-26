@@ -379,6 +379,46 @@
         }
       }
     },
+    "qa": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "How QA brings up the product and shows each acceptance criterion working in it: API calls, the web app in a browser, the mobile app on an emulator or simulator, with evidence saved under .tempo/<task>/qa/.",
+      "properties": {
+        "live": {"type": "boolean", "default": true, "description": "true (default): QA checks every criterion in the running product. false only for a repo with nothing to run (a library)."},
+        "surfaces": {
+          "type": "array",
+          "description": "What QA starts, in start order. A list replaces the inherited one as a whole.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "kind", "start"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "kind": {"enum": ["service", "api", "web", "android", "ios", "cli"], "description": "service: started for others (a db, an emulator), never checked itself."},
+              "start": {"$ref": "#/$defs/command", "description": "Started with <procs> start; {worktree} is filled as in worktree.setup."},
+              "ready": {"type": "string", "description": "Regex in the start output that means it is up (<procs> start --ready)."},
+              "stop": {"$ref": "#/$defs/command"},
+              "url": {"type": "string", "description": "Base URL QA calls or opens, e.g. http://localhost:3000."},
+              "health": {"$ref": "#/$defs/command", "description": "Exits 0 when the surface answers, e.g. curl -fsS http://localhost:3000/health."},
+              "screenshot": {"$ref": "#/$defs/command", "description": "Writes a screenshot to {out}, e.g. adb exec-out screencap -p > {out}."},
+              "needs": {"type": "array", "items": {"type": "string"}, "description": "Surfaces listed earlier that must be up first."},
+              "paths": {"type": "array", "items": {"type": "string"}, "description": "Globs or re: regexes; the surface applies when a changed file matches. None: always."}
+            }
+          }
+        },
+        "accounts": {
+          "type": "array",
+          "description": "Sign-ins QA uses. Real values go in config.local.yaml or ${env:NAME}, never in config.yaml.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["role", "user"],
+            "properties": {"role": {"type": "string"}, "user": {"type": "string"}, "password": {"type": "string"}}
+          }
+        },
+        "seed": {"$ref": "#/$defs/command", "description": "Creates the data and accounts QA needs; run once after the surfaces are up."}
+      }
+    },
     "repoFile": {
       "type": "object",
       "required": [
@@ -422,6 +462,9 @@
         },
         "task": {
           "$ref": "#/$defs/task"
+        },
+        "qa": {
+          "$ref": "#/$defs/qa"
         },
         "docs": {
           "$ref": "#/$defs/docs"
@@ -504,6 +547,9 @@
         "task": {
           "$ref": "#/$defs/task"
         },
+        "qa": {
+          "$ref": "#/$defs/qa"
+        },
         "docs": {
           "$ref": "#/$defs/docs"
         }
@@ -569,6 +615,9 @@
             },
             "task": {
               "$ref": "#/$defs/task"
+            },
+            "qa": {
+              "$ref": "#/$defs/qa"
             }
           },
           "description": "Settings every repo in the workspace starts from."

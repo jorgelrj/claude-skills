@@ -7,7 +7,7 @@ Spec: {{absolute path of spec.md, repro.md or the plan slice}}. Read its Terms s
 {{Only when the Spec is larger than limits.spec_slice_kb: a Terms: list and a Design: list copying the Spec lines this order uses, each citing its section.}}
 
 ## 2 Acceptance criteria
-- [AC-n] WHEN {{trigger}}, the system shall {{response}}. Test: {{test name or command}}.
+- [AC-n] WHEN {{trigger}}, the system shall {{response}}. Test: {{test name or command}}. {{Live: and Design: copied unchanged from the spec}}
 
 ## 3 Scope
 - IN: {{every file this order may change, test files included}}
@@ -21,6 +21,7 @@ Spec: {{absolute path of spec.md, repro.md or the plan slice}}. Read its Terms s
 - `{{exact command, scoped to this order's test files or packages; never the full suite}}` passes.
 - `{{typecheck with the package filled: this order's packages, plus the dependents of a shared module it touches}}` passes.
 - SLOW `{{test-one on a SLOW file with --plain-name '<group>' per group the criteria touch, or the whole file with the reason}}` passes.
+- LIVE AC-{{n}}: {{the Live line}}. The builder runs API and CLI lines before the report and saves the output under the task's `qa/build-AC-n.*`; WEB, ANDROID and IOS lines stay reachable (route, seed, flag) for QA.
 
 ## 6 Stop conditions
 Stop before the first edit, or as soon as one of these holds, and write the report with Result BLOCKED:

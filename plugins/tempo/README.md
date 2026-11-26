@@ -32,8 +32,8 @@ After editing files here, restart Claude Code (Option A) or run `/plugin marketp
 
 | Command | What it does |
 |---|---|
-| `/tempo:feature <request>` | Feature flow: Triage → Explore → Spec → Work Orders → parallel Build → Integrate → Review → QA → PR. The lane (S, M, L) decides which stages run |
-| `/tempo:feature --quick <request>` | Lane S: one Work Order from the Task Card → Build → correctness review → draft PR. `--lane S\|M\|L` sets any lane; `/tempo:bug` takes the same flags |
+| `/tempo:feature <request>` | Feature flow: Triage → Explore → Spec → Work Orders → parallel Build → Integrate → Review → QA → PR. The lane (S, M, L) decides which stages run; QA runs in every lane |
+| `/tempo:feature --quick <request>` | Lane S: one Work Order from the Task Card → Build → correctness review → QA (at inferred depth) → draft PR. `--lane S\|M\|L` sets any lane; `/tempo:bug` takes the same flags |
 | `/tempo:bug <report>` | Bug flow: [Investigate] → Reproduce (failing test) → Root cause → Fix → Integrate → Review + sibling sweep → QA → PR |
 | `/tempo:plan <request>` | Plan only: Triage → Explore → Spec → Work Orders (or the cross-repo plan), then stop at GATE-PLAN. Also `/tempo:feature --plan-only ...` |
 | `/tempo:feature --auto <request>` | Autopilot: TEMPO takes its own recommendation at every gate and escalation and stops only where Jorge is truly needed (see below). Works on `/tempo:bug`, `/tempo:plan` and `/tempo:resume` too; `--no-auto` turns it off |
@@ -80,11 +80,11 @@ A task cleans up after itself. Every process TEMPO starts, through `tempo_run.py
 
 | Lane | Production files | Stages | Rough time |
 |---|---|---|---|
-| S | 1–3 | Work Order from the Task Card → Build → correctness review → PR | ~10 min |
-| M | 4–8, one area | 2 scouts → spec (+ Work Orders in one architect call) → Build → correctness + spec review → QA → PR. A pattern task, one that copies a sibling feature, skips the order check, gets the correctness review only, and QA checks what no test covers | ~25 min |
+| S | 1–3 | Work Order from the Task Card → Build → correctness review → QA → PR | ~15 min |
+| M | 4–8, one area | 2 scouts → spec (+ Work Orders in one architect call) → Build → correctness + spec review → QA → PR. A pattern task, one that copies a sibling feature, skips the order check, gets the correctness review only; QA still checks every criterion at its inferred depth | ~25 min |
 | L | more than 8, new design, schema or dependency | 3 scouts → spec → pre-check → spec gate → parallel Build → 3-lens review → QA → PR | 60+ min |
 
-Triage sizes from the request; Explore re-sizes from the files it actually found. In S and M the architect runs on Sonnet, and so do reviewers on diffs of 150 lines or fewer and the verifier on 3 candidates or fewer; L keeps Opus. The spec pre-check runs in L, and in M only when the spec has a state model. The verifier is skipped when reviewers found nothing (or only LOW items). A small MEDIUM/LOW fix goes straight back to the builder (mode FIX) without re-amending the spec.
+Triage sizes from the request; Explore re-sizes from the files it actually found. In S and M the architect runs on Sonnet, and so do reviewers on diffs of 150 lines or fewer and the verifier on 3 candidates or fewer; L keeps Opus. QA runs on Opus in every lane. The spec pre-check runs in L, and in M only when the spec has a state model. The verifier is skipped when reviewers found nothing (or only LOW items). A small MEDIUM/LOW fix goes straight back to the builder (mode FIX) without re-amending the spec.
 
 ## Project docs
 
@@ -142,7 +142,7 @@ agents/
   integrator.md    merge WO branches, full suite → integration.md
   reviewer.md      one lens: correctness | security | spec | spec-precheck → review/<lens>-rN.md
   verifier.md      drop, dedupe, rank, assign → findings-rN.md
-  qa.md            per acceptance criterion, with evidence → qa-rN.md
+  qa.md            per acceptance criterion, shown in the running API, web or mobile app, evidence in qa/ → qa-rN.md
 hooks/
   guard_push.py    refuses pushes of local tempo/ branches
   guard_spawn.py   in a TEMPO session, refuses detached starts (nohup, &, setsid, run_in_background) and kills by name (pkill, killall)
@@ -168,6 +168,7 @@ tests/
   test_procs.py    who owns a process, the config helper, what a session's end marks as stopped
   test_state.py    the state lock, the QA counter, the SHIP entry, a state.json from 0.21.0
   test_config.py   a config from 0.21.0, gates.full_bars: verify (runs through uv; skipped without it)
+  test_check_doc.py  the document checker, QA Method and evidence rules
 ```
 
 ## Document checker
@@ -292,10 +293,10 @@ On 2026-10-29, after 0.15.0, five tasks ran at once and Integrate took 45 to 96 
 - Full bars at a chosen point. `gates.full_bars: on_demand` (the default): Integrate runs NARROW bars, the touched packages' tests, build and lint. The full suite runs for a critical change, for a change to `gates.full_paths` (lockfiles, toolchain pins), and on the new `/tempo:verify`. The PR body says when it did not run. `<cfg> bars` decides. `full_bars: integrate` restores the old behaviour. `full_bars: verify` (0.23.0) never runs it inside a task: see 0.23.0 below.
 - Targets take `run: routine|critical`; an advisory target defaults to critical, so a routine task starts no Chrome and no base comparison.
 - `tempo_run.py` runs the command in a detached worker. Each call blocks up to 110 seconds; a longer run returns `RUNNING` with an ID for `tempo_run.py wait`.
-- QA no longer runs the full suite: it cites the head Integrate proved.
+- QA no longer runs the full suite: it cites the head Integrate proved. That covers regression only; criteria are proven live (0.29.0).
 - Heavy slots default to CPUs / 4. `worktree.setup` and the new `worktree.teardown` take `{worktree}`, for a per-task test database.
 - Split tasks: each slice gets the order check and the correctness lens; the other lenses run once on the parent.
-- Pattern tasks (triage-rubric §3.9): an M feature that copies a sibling skips the order check, reviews at QUICK depth, and QA skips what tests assert.
+- Pattern tasks (triage-rubric §3.9): an M feature that copies a sibling skips the order check, reviews at QUICK depth. QA still checks every criterion at its inferred depth (triage-rubric 3.11).
 - State: workspace tasks log the children's time as REPOS, so JOINT-QA holds only QA.
 
 ### Teardown (0.17.0)
@@ -380,7 +381,7 @@ The state, run and process scripts imported `fcntl` and called `killpg`, `/proc`
 
 From the 2026-11-17 audit of pod1um runs (Mac and two Windows machines). Each touched package's whole test folder still runs once at the last integrate; a test-only fix round after it re-runs only the files it touched.
 
-- **Scoped platform target once per task.** A target with `run: final` prints only with `targets --final`, which the orchestrator passes at the integrate after the last wave. Builders and QA never run target lines.
+- **Scoped platform target once per task.** A target with `run: final` prints only with `targets --final`, which the orchestrator passes at the integrate after the last wave. Builders never run target lines; QA launches the app itself through `tempo_procs.py start` (0.29.0).
 - **`tests.always` and `tests.slow`.**
   - `bars` prints `ALWAYS:` lines: guard tests that every narrow integrate runs, whatever packages the diff touches.
   - `bars` also prints `SLOW:` lines for slow test files the diff hits. Builders, WAVE integrates and QA run those files by `--plain-name` group. They run whole once, in the last integrate's package run.
@@ -389,7 +390,7 @@ From the 2026-11-17 audit of pod1um runs (Mac and two Windows machines). Each to
   - LAST (and a FIX that touches production code) runs each touched package's whole folder and `build`.
   - A test-only FIX runs those files and the package's typecheck.
 - **Check roles.** Builders and WAVE integrates run `commands.typecheck` (one package, plus the packages that depend on a touched shared module). LAST, FULL and `/tempo:verify` run `build`.
-- **QA reuses clean runs.** `tempo_run.py` prints `TREE: <sha> clean|dirty` and records `head` and `clean` in `run-end`. QA cites an integrator run only on the same clean head, and only one that passed. FULL, critical, verify, screenshot, docker-backed and golden runs are always re-run.
+- **QA reuses clean runs.** `tempo_run.py` prints `TREE: <sha> clean|dirty` and records `head` and `clean` in `run-end`. QA cites an integrator run for §Regression only, never as criterion evidence (0.29.0), and only on the same clean head, and only one that passed. FULL, critical, verify, screenshot, docker-backed and golden runs are always re-run.
 - **Critical belongs to the Task Card.** Under `gates.full_bars: verify`, `targets` prints no whole suite except with `--verify`, which only `/tempo:verify` passes. `tempo_state.py set --critical on` once the task has left TRIAGE needs `--gate '<Jorge's answer>'`. The architect replies `CRITICAL?:` instead of handing the call on.
 - **Stalls and duplicates.**
   - `tempo_state.py watch --file F --agent ID` runs in the background beside each agent. It prints `STALL:` when nothing moves and no test runs, and `DONE:` when the agent finishes. `guard_spawn.py` allows it.
@@ -409,6 +410,16 @@ From PD-47 in pod1um: Flutter runs in a task worktree leave plugin sources under
 - **`worktree.before_run`.** `tempo_run.py` runs these commands at the root of a linked worktree before each command it runs, and before it records `TREE`. They never run in the main checkout or outside git.
 - A step that fails prints `BEFORE RUN: exit <n>: <step>` in the summary. The command runs anyway.
 - **Upgrade order.** A config that sets `worktree.before_run` fails `check` on 0.26.0 and older, so update every machine first.
+
+### QA proves it live (0.29.0)
+
+The last three pod1um QA reports (PD-154, PD-156, PD-1603: 64 criteria) passed every criterion by Method TEST. None started the API, opened the web app or ran a phone build, and none saved a screenshot. 0.29.0 makes QA use the product as its user would:
+
+- **Live criteria.** Each Spec criterion carries a `Live:` line: the surface (API, WEB, ANDROID, IOS, CLI), setup, steps, what to expect and the evidence file. QA depth is inferred per criterion (triage-rubric 3.11): a new feature, changed logic, a new screen or flow is LIVE; a cosmetic change, an added response field, a refactor or a config value reads `Live: NONE (<class>: <why>)` and passes on the test that asserts it. Unsure is LIVE. A task whose criteria are all TEST starts no app.
+- **QA runs the app.** QA (now Opus in every lane) starts the surfaces `tempo_config.py qa` prints through `tempo_procs.py start`, then checks each criterion by curl, headless Playwright, or an emulator or simulator, and saves the evidence under `qa/`. A PASS cites that file; the checker refuses one that does not. Tests are supporting evidence only.
+- **Designs are compared.** A design or prototype the ticket names is saved into `design/` before Triage. A criterion that changes a screen names its frame, and QA compares the app with it side by side (DESIGN, DESIGN-FLOW). An unreachable frame is BLOCKED with MISSING-SOURCE, never a stand-in.
+- **Shortcuts reverted.** No `CI` criteria, no S-lane QA skip, no pattern-task skip, no citing integrator runs as proof of a LIVE criterion, no Sonnet QA. A BLOCKED criterion stops the PR. Fix rounds and CI rounds re-check the touched criteria at their depth, plus a smoke pass of the other LIVE criteria and the tests of the `Live: NONE` ones, before the push.
+- **Config.** A `qa:` block (surfaces, accounts, seed) in the repo or workspace config; `/tempo:init` detects it.
 
 ### Merged task branches are deleted (0.28.1)
 
@@ -430,7 +441,7 @@ CI-WAIT on a real repo spent most of its CI minutes on reds a laptop run would h
 
 For a repo whose PR checks run the suites and an AI review, so a weak laptop runs only what proves the change. Every key is opt-in; a config without them runs as 0.26.0 did.
 
-- **Light local tier, `gates.full_bars: ci`.** `bars` prints `BARS: LOCAL` and `DEFERRED: ci`. Every integrate runs the touched tests and their mirrors, the ALWAYS files, one typecheck of the touched packages and lint (from 0.28.0 the final integrate adds each touched package's whole unit folder): no build, no platform target, no baseline compare. The architect writes tests only CI can run as `CI` lines that nobody runs locally, and QA records their criteria as `CI`.
+- **Light local tier, `gates.full_bars: ci`.** `bars` prints `BARS: LOCAL` and `DEFERRED: ci`. Every integrate runs the touched tests and their mirrors, the ALWAYS files, one typecheck of the touched packages and lint (from 0.28.0 the final integrate adds each touched package's whole unit folder): no build, no platform target, no baseline compare. The architect writes tests only CI can run as `CI` lines that nobody runs locally; from 0.29.0 QA still proves those criteria live, or marks them BLOCKED.
 - **`commands.test_local`.** The test-one command for that tier, with the same placeholders, pointed at a runner that skips what only CI runs. Under `ci`, `cmd test_one` prints it.
 - **`targets[].run: ci`.** A target only CI runs; it never prints here, `/tempo:verify` included. Under `full_bars: ci` every other target prints `# DEFERRED to CI`, and `/tempo:verify` still runs those.
 - **The machine file, `.tempo/config.local.yaml`.** Merged last, kept out of git, and read from the main checkout by a linked worktree that has none. A slow laptop sets `limits.max_parallel_builders: 1` and a `-j 2` in its own `commands.test_one`, or in `commands.test_local` under `full_bars: ci`.
@@ -443,7 +454,7 @@ For a repo whose PR checks run the suites and an AI review, so a weak laptop run
 
 - The main session is the orchestrator. Subagents cannot start other subagents, so the orchestrator starts every agent, including the parallel scouts, builders and reviewers.
 - Each builder gets its own git worktree at `.tempo/worktrees/<task-id>-wo-NN` on the work-order branch (default `tempo/{name}-wo-{nn}`, `tempo/AV-1-wo-01` for `feat/AV-1`, local only), prepared by the config's `worktree:` steps. The integrator merges them into the task branch (`git.branch`, default `{type}/{ticket}` or the repo's own convention), which becomes the PR branch and is the only branch pushed.
-- Models are set per agent in the frontmatter (`opus` for architect, investigator, reproducer, reviewer, verifier; `sonnet` for the rest). That is the L-lane default; the orchestrator passes `sonnet` for S and M stages (orchestrator §5.8).
+- Models are set per agent in the frontmatter (`opus` for architect, investigator, reproducer, reviewer, verifier; `opus` for qa in every lane; `sonnet` for the rest). That is the L-lane default; the orchestrator passes `sonnet` for S and M stages except QA (orchestrator §5.8).
 
 ## How review converges
 
@@ -458,7 +469,6 @@ For a repo whose PR checks run the suites and an AI review, so a weak laptop run
 
 - Size thresholds in `skills/triage-rubric/SKILL.md` §3.
 - Loop limits, review extensions, the narrow-round size and parallel builder count in `limits:` of the repo or workspace config.
-- Whether S-lane features need QA (currently skipped).
 - Dropping the readback pass (0.6.0): T-007 had no misreadings; its stops were scope-list gaps, which 0.7.0 addresses at Handoff.
 - The split thresholds (`limits.split_orders`, `limits.split_criteria`) and `limits.spec_slice_kb`, after the first split runs.
 - Whether the order check (0.8.0) pays for its time; turn it off with `limits.order_check: false`.

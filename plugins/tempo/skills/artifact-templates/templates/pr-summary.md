@@ -9,7 +9,7 @@ Issued by: orchestrator
 - {{Every assumption from the Task Card §5 and Spec §1, or NIL}}
 
 ## 3 Acceptance criteria and QA
-- {{AC tag}}: {{criterion}}. QA: {{PASS}}. Evidence: {{evidence}}
+- {{AC tag}}: {{criterion}}. QA: PASS on {{API | WEB | ANDROID | IOS | CLI}}. Observed: {{response excerpt, or screenshot name (uploaded to the PR)}}
 
 ## 4 Changes
 - `{{path}}`: {{what changed}}
@@ -20,6 +20,7 @@ Issued by: orchestrator
 ## 6 How to verify
 - {{exact command or manual step}}
 - {{When the full suite did not run here: "Full suite not run; run `/tempo:verify` before release.", or under LOCAL bars: "Tests only CI runs, the build and the platform targets run in the repo's CI checks."}}
+- Verified live: {{API | WEB | ANDROID | IOS | CLI, each with device or browser}} on {{head}}.
 
 ## 7 Artifacts
 - .tempo/{{task-id}}/ (internal record only: never copied into the PR body)
