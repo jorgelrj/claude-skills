@@ -151,7 +151,7 @@ hooks/
 skills/
   orchestrator/              the stage machine the commands run (gates, loops, worktrees, PR, workspaces)
     scripts/tempo_state.py   the only writer of state.json / state.md; tracker for workspace tasks
-    scripts/tempo_branches.py  deletes local work-order and repro branches the task branch already holds
+    scripts/tempo_branches.py  deletes local work-order and repro branches the task branch already holds, and merged task branches
     scripts/tempo_run.py       runs one test, build or lint command; prints a summary, waits for a heavy slot, stops what it left
     scripts/tempo_procs.py     starts and tracks long-lived processes, tears a task down, sweeps for leftovers
     scripts/tempo_report.py    collects a run's context and files a TEMPO issue (gh, or a prefilled link)
@@ -409,6 +409,14 @@ From PD-47 in pod1um: Flutter runs in a task worktree leave plugin sources under
 - **`worktree.before_run`.** `tempo_run.py` runs these commands at the root of a linked worktree before each command it runs, and before it records `TREE`. They never run in the main checkout or outside git.
 - A step that fails prints `BEFORE RUN: exit <n>: <step>` in the summary. The command runs anyway.
 - **Upgrade order.** A config that sets `worktree.before_run` fails `check` on 0.26.0 and older, so update every machine first.
+
+### Merged task branches are deleted (0.28.1)
+
+A squash-merged PR left its local task branch behind (`[origin/...: gone]`), because no ancestry check can see a squash.
+
+- **`tempo_branches.py shipped`.** Deletes the task branch with `-D` only when `gh` reports its PR MERGED with this branch as head, the local tip equals the PR's `headRefOid`, every remote copy is gone or at that commit, and no worktree has it checked out. It works for squash, rebase and merge commits.
+- **CI-WAIT runs it on MERGED**, after `git fetch --prune origin` and the work-branch prune. A KEPT line that names commits not in the PR is reported; that work did not ship.
+- **`sweep` and `/tempo:cleanup` run it** for every DONE task with a `pr`, so leftovers from earlier runs clear in one pass.
 
 ### Local proof before CI (0.28.0)
 

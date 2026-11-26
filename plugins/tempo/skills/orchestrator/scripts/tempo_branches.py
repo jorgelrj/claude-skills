@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""TEMPO branches: delete local work-order and repro branches once the task branch holds their work.
+"""TEMPO branches: delete local work-order and repro branches once the task branch holds their work,
+and the task branch itself once its PR merged.
 
 `git branch -d` only deletes a branch merged into HEAD or its upstream. TEMPO's
 work-order branches are merged into the task branch, not into the base branch the
@@ -17,6 +18,12 @@ A branch is always kept when it is the task or base branch, is checked out in a
 worktree, has an upstream, or exists on a remote under the same name. Remote
 branches are never touched.
 
+`shipped` deletes the task branch after its PR merged. A squash or rebase merge leaves
+its commits outside the base branch, so no ancestry check can prove it; the PR can.
+It deletes with `-D` only when the PR (read with `gh pr view`) is MERGED, its head
+branch is this branch, the local tip equals the PR's headRefOid, every remote copy of
+the branch is gone or at that same commit, and no worktree has it checked out.
+
 Usage: tempo_branches.py <command> [args]
   prune  --repo R --task-branch B [--base-branch X] [--branch NAME ...] [--glob PATTERN ...]
          [--from SHA ...] [--dry-run]
@@ -25,7 +32,9 @@ Usage: tempo_branches.py <command> [args]
          tempo/B-wo-*, tempo/B-repro, and the pre-0.14 B-wo-*, B-repro; --glob takes {branch}, {name})
   sweep  --repo R [--wo-pattern P ...] [--repro-pattern P ...] [--dry-run]
          prune for every task in R/.tempo/ whose stage is DONE; patterns take {branch} and {name}
-         (defaults: the globs above)
+         (defaults: the globs above); then shipped for the task branch when the state has a pr
+  shipped --repo R --branch B [--pr URL|NUMBER] [--dry-run]
+         delete the task branch B when its PR (default: the PR gh finds for B) merged with B's tip
   pushed --repo R
          list remote branches under tempo/. Those names are TEMPO's local work branches and
          should never have been pushed; the script only reports them, it never touches a remote
@@ -169,6 +178,49 @@ def prune(repo, task, base, names, globs, extra, dry):
                 print(f"DELETED {n} {tip[:10]} ({why})")
 
 
+def pr_view(repo, pr):
+    try:
+        r = subprocess.run(["gh", "pr", "view", pr, "--json", "state,headRefOid,headRefName"], cwd=repo,
+                           capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return None, str(e)
+    if r.returncode != 0:
+        return None, r.stderr.strip().splitlines()[-1] if r.stderr.strip() else f"exit {r.returncode}"
+    return json.loads(r.stdout), None
+
+
+def shipped(repo, branch, pr, dry):
+    tip = sha(repo, f"refs/heads/{branch}")
+    if tip is None:
+        print(f"SKIPPED {branch} (branch not found)")
+        return
+    if branch in checked_out(repo):
+        print(f"KEPT {branch} (checked out in a worktree)")
+        return
+    data, err = pr_view(repo, pr or branch)
+    if err:
+        print(f"KEPT {branch} (gh pr view failed: {err})")
+        return
+    head = data.get("headRefOid") or ""
+    if data.get("state") != "MERGED":
+        print(f"KEPT {branch} (PR {str(data.get('state')).lower()}, not merged)")
+    elif data.get("headRefName") != branch:
+        print(f"KEPT {branch} (the PR's head branch is {data.get('headRefName')})")
+    elif tip != head:
+        n = out(repo, "rev-list", "--count", tip, f"^{head}") if sha(repo, head) else "unknown"
+        print(f"KEPT {branch} (local tip {tip[:10]} is not the PR head {head[:10]}; {n} commits not in the PR)")
+    elif any(sha(repo, r) != head for r in out(repo, "for-each-ref", "--format=%(refname)", "refs/remotes").splitlines()
+             if r.count("/") >= 3 and r.split("/", 3)[-1] == branch):
+        print(f"KEPT {branch} (a remote copy is not at the PR head)")
+    elif dry:
+        print(f"WOULD-DELETE {branch} {tip[:10]} (shipped)")
+    elif sha(repo, f"refs/heads/{branch}") != tip:
+        print(f"KEPT {branch} (moved while checking)")
+    else:
+        git(repo, "branch", "-D", branch)
+        print(f"DELETED {branch} {tip[:10]} (shipped)")
+
+
 # tempo/{name} since 0.15.0 ({name}: the task branch without its type word), tempo/{branch} in 0.14.0,
 # <task>-wo-NN before that.
 WO_PATTERNS = ["tempo/{name}-wo-*", "tempo/{branch}-wo-*", "{branch}-wo-*"]
@@ -204,6 +256,11 @@ def main():
     sw.add_argument("--wo-pattern", action="append")
     sw.add_argument("--repro-pattern", action="append")
     sw.add_argument("--dry-run", action="store_true")
+    sh = sp.add_parser("shipped")
+    sh.add_argument("--repo", default=".")
+    sh.add_argument("--branch", required=True)
+    sh.add_argument("--pr")
+    sh.add_argument("--dry-run", action="store_true")
     pu = sp.add_parser("pushed")
     pu.add_argument("--repo", default=".")
     a = p.parse_args()
@@ -212,6 +269,8 @@ def main():
         if a.cmd == "prune":
             globs = [fill(g, a.task_branch) for g in a.glob] or ([] if a.branch else [fill(g, a.task_branch) for g in WO_PATTERNS + REPRO_PATTERNS])
             prune(repo, a.task_branch, a.base_branch, a.branch, globs, a.extra, a.dry_run)
+        elif a.cmd == "shipped":
+            shipped(repo, a.branch, a.pr, a.dry_run)
         elif a.cmd == "pushed":
             pushed_local(repo)
         else:
@@ -225,6 +284,8 @@ def main():
                 print(f"# {f.parent.name} {task}")
                 globs = list(dict.fromkeys(fill(g, task) for g in patterns))
                 prune(repo, task, s.get("base_branch"), [], globs, [], a.dry_run)
+                if s.get("pr"):
+                    shipped(repo, task, s["pr"], a.dry_run)
     except RuntimeError as e:
         print(f"ERROR {e}", file=sys.stderr)
         return 1
