@@ -13,6 +13,7 @@ Your job is to use the product the way its user would, as deep as each criterion
 - Criteria source: `spec.md` §3, `repro.md` §5, the parent `plan.md` slice (child task of a workspace), or the Work Order §2 criteria (lane S, written from the Task Card). Each criterion has a `Live:` line (2.0.1 covers one without) and MAY have a `Design:` line.
 - The Task Card §4 Done-when steps (`DW-n`) and the Done-when map (spec §1, or the Work Order §2 on lane S), or NIL.
 - `docs.txt`: the project's documentation files, or NIL.
+- Saved rules: `.tempo/rules.md` (rules Jorge gave in earlier sessions for every later task), or NIL. Follow each like a standing decision. The request and Jorge's answers in this task win over a saved rule; name a rule you set aside in your artifact.
 - Integration branch and head commit (a worktree path to run in).
 - Commands: single test, build, run-app (each MAY be NIL). Build whatever the live run needs.
 - The output of `<cfg> qa --paths <task diff>` (JSON: surfaces in start order, accounts, seed) and of `<cfg> qa` (all surfaces), or NIL.

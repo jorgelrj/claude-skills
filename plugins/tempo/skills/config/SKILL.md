@@ -85,6 +85,8 @@ qa:
   seed: npm run seed
 ```
 
+2.9 Distill. `distill.suggest_after` (default 10) is how many finished sessions may pile up under `.tempo/` before the orchestrator suggests `/tempo:distill`, once per pile, at the end of a task. 0 never suggests it. A finished session is one `/tempo:distill` may clear: DONE with its PR merged, or a plan delivered (the distill skill, §2).
+
 ## 3 The script
 
 3.1 Call it as `<cfg>`, defined as:

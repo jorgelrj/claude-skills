@@ -40,6 +40,7 @@ After editing files here, restart Claude Code (Option A) or run `/plugin marketp
 | `/tempo:plan --offline <request>` | Skip the base fetch and use the local base branch as it is. Without it every command first fetches the base and fast-forwards it, or stops (0.20.0). Works on `/tempo:feature` and `/tempo:bug` too |
 | `/tempo:resume <task-id> [build \| answer]` | Continue a task from its last artifact, answer the question it is waiting on, or `build` a planned task |
 | `/tempo:sweep [--yes] [task-id]` | List processes TEMPO or a coding session left running (emulators, servers, watchers, Java stacks), with memory and age, and stop the ones you pick (0.17.0) |
+| `/tempo:distill [--yes] [--delete]` | Save the rules Jorge gave in finished sessions into `.tempo/rules.md`, which every later run loads, then archive (or delete) those session folders. Shows the rules and sessions first and waits for a yes. Never touches running or unshipped tasks, or tasks whose PR is still open (0.32.0) |
 | `/tempo:report [--task <id>] [--dry-run] <what went wrong>` | File a GitHub issue on the TEMPO repo about something TEMPO just did wrong, with the run's state, artifacts and transcript path attached; the task keeps going (0.19.0) |
 | `/tempo:dash [stop \| status] [folder]` | Start the local, read-only dashboard of running and recent tasks and print its URL; `stop` ends it (0.22.0) |
 | `/tempo:init [repo\|workspace] [notes]` | Write or update the TEMPO config for a repo or a multi-repo workspace, detected from the code |
@@ -521,3 +522,14 @@ The first real run of the TEMPO app took a one-line wording change in `docs/*.md
 - **Integrator.** Under NONE it merges and runs no test, typecheck, build, lint or target command, and writes `Bars: NONE` with the reason in §4 of `integration.md`. The template's §4 now starts with a `Bars:` line.
 - **Work orders.** Architect HANDOFF gets the `BARS:` line too. A doc-only order's §5 is a content check (`grep` for the new wording, the old wording gone) instead of build and lint.
 - **Upgrade order.** A config that sets `gates.no_code_paths` fails `check` on 0.30 and older, so update every machine first.
+
+### Saved rules and /tempo:distill (0.32.0)
+
+Rules Jorge gave during a session ("from now on, run the API tests with make") stayed in that session's folder, and the next task never saw them. The folders also piled up under `.tempo/` with nothing ever clearing them. From 0.32.0:
+
+- **`.tempo/rules.md`.** A TEMPO-owned file of short rules for every later task, one line each, at most 200 characters and 40 rules, no rule twice. Only `tempo_distill.py rules add | drop | show` writes it. TEMPO never writes these rules into `CLAUDE.md` or `REVIEW.md`.
+- **Loaded every run.** The orchestrator reads it at the start (1.3.4) and passes it to triage, the architect, builders, reviewers (as a rules file, review-rules §1.7) and QA. When Jorge gives a rule for every later task mid-run, the orchestrator saves it at once (5.9).
+- **`/tempo:distill`.** Reads the finished sessions' decisions, escalation answers, Task Card and PR body, folds what should hold from now on into `rules.md`, shows the rules to add and drop and the sessions to archive, and waits for a yes (`--yes` skips it). Then it archives the folders to `.tempo/archive/`, or deletes them with `--delete`.
+- **What it never touches.** `tempo_distill.py list` decides, and `apply` checks again: only a DONE task whose PR merged, a delivered plan, a slice of such a task, or a workspace task whose every repo task qualifies. Running, FAILED, ABORTED, open-PR, closed-unmerged and no-PR tasks stay, as does any task with a worktree left or a PR state gh cannot read.
+- **The suggestion.** A new key, `distill.suggest_after` (default 10, 0 = never), is how many finished sessions may pile up. When a task ends past it, the orchestrator says so in one line, once per pile (orchestrator §11). Distill runs only when Jorge calls it.
+- **Upgrade order.** A config that sets `distill:` fails `check` on 0.31 and older, so update every machine first.

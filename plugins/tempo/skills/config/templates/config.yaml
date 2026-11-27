@@ -92,6 +92,9 @@ limits:
   repro_hypotheses: 3
   repro_minutes: 30
 
+distill:
+  suggest_after: 10             # finished sessions under .tempo/ before TEMPO suggests /tempo:distill once (0 = never)
+
 task:
   id: ticket                    # ticket | sequence
   ticket_pattern: "[A-Z][A-Z0-9]+-\\d+"
