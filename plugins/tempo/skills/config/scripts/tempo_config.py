@@ -50,7 +50,9 @@ Commands:
   dupes   --ticket KEY --branch B ...    list open PRs and remote branches that already carry the ticket
                                          (DUPE: pr|branch <ref> <url>), other than the task's own branches
                                          and branches whose PRs all merged or closed; exit 3 when any. WARN and exit 0 when gh or the remote cannot answer
-  setup   --worktree PATH                print the shell steps that prepare a new worktree
+  setup   --worktree PATH                print the shell steps that prepare a new worktree: first add the
+                                         worktree.link and worktree.copy paths to the repo's info/exclude, so
+                                         git add -A in a worktree never stages them, then copy, link, setup
   teardown --worktree PATH               print the shell steps that release a worktree's resources
   repos                                  list workspace repos in dependency order
   docs    [--format list|json]           list the project's doc files (config docs:), index files first
@@ -70,8 +72,10 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 if sys.platform == "win32":  # the console code page cannot carry every character a task or a hook holds
@@ -733,6 +737,57 @@ def worktree_gaps(repo, cfg):
             for g in sorted(gaps)]
 
 
+def exclude_line(rel):
+    """An info/exclude pattern for exactly this repo path: anchored, no trailing slash, so it also matches a symlink."""
+    rel = rel.strip().strip("/")
+    return "/" + re.sub(r"([*?\[\\!# ])", r"\\\1", rel)
+
+
+def keep_out(cfg):
+    """worktree.link and worktree.copy paths: they sit in every worktree and never belong in a commit."""
+    w = cfg.get("worktree") or {}
+    return [p.strip().strip("/") for p in (w.get("link") or []) + (w.get("copy") or []) if p.strip().strip("/")]
+
+
+def link_gaps(repo, cfg):
+    """Warn about worktree.link paths that .gitignore does not ignore as a symlink (`node_modules/` matches a folder only)."""
+    links = [p.strip().strip("/") for p in ((cfg.get("worktree") or {}).get("link") or []) if p.strip().strip("/")]
+    if not repo or not links:
+        return []
+    gd = subprocess.run(["git", "-C", str(repo), "rev-parse", "--absolute-git-dir"], capture_output=True, text=True)
+    if gd.returncode != 0:
+        return []
+    out = []
+    for rel in links:
+        # Ask git about the path in an empty tree that holds only the .gitignore files on its way: a missing path is
+        # matched as a file, the way a link is, while the real folder in the checkout would match `node_modules/`.
+        with tempfile.TemporaryDirectory() as tmp:
+            parts = rel.split("/")
+            for i in range(len(parts)):
+                src = Path(repo, *parts[:i], ".gitignore")
+                if src.is_file():
+                    dst = Path(tmp, *parts[:i], ".gitignore")
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(src, dst)
+            r = subprocess.run(["git", "--git-dir", gd.stdout.strip(), "--work-tree", tmp, "check-ignore", "-q",
+                                "--no-index", "--", rel], cwd=tmp, capture_output=True, text=True)
+        if r.returncode == 0:
+            continue
+        if r.returncode != 1:
+            continue  # git could not answer; say nothing
+        v = subprocess.run(["git", "-C", str(repo), "check-ignore", "-v", "--no-index", "--", rel + "/"],
+                           capture_output=True, text=True)
+        name = parts[-1]
+        if v.returncode == 0 and v.stdout.strip():
+            src, _, pattern = v.stdout.split("\t")[0].split(":", 2)
+            out.append(f"worktree.link {rel}: {src} ignores it only as a folder (`{pattern}`), so the symlink a worktree "
+                       f"gets is not ignored and `git add -A` there stages it; write `{name}` without the slash")
+        else:
+            out.append(f"worktree.link {rel} is not git-ignored, so `git add -A` in a worktree stages the symlink; "
+                       f"add `{name}` (no trailing slash) to .gitignore")
+    return out
+
+
 # ---------- platform targets ----------
 
 TEST_GLOBS = ["*_test.*", "*.test.*", "*.spec.*", "test_*.py", "*Test.java", "*Test.kt"]  # files a runner runs
@@ -936,7 +991,7 @@ def main(argv=None):
             if " " in (info.get("repo") or ""):
                 info["warnings"].append(f"repo path '{info['repo']}' contains a space: melos splits it on Windows; "
                                         "a checkout path without spaces avoids that")
-            for w in info["warnings"] + worktree_gaps(info.get("repo"), cfg) + ci_gaps(cfg):
+            for w in info["warnings"] + worktree_gaps(info.get("repo"), cfg) + link_gaps(info.get("repo"), cfg) + ci_gaps(cfg):
                 print("WARN: " + w)
             print("PASS: " + ", ".join(info["files"])); return 0
 
@@ -1137,6 +1192,13 @@ def main(argv=None):
             wt, repo = Path(a.worktree), Path(info["repo"] or ".")
             w = cfg.get("worktree") or {}
             steps = []
+            if keep_out(cfg):
+                # The links and copies sit in the worktree as untracked paths. Exclude them for every worktree of the
+                # repo (info/exclude is shared), so `git add -A` never stages them, whatever .gitignore says.
+                pats = " ".join(shlex.quote(exclude_line(p)) for p in keep_out(cfg))
+                steps.append(f"x=\"$(git -C {shlex.quote(str(wt))} rev-parse --path-format=absolute --git-common-dir)/info/exclude\" && "
+                             f"mkdir -p \"$(dirname \"$x\")\" && for p in {pats}; do grep -qxF -- \"$p\" \"$x\" 2>/dev/null || "
+                             f"printf '%s\\n' \"$p\" >> \"$x\"; done")
             for f in w.get("copy", []):
                 steps.append(f"if [ -e {shlex.quote(str(repo / f))} ]; then mkdir -p {shlex.quote(str((wt / f).parent))} && cp -R {shlex.quote(str(repo / f))} {shlex.quote(str(wt / f))}; else echo 'WARN: missing {f}' >&2; fi")
             for f in w.get("link", []):

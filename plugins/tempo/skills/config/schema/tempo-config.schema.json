@@ -182,7 +182,7 @@
           "items": {
             "type": "string"
           },
-          "description": "Gitignored folders symlinked instead of copied (large caches such as node_modules)."
+          "description": "Gitignored folders symlinked instead of copied (large caches such as node_modules). Ignore them without a trailing slash: `node_modules/` matches a folder, not the symlink a worktree gets. Builders never stage these paths, and setup excludes them in info/exclude."
         },
         "setup": {
           "type": "array",
