@@ -411,6 +411,13 @@ From PD-47 in pod1um: Flutter runs in a task worktree leave plugin sources under
 - A step that fails prints `BEFORE RUN: exit <n>: <step>` in the summary. The command runs anyway.
 - **Upgrade order.** A config that sets `worktree.before_run` fails `check` on 0.26.0 and older, so update every machine first.
 
+### Findings say whether a MEDIUM blocks (0.30.1)
+
+The board's review bar (`blocking-medium`, the default) sends a card back for a MEDIUM only when the findings say `Blocking: yes` with a `Failure scenario:`. The verifier never wrote either, so on the board a confirmed MEDIUM that broke a Done-when line passed as "Review passed. Risk low." (tempo-bench TB-2, TB-3), while the terminal flow sent it back. From 0.30.1:
+
+- **Verifier.** Every confirmed finding has a `Failure scenario:` and a `Blocking:` line. HIGH is yes, LOW is no. A MEDIUM is yes when it breaks an acceptance criterion or Done-when line (`Breaks: AC-n`), or is a correctness or security defect in a changed line (`Breaks: CODE`), and says why it can't wait. Any other MEDIUM is no and becomes a follow-up on the board. The terminal flow still sends every MEDIUM back.
+- **Checker.** `check_doc.py` rule BLOCKING fails a confirmed MEDIUM without a real failure scenario or a `Blocking: yes|no` line, and a `Blocking: yes` without `Breaks:` and `Can't wait:`.
+
 ### Pushed task branches are rebased, not merged (0.30.0)
 
 When a PR conflicted with its base, CI-WAIT's integrator UPDATE merged the base into the task branch, so PRs carried base merges and Jorge rebased them by hand. The task branch is a working branch built to land on the base, so 0.30.0 takes the base only by rebase:

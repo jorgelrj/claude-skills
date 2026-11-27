@@ -138,5 +138,92 @@ class QaRules(unittest.TestCase):
         self.assertTrue(any("MISSING" in x for x in f), f)
 
 
+
+FINDINGS = """\
+# Findings: T-1 / R1
+Inputs: review/raw-correctness-r1.md · Issued by: verifier
+Severity: as in the Raw Findings template.
+
+## 1 Scope
+- Round: 1 of 3. Kind: FULL
+- Lenses: CORRECTNESS
+- Diff: abc123..def456
+- Fix diff: NIL
+
+## 2 Confirmed findings
+### F-1: {severity} · `tests/cli.test.ts:9` · Lens: SPEC · Owner: WO-01
+- Problem: the CLI tests read .wclite.json from the real working directory. NIL
+- Area: tests/cli.test.ts
+- Fix kind: LOCAL
+{extra}
+- Evidence: `readFileSync('.wclite.json')` at tests/cli.test.ts:9
+- Fix direction: run each test in a temp directory
+
+## 3 Dropped findings
+- NIL
+
+## 4 Sibling sweep
+- NIL
+
+## 5 Left open
+- NIL
+
+## 6 Result
+- FAIL. PASS means no confirmed HIGH or MEDIUM finding remains.
+- Introduced findings: 0. Areas: NIL
+"""
+
+SCENARIO = "- Failure scenario: a developer with a .wclite.json in the repo root runs the tests; they read and overwrite it."
+YES = "- Blocking: yes. Breaks: AC-3 (no test touches the real working directory). Can't wait: the PR ships the exact gap AC-3 forbids."
+NO = "- Blocking: no. Breaks: NIL. Can't wait: NIL"
+
+
+class FindingsRules(unittest.TestCase):
+    """Rule BLOCKING: a confirmed MEDIUM says whether it blocks the board's default bar, and how it fails."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.templates = check_doc.load_templates()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def check(self, extra, severity="MEDIUM"):
+        p = Path(self.tmp.name) / "findings-r1.md"
+        p.write_text(FINDINGS.format(severity=severity, extra=extra), encoding="utf-8")
+        findings, _ = check_doc.check_file(str(p), self.templates)
+        return findings
+
+    def test_blocking_medium_that_breaks_a_criterion_passes(self):
+        self.assertEqual(self.check(f"{SCENARIO}\n{YES}"), [])
+
+    def test_non_blocking_medium_passes(self):
+        self.assertEqual(self.check(f"{SCENARIO}\n{NO}"), [])
+
+    def test_medium_without_either_field_fails(self):
+        f = self.check("- Note: NIL")
+        self.assertEqual(sum("BLOCKING" in x for x in f), 2, f)
+
+    def test_medium_without_blocking_fails(self):
+        f = self.check(SCENARIO)
+        self.assertTrue(any("Blocking: yes|no" in x for x in f), f)
+
+    def test_medium_with_nil_scenario_fails(self):
+        f = self.check(f"- Failure scenario: NIL\n{NO}")
+        self.assertTrue(any("Failure scenario" in x for x in f), f)
+
+    def test_blocking_yes_needs_a_criterion_and_a_reason(self):
+        f = self.check(f"{SCENARIO}\n- Blocking: yes. Breaks: NIL. Can't wait: NIL")
+        self.assertTrue(any("'Breaks:'" in x for x in f), f)
+        self.assertTrue(any("'Can't wait:'" in x for x in f), f)
+
+    def test_code_defect_may_block(self):
+        self.assertEqual(self.check(f"{SCENARIO}\n- Blocking: yes. Breaks: CODE. Can't wait: it loses the user's config."), [])
+
+    def test_high_and_low_need_no_blocking_line(self):
+        self.assertEqual(self.check("- Note: NIL", severity="HIGH"), [])
+        self.assertEqual(self.check("- Note: NIL", severity="LOW"), [])
+
+
 if __name__ == "__main__":
     unittest.main()

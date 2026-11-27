@@ -11,6 +11,8 @@ A QA Report also gets rules METHOD, EVIDENCE, MISSING and RESULT: each criterion
 and a Method, a PASS cites its own qa/ file (qa/AC-n.* or qa/design/AC-n-*) that exists next to
 the report, a + DESIGN line cites a qa/design/AC-n- file, Criteria results holds at least one
 criterion line, and a PASS Result has no FAIL or BLOCKED criterion.
+A Findings document also gets rule BLOCKING: every confirmed MEDIUM has a Failure scenario and a
+`Blocking: yes|no` line, and a `Blocking: yes` MEDIUM names what it breaks and why it can't wait.
 """
 import os
 import re
@@ -35,6 +37,10 @@ QA_LINE_RE = re.compile(r"^\s*-\s+(AC-\d+):\s+(PASS|FAIL|BLOCKED)\.\s+Method:\s+
                         r"(?:LIVE-API|LIVE-WEB|LIVE-MOBILE|LIVE-CLI|TEST \((?:cosmetic|additive|refactor|config|guard|docs|bar|race|external|fault)\))(?:\s*\+\s*(?:DESIGN-FLOW|DESIGN))?\.")
 QA_EVIDENCE_RE = re.compile(r"Evidence:\s*(.*?)(?:\s+Supporting:|$)")
 QA_PATH_RE = re.compile(r"qa/[^\s,;`'\")]+")
+FINDING_RE = re.compile(r"^###\s+(F-\d+):\s*(HIGH|MEDIUM|LOW)\b", re.IGNORECASE)
+SCENARIO_RE = re.compile(r"^\s*[-*]\s+Failure scenario:[ \t]*(.*)$", re.IGNORECASE)
+BLOCKING_RE = re.compile(r"^\s*[-*]\s+Blocking:\s*(yes|no)\b(.*)$", re.IGNORECASE)
+NIL_RE = re.compile(r"^(?:nil|none|n/a)?\.?$", re.IGNORECASE)
 
 
 def norm(title):
@@ -131,7 +137,58 @@ def check_file(path, templates):
 
     if norm(m.group(1)) == "qa report":
         check_qa(lines, os.path.dirname(os.path.abspath(path)), add)
+    if norm(m.group(1)) == "findings":
+        check_findings(lines, add)
     return findings, False
+
+
+def blank(text):
+    """NIL or too short to be a scenario (the board treats under 10 characters as missing)."""
+    text = text.strip()
+    return len(text) < 10 or bool(NIL_RE.match(text))
+
+
+def check_findings(lines, add):
+    """Findings: a confirmed MEDIUM says whether it blocks and how it fails, so the board's bar can read it."""
+    section, in_fence, blocks = None, False, []
+    for i, line in enumerate(lines, start=1):
+        if line.startswith("```"):
+            in_fence = not in_fence
+        if in_fence:
+            continue
+        if line.startswith("## "):
+            s = SECTION_RE.match(line)
+            section = norm(s.group(2)) if s else None
+            continue
+        if section != "confirmed findings":
+            continue
+        f = FINDING_RE.match(line)
+        if f:
+            blocks.append({"id": f.group(1), "severity": f.group(2).upper(), "line": i, "scenario": None, "blocking": None})
+        elif blocks:
+            sc, bl = SCENARIO_RE.match(line), BLOCKING_RE.match(line)
+            if sc and blocks[-1]["scenario"] is None:
+                blocks[-1]["scenario"] = sc.group(1)
+            if bl and blocks[-1]["blocking"] is None:
+                blocks[-1]["blocking"] = (bl.group(1).lower(), bl.group(2), i)
+    for b in blocks:
+        if b["severity"] != "MEDIUM":
+            continue
+        tag = b["id"]
+        if b["scenario"] is None or blank(b["scenario"]):
+            add(b["line"], "BLOCKING", f"{tag} is MEDIUM but has no '- Failure scenario:' with a concrete input and wrong result")
+        if b["blocking"] is None:
+            add(b["line"], "BLOCKING", f"{tag} is MEDIUM but has no '- Blocking: yes|no' line")
+            continue
+        answer, rest, at = b["blocking"]
+        if answer != "yes":
+            continue
+        breaks = re.search(r"Breaks:\s*(.*?)(?:\.\s+Can't wait:|$)", rest)
+        wait = re.search(r"Can't wait:\s*(.*)$", rest)
+        if not breaks or NIL_RE.match(breaks.group(1).strip()):
+            add(at, "BLOCKING", f"{tag} says Blocking: yes but 'Breaks:' names no criterion, Done-when line or CODE")
+        if not wait or NIL_RE.match(wait.group(1).strip()):
+            add(at, "BLOCKING", f"{tag} says Blocking: yes but 'Can't wait:' gives no reason it cannot be a follow-up")
 
 
 def check_qa(lines, folder, add):
