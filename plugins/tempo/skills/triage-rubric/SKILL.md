@@ -28,10 +28,14 @@ Ask the four questions in order. Only questions 1 and 2 can send the task back t
 2.7 Ask 1 to 3 questions. Each question SHALL list options and one recommended option.
 2.8 IF triage can pick a reading with high confidence, THEN record it in §5 ASSUMPTIONS and do not ask.
 2.9 Sources. IF the request or ticket says the work follows another source (a linked ticket, its attachments, a design file or a named version of it, a doc, an asset) and that source is MISSING, THEN the Outcome is not PRESENT for the items that depend on it: ask Jorge (NEEDS-JORGE MISSING-SOURCE), even on autopilot. 2.8 does not apply: no reading of a source you cannot open is high confidence.
+2.10 Done-when steps. List each step of the request's Done-when (or of the Outcome when it has none) in Task Card §4 as `DW-n`, in the request's words: every result and every action, outside ones too (a comment posted on an issue, an issue closed, a message sent). An assumption SHALL NOT drop, shrink or reassign a step: "the output is a file for Jorge to post" turns "posted on #92" into a different task.
+2.10.1 Before you decide a step cannot be done, check the tool read-only (`gh auth status`, `gh issue view <n>`). `gh` works in the sandbox. IF the check passes, THEN the step stays and the task does it.
+2.10.2 IF a step still cannot be done in the run, THEN the Outcome is not PRESENT: ask Jorge, ending `NEEDS-JORGE`, with the options (a) Jorge gives the access (b) Jorge changes the Done-when (c) drop the step. 2.8 does not apply. Only Jorge's answer changes a step.
 
 ### Examples
 
 - "Make the button red". Target missing. Scan finds 14 buttons. Ask: "Did you mean (a) the Save button on Settings, (b) the primary button style everywhere, or (c) something else? Recommended: (b)."
+- "Done when a table per card is posted on #92". DW-1 is the posted comment, not a Markdown file in the task folder. `gh issue view 92` works, so do not ask.
 - "The users can't view their messages". Target (messages view) and Outcome (users see their messages) are present. Anchor is the messages screen. Type BUG-FEEDBACK. Do not ask.
 
 ## 3 Size and lane

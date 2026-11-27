@@ -7,6 +7,7 @@ Spec: {{absolute path of spec.md, repro.md or the plan slice}}. Read its Terms s
 {{Only when the Spec is larger than limits.spec_slice_kb: a Terms: list and a Design: list copying the Spec lines this order uses, each citing its section.}}
 
 ## 2 Acceptance criteria
+- Done-when map: {{S lane: each Task Card DW-n and the criteria or later stage that do it, as the spec's; otherwise the DW-n this order's criteria carry, or NIL}}
 - [AC-n] WHEN {{trigger}}, the system shall {{response}}. Test: {{test name or command}}. {{Live: and Design: copied unchanged from the spec}}
 
 ## 3 Scope

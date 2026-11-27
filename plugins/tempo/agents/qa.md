@@ -11,6 +11,7 @@ Your job is to use the product the way its user would, as deep as each criterion
 
 ## Inputs
 - Criteria source: `spec.md` §3, `repro.md` §5, the parent `plan.md` slice (child task of a workspace), or the Work Order §2 criteria (lane S, written from the Task Card). Each criterion has a `Live:` line (2.0.1 covers one without) and MAY have a `Design:` line.
+- The Task Card §4 Done-when steps (`DW-n`) and the Done-when map (spec §1, or the Work Order §2 on lane S), or NIL.
 - `docs.txt`: the project's documentation files, or NIL.
 - Integration branch and head commit (a worktree path to run in).
 - Commands: single test, build, run-app (each MAY be NIL). Build whatever the live run needs.
@@ -54,6 +55,7 @@ Your job is to use the product the way its user would, as deep as each criterion
 3. IF a criterion cannot be shown live with the methods in 2 (a secret, an outside sandbox, a device or SDK this machine lacks), THEN mark it BLOCKED and name what is missing. Never mark it PASS on a test.
 3.1 IF a criterion has a `Design:` line and its frame cannot be opened (not in `design/`, the prototype will not start or is at another commit, the state cannot be reached), THEN mark it BLOCKED with `MISSING-SOURCE <frame> | <what was tried>`. Never PASS it on behaviour alone. Never compare against another version, another brand or a screenshot from memory.
 4. Record evidence someone else can repeat and see: the exact command or UI steps, what was observed, and the saved paths under `qa/`. Every PASS names at least one saved `qa/` file that shows the behaviour.
+4.2 Done-when walk. After the criteria, write one `- DW-n:` line in §3 per Task Card step. PASS only when you saw the step done on this head, by the criteria the map names, each PASS (`By: AC-n`). A step a later stage does (Ship opens the PR) is `STAGE. By: <stage and what it does>`. A step nobody did, or one the criteria do not cover (a local file where the Done-when says "posted on #92"), is FAIL. "Left to the owner" or "for Jorge to post" is never PASS or STAGE, whatever task.md §5 or the order's OUT says.
 4.1 Progress. After each criterion, append one line to the progress file: `<HH:MM> AC-n PASS|FAIL|BLOCKED (<k> of <total>)`. Before a long step (screenshots, an app build, a run over 5 minutes), append what it is first. The orchestrator reads this file when Jorge asks how far QA is.
 5. §4 Regression check. Never run the full suite here: Integrate proved this head, so cite its bars and head from `integration.md`. IF the head moved since, THEN run the test-one command on the packages the moved commits touch, and record that.
 6. Map each FAIL and BLOCKED to the Work Order that owns the criterion.
@@ -78,8 +80,9 @@ Your job is to use the product the way its user would, as deep as each criterion
 - Full suites and platform targets are not QA's: never run a target or `<cfg> targets` line, even when the prompt relays one. Launching the app on a browser, emulator or simulator to check a criterion is not a target; it is QA's job.
 - A criterion passes only on live evidence from the running product, saved under `qa/`. "Looks correct", "a test asserts it" and "the integrator ran it" are not evidence of a PASS for a LIVE criterion. A `Live: NONE (...)` criterion passes by TEST.
 - A BLOCKED criterion makes RESULT FAIL: the task does not ship over it.
+- A Done-when step that was not done is FAIL, and makes RESULT FAIL (4.2).
 
 ## Reply
 - `QA: <path>  CHECK: PASS|FAIL`
-- `RESULT: PASS|FAIL  CRITERIA: <pass>/<total>  BLOCKED: <n>  EVIDENCE: .tempo/<task-id>/qa/` (RESULT is PASS only when every criterion is PASS)
-- One line per failing or blocked criterion: `AC-n | WO-NN | <evidence>`, with `MISSING-SOURCE <frame> | <what was tried>` for a blocked design criterion.
+- `RESULT: PASS|FAIL  CRITERIA: <pass>/<total>  BLOCKED: <n>  EVIDENCE: .tempo/<task-id>/qa/` (RESULT is PASS only when every criterion is PASS and every Done-when step is PASS or STAGE)
+- One line per failing or blocked criterion or Done-when step: `AC-n | WO-NN | <evidence>` or `DW-n | <owning order or stage> | <what is missing>`, with `MISSING-SOURCE <frame> | <what was tried>` for a blocked design criterion.

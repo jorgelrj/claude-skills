@@ -1,5 +1,5 @@
 """Tests for check_doc.py's QA Report rules: METHOD (result and Method on each criterion line),
-EVIDENCE (a PASS cites its own qa/ file that exists next to the report), MISSING and RESULT.
+EVIDENCE (a PASS cites its own qa/ file that exists next to the report), MISSING, RESULT and DONEWHEN.
 
 Run: python3 -m unittest discover -s <plugin>/tests -v
 """
@@ -137,6 +137,61 @@ class QaRules(unittest.TestCase):
         f = self.check("NIL")
         self.assertTrue(any("MISSING" in x for x in f), f)
 
+
+
+class DoneWhenRules(unittest.TestCase):
+    """Rule DONEWHEN: every Task Card Done-when step is walked in the QA Report, and a step nobody did never passes."""
+
+    AC1 = ("- AC-1: PASS. Method: LIVE-CLI. Steps: `gh issue view 92 --comments`. Observed: table posted. "
+           "Evidence: qa/AC-1.txt. Supporting: NIL")
+
+    tearDown, check = QaRules.tearDown, QaRules.check
+
+    def setUp(self):
+        QaRules.setUp(self)
+        (self.dir / "qa" / "AC-1.txt").write_text("comment posted\n")
+        (self.dir / "task.md").write_text("## 4 Clarity\n- DW-1: a table per card is posted on #92\n"
+                                          "- DW-2: the PR closes #93\n", encoding="utf-8")
+
+    def dw(self, *lines, result="PASS"):
+        return [x for x in self.check("\n".join((self.AC1,) + lines), result=result) if "DONEWHEN" in x or "RESULT" in x]
+
+    def test_every_step_walked_passes(self):
+        self.assertEqual(self.dw("- DW-1: PASS. By: AC-1. Observed: the comment is on #92.",
+                                 "- DW-2: STAGE. By: Ship (PR body `Closes #93`)."), [])
+
+    def test_missing_step_fails(self):
+        f = self.dw("- DW-1: PASS. By: AC-1.")
+        self.assertTrue(any("DW-2" in x and "no line" in x for x in f), f)
+
+    def test_left_to_the_owner_is_never_a_pass(self):
+        f = self.dw("- DW-1: PASS. By: AC-1. Posting to #92 is outside the sandbox and is left to the owner.",
+                    "- DW-2: STAGE. By: Ship.")
+        self.assertTrue(any("DW-1" in x and "hands the step" in x for x in f), f)
+
+    def test_stage_cannot_hand_off_either(self):
+        f = self.dw("- DW-1: PASS. By: AC-1.", "- DW-2: STAGE. By: Ship. Jorge will close #93 by hand.")
+        self.assertTrue(any("DW-2" in x and "hands the step" in x for x in f), f)
+
+    def test_pass_needs_a_passing_criterion(self):
+        f = self.dw("- DW-1: PASS. By: a local Markdown file.", "- DW-2: STAGE. By: Ship.")
+        self.assertTrue(any("DW-1" in x and "names no criterion" in x for x in f), f)
+        f = self.dw("- DW-1: PASS. By: AC-1, AC-4.", "- DW-2: STAGE. By: Ship.")
+        self.assertTrue(any("AC-4 is not in Criteria results" in x for x in f), f)
+
+    def test_failed_step_under_pass_result_fails(self):
+        f = self.dw("- DW-1: FAIL. By: AC-1. Observed: nothing on #92.", "- DW-2: STAGE. By: Ship.")
+        self.assertTrue(any("RESULT" in x and "DW-1" in x for x in f), f)
+        self.assertEqual(self.dw("- DW-1: FAIL. By: AC-1. Observed: nothing on #92.", "- DW-2: STAGE. By: Ship.",
+                                 result="FAIL"), [])
+
+    def test_bad_shape_fails(self):
+        f = self.dw("- DW-1: DONE (owner posts it).", "- DW-2: STAGE. By: Ship.")
+        self.assertTrue(any("must read '- DW-n:" in x for x in f), f)
+
+    def test_no_task_card_needs_no_steps(self):
+        (self.dir / "task.md").unlink()
+        self.assertEqual(self.dw(), [])
 
 
 FINDINGS = """\

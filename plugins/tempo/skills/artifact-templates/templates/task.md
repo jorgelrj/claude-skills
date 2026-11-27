@@ -16,6 +16,7 @@ Lane: {{S|M|L}} · Issued by: triage
 ## 4 Clarity
 - Target: {{the thing that changes}}. Status: {{PRESENT | ASKED | ANSWERED}}
 - Outcome: {{what is true afterwards}}. Status: {{PRESENT | ASKED | ANSWERED}}
+- DW-{{n}}: {{one step of the request's Done-when, or of the Outcome when it has none, in the request's words: a result or an action, outside ones too (a comment posted on #92, an issue closed). No assumption drops, shrinks or reassigns one (rubric 2.10).}}
 - Anchor: {{screen, error, file or NIL}}. Status: {{PRESENT | EXPLORE WILL FIND}}
 - Check: {{how we know it worked, or NIL}}. Status: {{PRESENT | ARCHITECT WILL DRAFT}}
 - Sources: {{each source of truth the request or ticket names: FOUND <path> or MISSING; NIL when none}}

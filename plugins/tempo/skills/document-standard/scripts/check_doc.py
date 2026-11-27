@@ -11,6 +11,10 @@ A QA Report also gets rules METHOD, EVIDENCE, MISSING and RESULT: each criterion
 and a Method, a PASS cites its own qa/ file (qa/AC-n.* or qa/design/AC-n-*) that exists next to
 the report, a + DESIGN line cites a qa/design/AC-n- file, Criteria results holds at least one
 criterion line, and a PASS Result has no FAIL or BLOCKED criterion.
+A QA Report also gets rule DONEWHEN: every Done-when step `DW-n` of the Task Card next to it has a
+`- DW-n:` line in Criteria results, a PASS step names the criteria that prove it (`By: AC-n`) and
+each of them is PASS, no PASS or STAGE step hands the step to Jorge or the owner, and a PASS Result
+has no FAIL or BLOCKED step.
 A Findings document also gets rule BLOCKING: every confirmed MEDIUM has a Failure scenario and a
 `Blocking: yes|no` line, and a `Blocking: yes` MEDIUM names what it breaks and why it can't wait.
 """
@@ -35,6 +39,12 @@ AC_DEF_RE = re.compile(r"^\s*(?:[-*]|\d+\.)\s+\[(AC-\d+)\]")
 QA_AC_RE = re.compile(r"^\s*(?:[-*]|\d+\.)\s+[*\[]*AC-\d+")  # any criterion-like line; QA_LINE_RE then rejects drift
 QA_LINE_RE = re.compile(r"^\s*-\s+(AC-\d+):\s+(PASS|FAIL|BLOCKED)\.\s+Method:\s+"
                         r"(?:LIVE-API|LIVE-WEB|LIVE-MOBILE|LIVE-CLI|TEST \((?:cosmetic|additive|refactor|config|guard|docs|bar|race|external|fault)\))(?:\s*\+\s*(?:DESIGN-FLOW|DESIGN))?\.")
+QA_DW_RE = re.compile(r"^\s*(?:[-*]|\d+\.)\s+[*\[]*DW-\d+")
+QA_DW_LINE_RE = re.compile(r"^\s*-\s+(DW-\d+):\s+(PASS|FAIL|BLOCKED|STAGE)\b(.*)$")
+TASK_DW_RE = re.compile(r"^\s*-\s+(DW-\d+):")
+HANDED_OFF_RE = re.compile(r"\b(?:left to|leaves? (?:it|this|the \w+) to|for (?:Jorge|the owner|the user) to"
+                           r"|(?:Jorge|the owner|the user) (?:will|can|should|must) (?:post|do|close|send|run))\b",
+                           re.IGNORECASE)
 QA_EVIDENCE_RE = re.compile(r"Evidence:\s*(.*?)(?:\s+Supporting:|$)")
 QA_PATH_RE = re.compile(r"qa/[^\s,;`'\")]+")
 FINDING_RE = re.compile(r"^###\s+(F-\d+):\s*(HIGH|MEDIUM|LOW)\b", re.IGNORECASE)
@@ -235,8 +245,61 @@ def check_qa(lines, folder, add):
             add(i, "EVIDENCE", f"{tag} is PASS + DESIGN but cites no saved qa/design/{tag}-* file")
     if crit_line is not None and results == 0:
         add(crit_line, "MISSING", "Criteria results holds no '- AC-n:' criterion line")
+    not_pass += check_done_when(lines, folder, crit_line, add)
     if result_pass and result_pass[1] and not_pass:
         add(result_pass[0], "RESULT", f"Result is PASS but {', '.join(not_pass)} are not")
+
+
+def check_done_when(lines, folder, crit_line, add):
+    """QA Report: each Done-when step of the Task Card is walked, and only criteria or a later stage do it."""
+    section, in_fence, steps, ac_result = None, False, {}, {}
+    for i, line in enumerate(lines, start=1):
+        if line.startswith("```"):
+            in_fence = not in_fence
+        if in_fence:
+            continue
+        if line.startswith("## "):
+            s = SECTION_RE.match(line)
+            section = norm(s.group(2)) if s else None
+            continue
+        if section != "criteria results":
+            continue
+        q = QA_LINE_RE.match(line)
+        if q:
+            ac_result[q.group(1)] = q.group(2)
+        if not QA_DW_RE.match(line):
+            continue
+        d = QA_DW_LINE_RE.match(line)
+        if not d:
+            add(i, "DONEWHEN", "Done-when line must read '- DW-n: PASS|FAIL|BLOCKED|STAGE. By: AC-n[, AC-m] | <stage>. ...'")
+            continue
+        steps[d.group(1)] = (i, d.group(2), d.group(3))
+    not_pass = []
+    for tag, (i, result, rest) in steps.items():
+        if result in ("FAIL", "BLOCKED"):
+            not_pass.append(tag)
+            continue
+        if HANDED_OFF_RE.search(rest):
+            add(i, "DONEWHEN", f"{tag} is {result} but hands the step to Jorge or the owner. "
+                "A Done-when step nobody did is FAIL (qa 4.2)")
+            continue
+        if result == "PASS":
+            by = re.search(r"By:\s*([^.]*)", rest)
+            acs = re.findall(r"AC-\d+", by.group(1)) if by else []
+            if not acs:
+                add(i, "DONEWHEN", f"{tag} is PASS but 'By:' names no criterion that proves it")
+            for ac in acs:
+                if ac_result.get(ac) != "PASS":
+                    add(i, "DONEWHEN", f"{tag} is PASS but {ac} is " + (ac_result[ac] if ac in ac_result else "not in Criteria results"))
+    task = os.path.join(folder, "task.md")
+    if os.path.isfile(task):
+        with open(task, encoding="utf-8") as fh:
+            wanted = [m.group(1) for m in map(TASK_DW_RE.match, fh.read().splitlines()) if m]
+        missing = [t for t in wanted if t not in steps]
+        if missing:
+            add(crit_line or 1, "DONEWHEN", f"task.md names Done-when steps {', '.join(missing)} "
+                "but Criteria results has no line for them")
+    return not_pass
 
 
 def main(argv):
