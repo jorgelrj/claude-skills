@@ -70,6 +70,8 @@ limits:
   split_criteria: 30      # more criteria than this also splits (0 = off)
   order_check: true       # quick review of each Work Order's diff before it integrates (M and L lanes)
   spec_slice_kb: 30       # Spec larger than this: each order carries the terms and design it needs (0 = off)
+distill:
+  suggest_after: 10       # finished sessions under .tempo/ before the orchestrator suggests /tempo:distill once (0 = never)
 task:
   id: ticket
   ticket_pattern: "[A-Z][A-Z0-9]+-\\d+"

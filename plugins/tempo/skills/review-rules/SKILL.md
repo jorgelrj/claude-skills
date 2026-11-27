@@ -16,6 +16,8 @@ description: How TEMPO finds and applies a project's rules files (CLAUDE.md, REV
 1.5 TEMPO settings (commands, branches, limits) are not rules. They live in the config files; see the `config` skill.
 1.6 Project docs. The config's `docs:` lists the project's own documentation (`tempo_config.py docs` prints the files). IF `docs.rules` is true (the default), THEN docs that state conventions, architecture decisions (ADRs), contributing rules or a design system count as rules files for the SPEC lens and SPEC-PRECHECK. Cite the doc's path and line. Descriptive docs (guides, business context) are context, not rules: use them to understand the code, never as the basis of a finding.
 
+1.7 Saved rules. The orchestrator passes `.tempo/rules.md` (or NIL): the rules Jorge gave in earlier TEMPO sessions for every later task (distill skill §1). It is not in git, so read it from disk, not from the base branch. It counts as a rules file for the SPEC lens and SPEC-PRECHECK; cite it as `.tempo/rules.md` and the rule's text.
+
 ## 2 Review depth
 
 | Depth | Lane | Lenses | Reviewer budget |

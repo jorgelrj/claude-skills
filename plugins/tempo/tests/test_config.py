@@ -1,11 +1,12 @@
 """Tests for tempo_config.py: a config written for 0.21.0 still passes, gates.full_bars: verify, task.trackers,
 run: final targets, tests.always and tests.slow, dupes and the space WARN, the ci tier, run: ci targets, the
-machine override file, sync merged, the qa surfaces, and worktree links kept out of commits.
+machine override file, sync merged, the qa surfaces, and worktree links kept out of commits, and distill.suggest_after.
 
 Run: python3 -m unittest discover -s <plugin>/tests -v
 The script needs PyYAML and jsonschema, so it runs the way the plugin runs it, with `uv run`.
 Each test makes its own git repo in a temp folder.
 """
+import json
 import os
 import shutil
 import subprocess
@@ -314,6 +315,16 @@ class Config(unittest.TestCase):
     def test_qa_needs_must_name_an_earlier_surface(self):
         self.write(OLD + QA.replace("needs: [stack]", "needs: [coach-web]"))
         self.assertIn("qa.surfaces.api.needs: 'coach-web' is not a surface listed before it", self.cfg("check", code=1))
+
+    def test_distill_suggest_after(self):
+        self.assertEqual(json.loads(self.cfg("resolve"))["config"]["distill"], {"suggest_after": 10})
+        self.write(OLD + "distill:\n  suggest_after: 0\n")
+        self.assertIn("PASS", self.cfg("check"))
+        self.assertEqual(json.loads(self.cfg("resolve"))["config"]["distill"]["suggest_after"], 0)
+        self.write(OLD + "distill:\n  suggest_after: -1\n")
+        self.assertIn("suggest_after", self.cfg("check", code=1))
+        self.write(OLD + "distill:\n  after: 5\n")
+        self.assertIn("after", self.cfg("check", code=1))
 
     def test_qa_rejects_unknown_keys(self):
         self.write(OLD + QA.replace("kind: service", "kind: service, port: 5432"))

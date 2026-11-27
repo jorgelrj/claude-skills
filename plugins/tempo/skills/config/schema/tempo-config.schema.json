@@ -248,6 +248,18 @@
         }
       }
     },
+    "distill": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "suggest_after": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000,
+          "description": "Finished sessions (DONE, PR merged, or a plan delivered) under .tempo/ before the orchestrator suggests /tempo:distill, once per pile, at the end of a task. 0 never suggests it."
+        }
+      }
+    },
     "limits": {
       "type": "object",
       "additionalProperties": false,
@@ -465,6 +477,9 @@
         "limits": {
           "$ref": "#/$defs/limits"
         },
+        "distill": {
+          "$ref": "#/$defs/distill"
+        },
         "task": {
           "$ref": "#/$defs/task"
         },
@@ -548,6 +563,9 @@
         },
         "limits": {
           "$ref": "#/$defs/limits"
+        },
+        "distill": {
+          "$ref": "#/$defs/distill"
         },
         "task": {
           "$ref": "#/$defs/task"
