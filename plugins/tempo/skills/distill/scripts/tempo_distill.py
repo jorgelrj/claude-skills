@@ -11,8 +11,9 @@ Usage: tempo_distill.py <command> --repo R [args]
                                          then TOTAL: <n> eligible, <n> kept
   apply    --task ID ... (--delete | --archive)
                                          checks every task again and refuses a KEPT one (exit 1, nothing
-                                         changes); deletes the folders, or moves them to .tempo/archive/<id>.
-                                         Clears the DUE mark, so `due` can suggest distill again later
+                                         changes); deletes the folders, or moves them to .tempo/archive/<id>,
+                                         and removes their task-registry records (~/.cache/tempo/tasks, see
+                                         tempo_procs.py). Clears the DUE mark, so `due` can suggest distill again
   due      --threshold N [--mark]        DISTILL: DUE <n> finished sessions (exit 0) once ELIGIBLE reaches N,
                                          else DISTILL: NOT-DUE (also when N is 0, or the mark is set).
                                          --mark records that Jorge was told, so DUE prints once per pile
@@ -35,6 +36,7 @@ Exit 0 ok, 1 error or refused, 3 duplicate rule.
 """
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -48,6 +50,26 @@ HEADER = ("# TEMPO rules\n"
           "The orchestrator reads this file at the start of every run. Edit it with `rules add` and `rules drop`.\n\n")
 SOURCE_GLOBS = ("decisions.md", "esc-*.md", "task.md", "pr.md")
 MARK = ".distill-due"
+
+
+def registry_dir():
+    """tempo_procs.py's task registry: <TEMPO_CACHE or ~/.cache/tempo>/tasks/<tag>.json, each {"dir": ...}."""
+    return Path(os.environ.get("TEMPO_CACHE") or Path.home() / ".cache" / "tempo") / "tasks"
+
+
+def unregister(folder):
+    """Remove every registry record that points at `folder` or inside it. Returns how many. Never raises."""
+    folder = Path(folder).resolve()
+    reg, n = registry_dir(), 0
+    for f in (reg.glob("*.json") if reg.is_dir() else []):
+        try:
+            d = Path(json.loads(f.read_text(encoding="utf-8"))["dir"]).resolve()
+            if d == folder or folder in d.parents:
+                f.unlink()
+                n += 1
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return n
 
 
 def tempo(repo):
@@ -188,6 +210,7 @@ def cmd_apply(repo, tasks, archive):
     root = tempo(repo)
     for t in dict.fromkeys(tasks):
         d = rows[t][0]
+        unregister(d)  # the tag is the folder's path: a moved or deleted folder leaves its record stale
         if archive:
             dest = root / "archive" / t
             n = 2

@@ -17,6 +17,9 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skills" / "distill" / "scripts"))
 import tempo_distill as td  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skills" / "orchestrator" / "scripts"))
+import tempo_procs  # noqa: E402
+
 GH = """#!/usr/bin/env python3
 import json, os, sys, pathlib
 prs = json.loads((pathlib.Path(os.environ["STUB"]) / "prs.json").read_text())
@@ -35,10 +38,14 @@ class Base(unittest.TestCase):
         (self.tmp / "bin" / "gh").chmod(0o755)
         self.prs = {}
         self.write_prs()
-        env = {"STUB": str(self.tmp), "PATH": f"{self.tmp / 'bin'}{os.pathsep}{os.environ['PATH']}"}
+        self.cache = self.tmp / "cache"
+        env = {"STUB": str(self.tmp), "TEMPO_CACHE": str(self.cache), "PATH": f"{self.tmp / 'bin'}{os.pathsep}{os.environ['PATH']}"}
         p = mock.patch.dict(os.environ, env)
         p.start()
         self.addCleanup(p.stop)
+        r = mock.patch.object(tempo_procs, "REGISTRY", self.cache / "tasks")
+        r.start()
+        self.addCleanup(r.stop)
         self.repo = self.tmp / "repo"
         subprocess.run(["git", "init", "-q", "-b", "main", str(self.repo)], check=True)
         subprocess.run(["git", "-C", str(self.repo), "-c", "user.email=t@t", "-c", "user.name=t",
@@ -180,6 +187,28 @@ class Apply(Base):
         self.assertEqual(code, 0)
         self.assertTrue((self.root / "archive" / "T-001-2" / "decisions.md").exists())
         self.assertFalse((self.root / "T-001").exists())
+
+    def records(self):
+        reg = self.cache / "tasks"
+        return sorted(json.loads(f.read_text())["dir"] for f in reg.glob("*.json")) if reg.is_dir() else []
+
+    def test_delete_and_archive_drop_registry_records(self):
+        a = self.task("T-001", pr="https://x/pull/1", pr_state="MERGED")
+        b = self.task("T-002", pr="https://x/pull/2", pr_state="MERGED")
+        c = self.task("T-003", pr="https://x/pull/3", pr_state="OPEN")
+        for d in (a, b, c):
+            tempo_procs.register(d)
+        self.assertEqual(len(self.records()), 3)
+        self.assertEqual(self.run_cli("apply", "--task", "T-001", "--delete")[0], 0)
+        self.assertEqual(self.run_cli("apply", "--task", "T-002", "--archive")[0], 0)
+        self.assertEqual(self.records(), [str(c.resolve())])  # the kept task keeps its record
+        self.assertTrue(all(Path(d).exists() for d in self.records()))
+        self.assertEqual(list(tempo_procs.registry()), [tempo_procs.tag(c)])
+
+    def test_apply_works_with_no_registry(self):
+        self.task("T-001", pr="https://x/pull/1", pr_state="MERGED")
+        self.assertEqual(self.run_cli("apply", "--task", "T-001", "--delete")[0], 0)
+        self.assertFalse((self.cache / "tasks").exists())
 
     def test_unknown_task_is_refused(self):
         code, out = self.run_cli("apply", "--task", "T-404", "--delete")

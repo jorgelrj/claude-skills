@@ -298,12 +298,20 @@ def cfg(repo, *args):
 
 
 def registry():
+    """{tag: folder}. Drops the record of a folder that no longer exists (deleted, or moved by distill)."""
     out = {}
     for f in (REGISTRY.glob("*.json") if REGISTRY.exists() else []):
         try:
-            out[f.stem] = json.loads(f.read_text(encoding="utf-8"))["dir"]
-        except (OSError, ValueError, KeyError):
+            d = json.loads(f.read_text(encoding="utf-8"))["dir"]
+        except (OSError, ValueError, KeyError, TypeError):
             continue
+        if not Path(d).exists():
+            try:
+                f.unlink()
+            except OSError:
+                pass
+            continue
+        out[f.stem] = d
     return out
 
 

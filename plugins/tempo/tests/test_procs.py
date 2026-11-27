@@ -49,6 +49,23 @@ class Cfg(unittest.TestCase):
         self.assertTrue(tempo_procs.CONFIG.is_file())
 
 
+class Registry(unittest.TestCase):
+    def test_reading_drops_records_of_folders_that_are_gone(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        live, gone = tmp / "repo" / ".tempo" / "T-001", tmp / "repo" / ".tempo" / "T-002"
+        live.mkdir(parents=True)
+        gone.mkdir(parents=True)
+        with mock.patch.object(tempo_procs, "REGISTRY", tmp / "tasks"):
+            tempo_procs.register(live)
+            tempo_procs.register(gone)
+            (tmp / "tasks" / "junk.json").write_text("not json")
+            shutil.rmtree(gone)
+            self.assertEqual(tempo_procs.registry(), {tempo_procs.tag(live): str(live.resolve())})
+            self.assertFalse((tmp / "tasks" / f"{tempo_procs.tag(gone)}.json").exists())
+            self.assertTrue((tmp / "tasks" / "junk.json").exists())  # unreadable: skipped, not deleted
+
+
 class SessionEnd(unittest.TestCase):
     def test_only_the_ending_session_s_rows_are_marked_stopped(self):
         tmp = Path(tempfile.mkdtemp(prefix="tempo-procs-test-")).resolve()

@@ -540,3 +540,10 @@ Rules Jorge gave during a session ("from now on, run the API tests with make") s
 
 - **Same fallback as `tempo_procs.py`.** The tests run the script with `uv run --quiet` when uv is installed, else with the Python running the tests. `python3 -m unittest discover -s tests` needs either uv, or PyYAML and jsonschema importable by that `python3` (`pip install pyyaml jsonschema`).
 - **A skip says so.** With neither, the run prints one line on stderr, `tempo: the config tests did not run: uv is not installed and <module> cannot be imported`, before the summary.
+
+### Distill leaves no stale task records (0.32.2)
+
+`tempo_distill.py apply` moved or deleted a session folder but left its record in `~/.cache/tempo/tasks/<tag>.json`, so records pointing at missing folders piled up. From 0.32.2:
+
+- **`apply` cleans up.** Before it archives or deletes a folder, it removes every registry record that points at that folder. An archived session gets no new record: the tag is the folder's path, and the archive is not a live task.
+- **Reading the registry prunes it.** `tempo_procs.py` drops the record of any folder that no longer exists when it reads the registry, so records left by a folder deleted by hand go too. A process still tagged with such a folder shows in `sweep` as LEFTOVER (`task UNREGISTERED`).
