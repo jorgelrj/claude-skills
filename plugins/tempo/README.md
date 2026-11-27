@@ -558,3 +558,13 @@ Rules Jorge gave during a session ("from now on, run the API tests with make") s
 - **Archive pruning.** A new key, `distill.archive_days` (default 90, 0 = never). `apply --archive` stamps each folder with `.archived`; `tempo_distill.py archive --days <n>` lists folders archived that long ago (a folder from before 0.33.0 counts from its last write), and `--delete <name> ...` deletes them. Distill shows them in their own list and deletes them only with an explicit yes.
 - **Upgrade order.** A config that sets either key fails `check` on 0.32 and older, so update every machine first.
 
+### Build and lint per package under NARROW (0.34.0)
+
+0.31.0 dropped the bars for doc-only diffs, but a one-file code change in one package still ran the repo-wide `build` and `lint` at every NARROW integrate: about 5 minutes of workspace-wide analyze, format check and i18n check over every client package in the run behind #6. From 0.34.0:
+
+- **`commands.build_scoped` and `commands.lint_scoped`.** Build and lint for one package, with `{package}` (`cd {package} && dart analyze`), like a target's `scoped_command`. Unset, nothing changes.
+- **Integrator.** Under NARROW and LOCAL, each build and lint step runs the scoped form once per touched package, plus each package that depends on a touched shared module, as typecheck does. A file in no package, or a root file the build or lint reads (`analysis_options.yaml`, `.eslintrc*`, `tsconfig*.json`), still runs the repo-wide command. FULL bars always run the repo-wide `build` and `lint`.
+- **Architect and builders.** §5 Verification lints each of the order's packages with the scoped command when it is set.
+- **Check.** `tempo_config.py check` fails a scoped command that has no `{package}`.
+- **Upgrade order.** A config that sets either key fails `check` on 0.33 and older, so update every machine first.
+

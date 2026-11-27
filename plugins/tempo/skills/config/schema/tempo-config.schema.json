@@ -49,11 +49,19 @@
         "build": {
           "$ref": "#/$defs/command"
         },
+        "build_scoped": {
+          "$ref": "#/$defs/command",
+          "description": "build for one package, with {package} (its folder from the repo root, . for the root). Under NARROW and LOCAL bars the integrator runs it per touched package and per package that depends on a touched shared module, in place of build. null: build, repo-wide. FULL bars always run build."
+        },
         "typecheck": {
           "$ref": "#/$defs/command"
         },
         "lint": {
           "$ref": "#/$defs/command"
+        },
+        "lint_scoped": {
+          "$ref": "#/$defs/command",
+          "description": "lint for one package, with {package}, as build_scoped. Under NARROW and LOCAL bars builders and the integrator run it per touched package in place of lint. null: lint, repo-wide. FULL bars always run lint."
         },
         "run_app": {
           "$ref": "#/$defs/command"

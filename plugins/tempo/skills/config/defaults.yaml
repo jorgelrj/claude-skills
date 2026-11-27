@@ -6,8 +6,10 @@ commands:
   test_one: null
   test_local: null  # gates.full_bars: ci only: the test-one command that skips what only CI runs
   build: null
+  build_scoped: null  # build for one package, with {package}: NARROW and LOCAL integrates run it per touched package
   typecheck: null
   lint: null
+  lint_scoped: null   # lint for one package, with {package}, as build_scoped
   run_app: null
 targets: []        # extra platform test runs: [{name, command, paths, scoped_command?, advisory?, run?}]; run: ci never runs locally
 tests:

@@ -1,6 +1,7 @@
 """Tests for tempo_config.py: a config written for 0.21.0 still passes, gates.full_bars: verify, task.trackers,
 run: final targets, tests.always and tests.slow, dupes and the space WARN, the ci tier, run: ci targets, the
-machine override file, sync merged, the qa surfaces, and worktree links kept out of commits, and distill.suggest_after.
+machine override file, sync merged, the qa surfaces, worktree links kept out of commits, distill.suggest_after, and the
+scoped build and lint commands.
 
 Run: python3 -m unittest discover -s <plugin>/tests -v
 The script needs PyYAML and jsonschema. It runs the way tempo_procs.py runs it: `uv run --quiet` when uv is
@@ -182,6 +183,19 @@ class Config(unittest.TestCase):
         self.assertIn("PASS: ", self.cfg("check"))
         self.assertEqual(self.cfg("bars", "--paths", "notes.txt", "README.md"), none)
         self.assertEqual(self.cfg("bars", "--paths", "CODEOWNERS.md"), "BARS: FULL  WHY: gates.full_paths matches CODEOWNERS.md\n")
+
+    def test_scoped_build_and_lint_print_with_their_package_placeholder(self):
+        lint = "  lint: cd app && dart format --output=none --set-exit-if-changed .\n"
+        scoped = lambda extra: OLD.replace(lint, lint + extra)
+        self.write(scoped("  build_scoped: cd {package} && dart analyze\n  lint_scoped: cd {package} && dart format --output=none .\n"))
+        self.assertIn("PASS: ", self.cfg("check"))
+        self.assertEqual(self.cfg("cmd", "build_scoped", "--var", "package=app"), "cd app && dart analyze\n")
+        self.assertEqual(self.cfg("cmd", "lint_scoped"), "cd {package} && dart format --output=none .\n")
+        self.assertEqual(self.cfg("cmd", "build"), "cd app && melos run analyze\n")  # the repo-wide form stays for FULL
+        self.write(OLD)  # unset: NIL, so the integrator runs the repo-wide build and lint as before
+        self.cfg("cmd", "build_scoped", code=1)
+        self.write(scoped("  lint_scoped: cd app && dart format .\n"))
+        self.assertIn("commands.lint_scoped: 'cd app && dart format .' has no {package}", self.cfg("check", code=1))
 
     def test_bars_print_always_and_the_slow_files_a_change_touches_or_mirrors(self):
         for f in ("app/lib/bar.dart", "app/test/bar_test.dart"):

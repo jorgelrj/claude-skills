@@ -13,6 +13,8 @@ commands:                       # null = not available; unset = detect from the 
   build: npm run build
   typecheck: npm run typecheck
   lint: npm run lint
+  # build_scoped: cd {package} && npm run build   # one package; NARROW and LOCAL integrates run it per touched package
+  # lint_scoped: cd {package} && npm run lint     # as build_scoped, for lint
   run_app: null                 # older form of one qa surface; prefer qa: below
 
 # qa:                           # how QA runs the product to show each criterion working (config SKILL 2.8)

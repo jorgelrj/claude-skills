@@ -225,6 +225,11 @@ def lint(data, path):
                 out.append(f"{where}.sync: TEMPO syncs jira and github tickets only, not {tr.get('type')}.")
             if sync.get("project") and tr.get("type") != "github":
                 out.append(f"{where}.sync.project: a GitHub Projects board; only a github tracker has one.")
+        for key in ("build_scoped", "lint_scoped"):
+            val = (block.get("commands") or {}).get(key)
+            if isinstance(val, str) and "{package}" not in val:
+                out.append(f"{path}: {loc + '.' if loc else ''}commands.{key}: '{val}' has no {{package}}; it would run "
+                           f"the same command for every touched package. Add {{package}} or use commands.{key[:-7]}.")
         seen = set()
         for sf in (block.get("qa") or {}).get("surfaces") or []:
             for dep in sf.get("needs") or []:
