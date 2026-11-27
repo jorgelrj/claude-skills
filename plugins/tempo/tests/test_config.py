@@ -308,6 +308,20 @@ class Config(unittest.TestCase):
         local.unlink()
         self.assertEqual(self.cfg("resolve"), before)
 
+    def test_the_heavy_load_keys_are_checked_per_machine(self):
+        self.assertIn('"heavy_max_load": 1.5', self.cfg("resolve"))  # the defaults
+        local = self.repo / ".tempo" / "config.local.yaml"
+        local.write_text("limits:\n  heavy_max_load: 2.5\n  heavy_min_free_mb: 2048\n  heavy_load_wait_minutes: 10\n")
+        self.assertNotIn("WARN", self.cfg("check"))
+        out = self.cfg("resolve")
+        for want in ('"heavy_max_load": 2.5', '"heavy_min_free_mb": 2048', '"heavy_load_wait_minutes": 10'):
+            self.assertIn(want, out)
+        local.write_text("limits:\n  heavy_max_load: 0\n  heavy_min_free_mb: 0\n")  # 0 turns each check off
+        self.assertNotIn("WARN", self.cfg("check"))
+        for bad in ("heavy_max_load: -1", "heavy_min_free_mb: lots", "heavy_load_wait_minutes: 0"):
+            local.write_text(f"limits:\n  {bad}\n")
+            self.assertIn(bad.split(":")[0], self.cfg("check", code=1), bad)
+
     def test_sync_merged_is_a_tracker_event(self):
         self.write(OLD.split("task:")[0] + TRACKERS.replace("sync: {pr: In review}", "sync: {pr: In review, merged: Done}"))
         self.assertNotIn("WARN", self.cfg("check"))

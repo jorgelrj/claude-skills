@@ -38,7 +38,8 @@ class Base(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="tempo-run-test-")).resolve()
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.env = {**os.environ, "TEMPO_CACHE": str(self.tmp / "cache"), "TEMPO_OWNER": "0", "TMPDIR": str(self.tmp),
-                    "TEMPO_LOCK_DIR": str(self.tmp / "locks")}
+                    "TEMPO_LOCK_DIR": str(self.tmp / "locks"),
+                    "TEMPO_HEAVY_MAX_LOAD": "0"}  # a heavy run here never waits on the machine's real load (class Load fakes it)
 
     def run_py(self, path, *args, stdin=None, **env):
         return subprocess.run([sys.executable, str(path), *map(str, args)], capture_output=True, text=True,
@@ -157,7 +158,7 @@ class BeforeRun(Base):
 
 
 class Killed(Base):
-    KEYS = {"at", "ev", "id", "exit", "seconds", "waited", "load1", "killed", "leftovers", "head", "clean"}
+    KEYS = {"at", "ev", "id", "exit", "seconds", "waited", "load_wait", "load1", "killed", "leftovers", "head", "clean"}
 
     def test_a_kill_from_outside_prints_killed_and_every_run_logs_its_end(self):
         d = self.task()
@@ -209,6 +210,98 @@ class Killed(Base):
         self.assertEqual((r.returncode, (run / "code").read_text()), (0, "137"), r.stderr)
         self.assertTrue((run / "result.txt").read_text().startswith("RUN: made  EXIT: 137  "))
         self.assertEqual([(e["exit"], e["killed"]) for e in self.events(d)], [(137, False)])
+
+
+class Load(Base):
+    """A heavy run holding its slot waits while the machine is busy, up to a cap; scoped runs and a check set to 0 never wait."""
+
+    class Clock:
+        def __init__(self):
+            self.t = 0.0
+
+        def now(self):
+            return self.t
+
+        def sleep(self, s):
+            self.t += s
+
+    def wait(self, loads, room, free=None):
+        c, seen = self.Clock(), []
+        with mock.patch.object(tempo_run, "load1", side_effect=list(loads) + [loads[-1]] * 10000), \
+                mock.patch.object(tempo_run, "cpus", return_value=10), \
+                mock.patch.object(tempo_run, "free_mb", return_value=free):
+            out = tempo_run.wait_for_room(room, seen.append, clock=c.now, sleep=c.sleep)
+        return out, seen
+
+    def test_it_waits_while_load_is_high_and_starts_when_it_drops(self):
+        (secs, why, capped), seen = self.wait([20.0, 16.0, 9.0], {"max_load": 1.5, "wait_minutes": 20})
+        self.assertEqual((secs, why, capped), (2 * tempo_run.POLL, "load 16.0 / 10 CPUs", False))
+        self.assertEqual(seen, ["load 20.0 / 10 CPUs", "load 16.0 / 10 CPUs"])  # the STATE line while it waits
+
+    def test_the_wait_ends_at_its_cap(self):
+        (secs, why, capped), _ = self.wait([30.0], {"max_load": 1.5, "wait_minutes": 1})
+        self.assertTrue(capped)
+        self.assertEqual((secs, why), (60, "load 30.0 / 10 CPUs"))
+
+    def test_memory_holds_it_too_and_zero_turns_each_check_off(self):
+        (_, why, capped), _ = self.wait([1.0], {"max_load": 1.5, "min_free_mb": 2048, "wait_minutes": 1}, free=900)
+        self.assertEqual((why, capped), ("memory 900 MB free, under 2048", True))
+        for room in ({"max_load": 0, "min_free_mb": 0, "wait_minutes": 20}, {"max_load": 0}):
+            self.assertEqual(self.wait([99.0], room, free=1), ((0, None, False), []))
+        with mock.patch.object(tempo_run, "load1", return_value=None):  # Windows: no load average, slots only
+            self.assertIsNone(tempo_run.busy({"max_load": 0.1}))
+
+    def test_settings_come_from_the_env_then_the_config_then_the_defaults(self):
+        self.assertEqual(tempo_run.room_settings({}, {}), {"max_load": 1.5, "min_free_mb": 0, "wait_minutes": 20})
+        limits = {"heavy_max_load": 3, "heavy_min_free_mb": 1024, "heavy_load_wait_minutes": 5}
+        self.assertEqual(tempo_run.room_settings(limits, {}), {"max_load": 3, "min_free_mb": 1024, "wait_minutes": 5})
+        env = {"TEMPO_HEAVY_MAX_LOAD": "0", "TEMPO_HEAVY_LOAD_WAIT_MINUTES": "x"}  # a bad value falls back to the config
+        self.assertEqual(tempo_run.room_settings(limits, env), {"max_load": 0, "min_free_mb": 1024, "wait_minutes": 5})
+        if sys.platform != "win32":
+            self.assertIsInstance(tempo_run.free_mb(), int)
+
+    def worker(self, heavy, room, loads):
+        d = self.tmp / "repo" / ".tempo" / "T-001"
+        d.exists() or self.task()
+        run = self.tmp / f"tempo-run-{len(list(self.tmp.glob('tempo-run-*')))}"
+        run.mkdir()
+        opts = {"label": "suite", "log": str(run / "out.log"), "heavy": heavy, "slots": 1, "tail": 5, "timeout": None,
+                "cmd": ["true"], "cwd": str(self.tmp), "started": 0, "task": str(d), "room": room}
+        with mock.patch.dict(os.environ, {"TEMPO_CACHE": self.env["TEMPO_CACHE"], "TEMPO_OWNER": "0"}), \
+                mock.patch.object(tempo_run, "LOCK_DIR", self.tmp / "locks"), \
+                mock.patch.object(tempo_run, "POLL", 1.1), \
+                mock.patch.object(tempo_run, "cpus", return_value=10), \
+                mock.patch.object(tempo_run, "load1", side_effect=loads), \
+                mock.patch.object(tempo_run, "reap_leftovers", return_value=([], [])):
+            tempo_run.worker(run, opts, opts["cmd"])
+        return (run / "result.txt").read_text(), self.events(d)[-1]
+
+    def test_the_summary_says_it_waited_for_load_with_a_slot_free(self):
+        out, ev = self.worker(True, {"max_load": 1.5, "wait_minutes": 20}, [18.4, 3.0])
+        self.assertIn("WAITED FOR: load 18.4 / 10 CPUs\n", out)
+        self.assertNotIn("cap", out)
+        self.assertRegex(out, r"EXIT: 0  TIME: \S+  WAITED: 0:01 ")
+        self.assertEqual((ev["load_wait"], ev["waited"]), (1, 1))
+        out, _ = self.worker(True, {"max_load": 1.5, "wait_minutes": 0.025}, [18.4] * 5)  # past the cap it starts anyway
+        self.assertIn("WAITED FOR: load 18.4 / 10 CPUs, started at the 0:01 cap\n", out)
+        for heavy, room in ((False, {"max_load": 1.5}), (True, {"max_load": 0})):  # a scoped run, a check turned off
+            out, ev = self.worker(heavy, room, [])  # load1 is never read
+            self.assertNotIn("WAITED FOR", out)
+            self.assertEqual(ev["load_wait"], 0)
+
+    def test_main_writes_the_config_settings_into_the_run(self):
+        d = self.task("version: 1\nlimits:\n  heavy_max_load: 4\n  heavy_load_wait_minutes: 3\n")
+        if not shutil.which("uv"):
+            try:
+                import jsonschema, yaml  # noqa: F401
+            except ImportError:
+                self.skipTest("tempo_config.py needs uv, or PyYAML and jsonschema")
+        r = self.run_py(SCRIPTS / "tempo_run.py", "--task", d, "--", "true", TEMPO_HEAVY_MIN_FREE_MB="512",
+                        TEMPO_HEAVY_MAX_LOAD="")  # empty: the config's value
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        (run,) = self.tmp.glob("tempo-run-*")
+        self.assertEqual(json.loads((run / "opts.json").read_text())["room"],
+                         {"max_load": 4, "min_free_mb": 512, "wait_minutes": 3})
 
 
 class Summary(Base):

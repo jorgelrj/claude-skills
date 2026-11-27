@@ -12,7 +12,16 @@ polls: no background runs, no sleep loops, no reading of the log to see if it en
 least 1; env TEMPO_HEAVY_SLOTS or --slots). Use it for whole suites, platform targets
 and app builds: too many at once run slower than a queue. The wait happens inside the
 worker and is reported as WAITED. Scoped runs (one package, a few test files) do not
-take a slot. With --task and a config that can be read, the script decides for the commands
+take a slot, and never wait for load.
+
+Load. Holding its slot, a heavy run also waits while the machine is busy: the 1-minute load
+average per CPU above limits.heavy_max_load (default 1.5; 0 turns it off), or free memory
+under limits.heavy_min_free_mb (default 0, off). It starts as soon as the machine has room,
+and after limits.heavy_load_wait_minutes (default 20) it starts anyway: a busy machine delays
+a run, never blocks it. Env TEMPO_HEAVY_MAX_LOAD, TEMPO_HEAVY_MIN_FREE_MB and
+TEMPO_HEAVY_LOAD_WAIT_MINUTES override the config. Windows has no load average: slots only.
+
+With --task and a config that can be read, the script decides for the commands
 the config knows (decide_heavy): the whole test command and a target's whole command always
 take a slot; test-one with test files, typecheck and lint never do. For any other command,
 and without --task or a config, the caller's --heavy decides.
@@ -40,13 +49,15 @@ Prints:
   RUN: <label>  EXIT: <code>  TIME: <m:ss>  WAITED: <m:ss>  LOG: <path>
   TREE: <sha> clean|dirty   the git HEAD of the run's folder when it started, and whether the tree had no change
                             (untracked files count); TREE: none outside git
+  WAITED FOR: <who held the slot>; <load 14.2 / 10 CPUs | memory 900 MB free, under 2048>[, started at the
+                            <m:ss> cap]   after a wait of a second or more
   BEFORE RUN: exit <n>: <step>   a worktree.before_run step that failed; the command ran anyway. The steps run at
                             the root of a linked worktree before each command, never in the main checkout
   FAILURES: <count shown>   then up to 40 failure lines, or FAILURES: NIL; only when EXIT is not 0
   TAIL:                     then the last --tail lines (default 25)
   KILLED: signal <n>. ...   first line when the exit is 137 or 143 (SIGKILL, SIGTERM from outside), or the worker died
 or, while it runs:
-  RUNNING: <label>  ID: <id>  ELAPSED: <m:ss>  STATE: <waiting for a slot | running>
+  RUNNING: <label>  ID: <id>  ELAPSED: <m:ss>  STATE: <waiting for a slot | waiting for <load ...> | running>
 FAILURES are hints matched by pattern; EXIT decides whether the run passed.
 QA cites an integrator's run instead of running it again only when its TREE is clean, its sha is QA's HEAD,
 it passed and QA's tree is clean too.
@@ -171,7 +182,7 @@ def killed_line(sig):
     return f"KILLED: signal {sig}. Stopped from outside, not a test failure. Run it again once."
 
 
-def run_end(run, opts, code, seconds, waited=0.0, killed=False, leftovers=0):
+def run_end(run, opts, code, seconds, waited=0.0, killed=False, leftovers=0, load_wait=0.0):
     """One line in the task's events.jsonl for a run that ended, with the machine's load, to see what queues and what dies."""
     if not opts.get("task"):
         return
@@ -180,7 +191,7 @@ def run_end(run, opts, code, seconds, waited=0.0, killed=False, leftovers=0):
     except (OSError, AttributeError):  # Windows has no load average
         load = None
     tempo_procs.event(opts["task"], ev="run-end", id=run.name, exit=code, seconds=round(seconds), waited=round(waited),
-                      load1=load, killed=killed, leftovers=leftovers, head=opts.get("head"), clean=opts.get("clean"))
+                      load_wait=round(load_wait), load1=load, killed=killed, leftovers=leftovers, head=opts.get("head"), clean=opts.get("clean"))
 
 
 def clock(seconds):
@@ -229,12 +240,97 @@ def default_slots():
     return int(os.environ.get("TEMPO_HEAVY_SLOTS") or max(1, (os.cpu_count() or 4) // 4))
 
 
+ROOM = {"max_load": 1.5, "min_free_mb": 0, "wait_minutes": 20}  # defaults.yaml limits.heavy_*: the same values
+ROOM_KEYS = {"max_load": ("heavy_max_load", "TEMPO_HEAVY_MAX_LOAD"),
+             "min_free_mb": ("heavy_min_free_mb", "TEMPO_HEAVY_MIN_FREE_MB"),
+             "wait_minutes": ("heavy_load_wait_minutes", "TEMPO_HEAVY_LOAD_WAIT_MINUTES")}
+POLL = 5  # seconds between load checks
+
+
+def room_settings(limits=None, env=None):
+    """When a heavy run waits for the machine: the env first, then the config's limits, then ROOM."""
+    env = os.environ if env is None else env
+    out = dict(ROOM)
+    for k, (key, var) in ROOM_KEYS.items():
+        for v in ((env.get(var) or None), (limits or {}).get(key)):
+            if v is None:
+                continue
+            try:
+                out[k] = max(0.0, float(v)); break
+            except (TypeError, ValueError):
+                continue  # a bad env value falls back to the config
+    return out
+
+
+def load1():
+    try:
+        return os.getloadavg()[0]
+    except (OSError, AttributeError):  # Windows has no load average
+        return None
+
+
+def cpus():
+    return os.cpu_count() or 1
+
+
+def free_mb():
+    """Memory a new process can get without swapping, in MB, or None where it cannot be read."""
+    try:
+        if sys.platform.startswith("linux"):
+            with open("/proc/meminfo", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("MemAvailable:"):
+                        return int(line.split()[1]) // 1024
+        elif sys.platform == "darwin":
+            out = subprocess.run(["vm_stat"], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=5).stdout
+            page = int(re.search(r"page size of (\d+) bytes", out).group(1))
+            pages = dict(re.findall(r"^Pages ([a-z ]+):\s+(\d+)\.", out, re.M))
+            return sum(int(pages.get(k, 0)) for k in ("free", "inactive", "speculative")) * page // 2 ** 20
+    except (OSError, ValueError, AttributeError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def busy(room):
+    """Why the machine has no room for a heavy run now, or None."""
+    if room.get("max_load"):
+        load, n = load1(), cpus()
+        if load is not None and load / n > room["max_load"]:
+            return f"load {load:.1f} / {n} CPUs"
+    if room.get("min_free_mb"):
+        free = free_mb()
+        if free is not None and free < room["min_free_mb"]:
+            return f"memory {free} MB free, under {int(room['min_free_mb'])}"
+    return None
+
+
+def wait_for_room(room, on_wait=None, clock=time.monotonic, sleep=time.sleep):
+    """Wait while busy(room), up to room's wait_minutes. Return (seconds waited, the last reason or None, capped)."""
+    start, why = clock(), None
+    cap = room.get("wait_minutes", ROOM["wait_minutes"]) * 60
+    while True:
+        now = busy(room)
+        if now is None:
+            return clock() - start, why, False
+        why = now
+        if clock() - start >= cap:
+            return clock() - start, why, True
+        if on_wait:
+            on_wait(why)
+        sleep(max(0.0, min(POLL, cap - (clock() - start))))  # never past the cap
+
+
 def worker(run, opts, cmd):
     """Runs in its own session: takes the slot, runs the command, writes result.txt, then exit."""
     (run / "state").write_text("waiting for a slot" if opts["heavy"] else "running", encoding="utf-8")
-    lock, waited, holder = (None, 0.0, None)
+    lock, waited, holder, load_wait, why, capped = None, 0.0, None, 0.0, None, False
     if opts["heavy"]:
         lock, waited, holder = take_slot(max(1, opts["slots"]), opts["label"])
+        try:  # holding the slot, so the runs queued behind it do not all start the moment load drops
+            load_wait, why, capped = wait_for_room(opts.get("room") or {"max_load": 0},
+                                                   lambda w: (run / "state").write_text(f"waiting for {w}", encoding="utf-8"))
+        except Exception:  # the load check never fails the run, nor keeps its slot taken
+            pass
     (run / "state").write_text("running", encoding="utf-8")
     start = time.monotonic()
     log, code = Path(opts["log"]), 0
@@ -264,13 +360,17 @@ def worker(run, opts, cmd):
     stopped, kept = reap_leftovers(run.name, locals().get("proc"))
 
     fails, total, tail = summary(log, opts["tail"])
-    rows = [f"RUN: {opts['label']}  EXIT: {code}  TIME: {clock(took)}  WAITED: {clock(waited)}  LOG: {log.as_posix()}",
+    rows = [f"RUN: {opts['label']}  EXIT: {code}  TIME: {clock(took)}  WAITED: {clock(waited + load_wait)}  LOG: {log.as_posix()}",
             tree_line(opts)]
     if killed:
         rows.insert(0, killed_line(code - 128))
     rows += opts.get("before") or []
-    if waited >= 1 and holder:
-        rows.append(f"WAITED FOR: {holder}")
+    reasons = [holder] if waited >= 1 and holder else []
+    if load_wait >= 1 and why:
+        cap = (opts.get("room") or {}).get("wait_minutes", ROOM["wait_minutes"]) * 60
+        reasons.append(why + (f", started at the {clock(cap)} cap" if capped else ""))
+    if reasons:
+        rows.append("WAITED FOR: " + "; ".join(reasons))
     # on exit 0 the failure patterns are noise (a test named "failed", a logged Exception) and mislead agents
     if code and fails:
         rows.append(f"FAILURES: {len(fails)}" + (f" of {total} (see the log for the rest)" if total > len(fails) else ""))
@@ -286,7 +386,7 @@ def worker(run, opts, cmd):
     tmp = run / "result.tmp"
     tmp.write_text("\n".join(rows) + "\n", encoding="utf-8")
     (run / "code").write_text(str(code), encoding="utf-8")
-    run_end(run, opts, code, took, waited, killed, len(stopped))
+    run_end(run, opts, code, took, waited + load_wait, killed, len(stopped), load_wait)
     tempo_os.replace(tmp, run / "result.txt")  # last: its presence means the run is over
 
 
@@ -418,12 +518,13 @@ def main(argv=None):
     if not cmd:
         p.print_usage(sys.stderr); return 2
     task = task or a.task
-    heavy, steps = a.heavy, []
+    heavy, steps, limits = a.heavy, [], {}
     if task:
         try:
             cfg = json.loads(tempo_procs.cfg(Path(task).resolve().parent.parent, "resolve", "--format", "json"))
             heavy = decide_heavy(cmd, a.heavy, cfg["config"])
             steps = (cfg["config"].get("worktree") or {}).get("before_run") or []
+            limits = cfg["config"].get("limits") or {}
         except Exception:  # no config, or tempo_config.py cannot run here: the caller's flag decides, as before
             pass
     # a hung run ends on its own; the default clears a whole suite or package folder several times over under load
@@ -437,7 +538,7 @@ def main(argv=None):
     before = before_run(steps, os.getcwd())  # first, so TREE sees the tree the command runs on
     head, tidy = tree(os.getcwd())
     opts = {"label": label, "log": log.as_posix(), "heavy": heavy, "slots": a.slots, "tail": a.tail,
-            "timeout": a.timeout, "cmd": cmd, "cwd": os.getcwd(), "started": time.time(),
+            "timeout": a.timeout, "room": room_settings(limits), "cmd": cmd, "cwd": os.getcwd(), "started": time.time(),
             "task": os.path.abspath(task) if task else None, "head": head, "clean": tidy, "before": before}
     (run / "opts.json").write_text(json.dumps(opts), encoding="utf-8")
     owner = tempo_procs.find_owner()

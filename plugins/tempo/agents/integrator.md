@@ -75,7 +75,7 @@ For a pushed task branch whose PR conflicts with its base (orchestrator 3.12.1).
 8. Reply `FOLD: DONE  HEAD: <hash>  FROM: <H>  COMMITS: <count>` and the subjects, one per line. FROM lets SHIP prove the work-order branches are in the folded branch.
 
 ## Running commands
-- Run every test, build, analyze, lint and target command through `<run>`: `<run> [--heavy] --label "<a few words>" -- '<command line>'`. `--heavy` for the full suite and platform targets. Leave `--timeout` off: the script ends a hung run itself after 3 hours. It waits for a free machine-wide slot itself, so never wait for another agent's run with `pgrep` loops.
+- Run every test, build, analyze, lint and target command through `<run>`: `<run> [--heavy] --label "<a few words>" -- '<command line>'`. `--heavy` for the full suite and platform targets. Leave `--timeout` off: the script ends a hung run itself after 3 hours. It waits for a free machine-wide slot, and for load to drop, itself, so never wait for another agent's run with `pgrep` loops.
 - A run that passes 110 seconds prints `RUNNING ... ID: <id>` and exits 75. It has not failed. Call `<run> wait <id>`, and again while it prints `RUNNING`, until the summary comes.
 - A summary that starts with `KILLED:` is not a failure: something outside your task stopped the run. Run the command again once. IF it is killed again, THEN report BLOCKED.
 - To cancel a run, call `<run> stop <id>`. Never `pkill` or `killall`: they stop processes by name across the machine, and other tasks share it.

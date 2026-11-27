@@ -339,6 +339,24 @@
           "maximum": 500,
           "description": "Above this Spec size in KB, each Work Order carries the Spec terms and design bullets it needs, so the builder does not read the whole Spec. 0 turns it off."
         },
+        "heavy_max_load": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 64,
+          "description": "A heavy run (whole suite, platform target, app build) holding its slot waits while the 1-minute load average divided by the CPU count is above this. 0 turns the load check off. Windows has no load average and uses slots only. Env TEMPO_HEAVY_MAX_LOAD overrides it."
+        },
+        "heavy_min_free_mb": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1048576,
+          "description": "A heavy run also waits while free memory (Linux MemAvailable, macOS free + inactive + speculative pages) is under this many MB. 0 turns the memory check off. Env TEMPO_HEAVY_MIN_FREE_MB overrides it."
+        },
+        "heavy_load_wait_minutes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 240,
+          "description": "The longest a heavy run waits for load or memory; past it the run starts anyway and its summary says so. Env TEMPO_HEAVY_LOAD_WAIT_MINUTES overrides it."
+        },
         "ci_rounds": {
           "type": "integer",
           "minimum": 0,

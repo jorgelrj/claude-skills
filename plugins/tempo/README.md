@@ -568,3 +568,16 @@ Rules Jorge gave during a session ("from now on, run the API tests with make") s
 - **Check.** `tempo_config.py check` fails a scoped command that has no `{package}`.
 - **Upgrade order.** A config that sets either key fails `check` on 0.33 and older, so update every machine first.
 
+
+### Heavy runs wait for load (0.35.0)
+
+Heavy runs were capped only by a fixed number of slots, so a heavy run took a free slot even on a machine already saturated by other tasks' scoped runs, emulators, dev servers or work outside TEMPO. From 0.35.0:
+
+- **Load.** After it takes its slot, a heavy run waits while the 1-minute load average per CPU is above `limits.heavy_max_load` (default 1.5). It holds the slot while it waits, so the runs queued behind it do not all start the moment load drops. It starts as soon as load drops, with no restart. `STATE:` reads `waiting for load 14.2 / 10 CPUs`, and the summary adds the wait to `WAITED:` and names it in `WAITED FOR:`.
+- **Memory.** `limits.heavy_min_free_mb` (default 0, off) also holds a heavy run while free memory is under that many MB (Linux `MemAvailable`; macOS free, inactive and speculative pages). A run killed with 137 is more often out of memory than out of CPU.
+- **A cap.** After `limits.heavy_load_wait_minutes` (default 20) the run starts anyway, and `WAITED FOR:` ends with `started at the 20:00 cap`. A busy machine delays a run but never blocks it.
+- **Per machine.** Set the keys in `config.local.yaml`, or with `TEMPO_HEAVY_MAX_LOAD`, `TEMPO_HEAVY_MIN_FREE_MB` and `TEMPO_HEAVY_LOAD_WAIT_MINUTES`, which override the config. `check` validates them. 0 turns a check off. Windows has no load average, so it uses slots only.
+- **Scoped runs never wait.** test-one with files, typecheck and lint are short and are the builders' inner loop, so they keep running freely.
+- **Events.** `run-end` gains `load_wait`, the seconds spent waiting for load or memory, alongside `waited` (both waits) and `load1`.
+- **Defaults are a guess.** No `run-end` events from real runs were at hand when the defaults were chosen. Read `load1`, `waited`, `load_wait` and `killed` after some runs, and tune the keys.
+- **Upgrade order.** A config that sets any of these keys fails `check` on 0.34 and older, so update every machine first.
