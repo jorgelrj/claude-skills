@@ -3,19 +3,38 @@ run: final targets, tests.always and tests.slow, dupes and the space WARN, the c
 machine override file, sync merged, the qa surfaces, and worktree links kept out of commits, and distill.suggest_after.
 
 Run: python3 -m unittest discover -s <plugin>/tests -v
-The script needs PyYAML and jsonschema, so it runs the way the plugin runs it, with `uv run`.
+The script needs PyYAML and jsonschema. It runs the way tempo_procs.py runs it: `uv run --quiet` when uv is
+installed (uv brings both), else this Python, which then needs both installed. With neither, the class is
+skipped and one line on stderr says so, so `OK (skipped=N)` cannot hide it.
 Each test makes its own git repo in a temp folder.
 """
 import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 CONFIG = Path(__file__).resolve().parents[1] / "skills" / "config"
-UV = shutil.which("uv")
+
+
+def _runner():
+    """(command that runs tempo_config.py, None), or (None, why it cannot run here)."""
+    if shutil.which("uv"):
+        return ["uv", "run", "--quiet"], None
+    try:
+        import jsonschema, yaml  # noqa: F401
+    except ImportError as e:
+        return None, (f"the config tests did not run: uv is not installed and {e.name} cannot be imported "
+                      "(install uv, or `pip install pyyaml jsonschema`)")
+    return [sys.executable], None
+
+
+RUN, SKIP = _runner()
+if SKIP:
+    print(f"tempo: {SKIP}", file=sys.stderr)
 
 # A repo config as 0.21.0 accepted it: no gates block, one scoped advisory target and one with a whole command only.
 OLD = """\
@@ -53,7 +72,7 @@ task:
 WEB = "web\tcd app && flutter test --platform chrome test/foo_test.dart\tadvisory\n"
 
 
-@unittest.skipUnless(UV, "uv is not installed: tempo_config.py needs PyYAML and jsonschema, which `uv run` provides")
+@unittest.skipIf(SKIP, SKIP)
 class Config(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="tempo-config-test-")).resolve()
@@ -73,7 +92,7 @@ class Config(unittest.TestCase):
         (self.repo / ".tempo" / "config.yaml").write_text(text)
 
     def cfg(self, *args, code=0):
-        r = subprocess.run([UV, "run", "--quiet", str(CONFIG / "scripts" / "tempo_config.py"), "--repo", str(self.repo),
+        r = subprocess.run([*RUN, str(CONFIG / "scripts" / "tempo_config.py"), "--repo", str(self.repo),
                             *map(str, args)], capture_output=True, text=True, env=self.env)
         self.assertEqual(r.returncode, code, r.stdout + r.stderr)
         return r.stdout
@@ -304,7 +323,7 @@ class Config(unittest.TestCase):
         self.assertTrue(out["live"])
 
     def test_qa_falls_back_to_run_app_and_is_nil_without_either(self):
-        self.assertIn("NIL", subprocess.run([UV, "run", "--quiet", str(CONFIG / "scripts" / "tempo_config.py"), "--repo",
+        self.assertIn("NIL", subprocess.run([*RUN, str(CONFIG / "scripts" / "tempo_config.py"), "--repo",
                                              str(self.repo), "qa"], capture_output=True, text=True, env=self.env).stderr)
         self.qa(code=1)
         self.write(OLD.replace("commands:\n", "commands:\n  run_app: npm start\n"))

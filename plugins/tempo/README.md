@@ -168,7 +168,7 @@ tests/
   test_run.py      stopping a run, the kill guard, the heavy-slot decision, the KILLED line
   test_procs.py    who owns a process, the config helper, what a session's end marks as stopped
   test_state.py    the state lock, the QA counter, the SHIP entry, a state.json from 0.21.0
-  test_config.py   a config from 0.21.0, gates.full_bars: verify (runs through uv; skipped without it)
+  test_config.py   a config from 0.21.0, gates.full_bars: verify (through uv, else python3 with PyYAML and jsonschema)
   test_check_doc.py  the document checker, QA Method and evidence rules
 ```
 
@@ -533,3 +533,10 @@ Rules Jorge gave during a session ("from now on, run the API tests with make") s
 - **What it never touches.** `tempo_distill.py list` decides, and `apply` checks again: only a DONE task whose PR merged, a delivered plan, a slice of such a task, or a workspace task whose every repo task qualifies. Running, FAILED, ABORTED, open-PR, closed-unmerged and no-PR tasks stay, as does any task with a worktree left or a PR state gh cannot read.
 - **The suggestion.** A new key, `distill.suggest_after` (default 10, 0 = never), is how many finished sessions may pile up. When a task ends past it, the orchestrator says so in one line, once per pile (orchestrator §11). Distill runs only when Jorge calls it.
 - **Upgrade order.** A config that sets `distill:` fails `check` on 0.31 and older, so update every machine first.
+
+### Config tests run without uv (0.32.1)
+
+`tests/test_config.py` ran `tempo_config.py` only through `uv run` and skipped the whole class without uv, so a machine without it printed `OK (skipped=N)` and 20 config tests never ran. From 0.32.1:
+
+- **Same fallback as `tempo_procs.py`.** The tests run the script with `uv run --quiet` when uv is installed, else with the Python running the tests. `python3 -m unittest discover -s tests` needs either uv, or PyYAML and jsonschema importable by that `python3` (`pip install pyyaml jsonschema`).
+- **A skip says so.** With neither, the run prints one line on stderr, `tempo: the config tests did not run: uv is not installed and <module> cannot be imported`, before the summary.
