@@ -336,12 +336,17 @@ class Config(unittest.TestCase):
         self.assertIn("qa.surfaces.api.needs: 'coach-web' is not a surface listed before it", self.cfg("check", code=1))
 
     def test_distill_suggest_after(self):
-        self.assertEqual(json.loads(self.cfg("resolve"))["config"]["distill"], {"suggest_after": 10})
+        self.assertEqual(json.loads(self.cfg("resolve"))["config"]["distill"],
+                         {"suggest_after": 10, "abandoned_after_days": 30, "archive_days": 90})
         self.write(OLD + "distill:\n  suggest_after: 0\n")
         self.assertIn("PASS", self.cfg("check"))
         self.assertEqual(json.loads(self.cfg("resolve"))["config"]["distill"]["suggest_after"], 0)
         self.write(OLD + "distill:\n  suggest_after: -1\n")
         self.assertIn("suggest_after", self.cfg("check", code=1))
+        self.write(OLD + "distill:\n  abandoned_after_days: 0\n  archive_days: 0\n")
+        self.assertIn("PASS", self.cfg("check"))
+        self.write(OLD + "distill:\n  archive_days: -1\n")
+        self.assertIn("archive_days", self.cfg("check", code=1))
         self.write(OLD + "distill:\n  after: 5\n")
         self.assertIn("after", self.cfg("check", code=1))
 

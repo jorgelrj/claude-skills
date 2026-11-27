@@ -1,6 +1,6 @@
 ---
 name: distill
-description: Carries the rules Jorge gave in past TEMPO sessions into .tempo/rules.md, which every later run loads, and deletes or archives the finished session folders under .tempo/. Use when /tempo:distill runs, when the orchestrator saves a rule Jorge gives for every later task, or when asked which TEMPO rules are saved.
+description: Carries the rules Jorge gave in past TEMPO sessions into .tempo/rules.md, which every later run loads, deletes or archives the finished session folders under .tempo/, offers long-abandoned sessions and old archive folders for clearing with Jorge's approval. Use when /tempo:distill runs, when the orchestrator saves a rule Jorge gives for every later task, or when asked which TEMPO rules are saved.
 ---
 
 # TEMPO distill
@@ -27,8 +27,19 @@ description: Carries the rules Jorge gave in past TEMPO sessions into .tempo/rul
   - 2.2.2 its PR is merged (`gh pr view`), or it has no PR and is a delivered plan, a slice of a split task (it ships in its parent's PR), or a workspace task whose every repo task is ELIGIBLE;
   - 2.2.3 git lists no worktree of it;
   - 2.2.4 a parent and its slices go together: one KEPT keeps them all.
-2.3 Never touched: a running task, a FAILED or ABORTED task (it never shipped and can be resumed), a task with an open PR or a PR closed without merge, a DONE task with no PR, and any task whose PR state gh cannot tell.
-2.4 `<distill> apply` checks every task again and refuses the whole call when one is KEPT. Never delete or move a session folder any other way.
+2.3 Kept by default: a FAILED or ABORTED task (it never shipped and can be resumed), a task whose PR was closed without merge, and a DONE task with no PR. 2.5 offers them once they are old.
+2.4 Never touched at any age: a running task, a task with an open PR, any task whose PR state gh cannot tell, and any task with a worktree left.
+2.5 Abandoned. `list --abandoned-after <distill.abandoned_after_days>` prints a 2.3 session as ABANDONED, with its SOURCES, once nothing in its folder has been written for that many days. 0 never offers them. A parent and its slices still go together: KEPT beats ABANDONED beats ELIGIBLE.
+  - 2.5.1 Their rules count: read their SOURCES like an ELIGIBLE session's. A rule Jorge gave at a gate holds even when the PR died.
+  - 2.5.2 They are a separate list, and only Jorge's explicit yes to that list clears them. `--yes` never covers them.
+  - 2.5.3 `apply` takes them as `--abandoned <id>` with `--abandoned-after <days>`, never as `--task`, and always with `--archive`: one that can still be resumed is never deleted. A task written to since `list` (resumed) is refused.
+2.6 `<distill> apply` checks every task again and refuses the whole call when one is not allowed. Never delete or move a session folder any other way.
+
+## 2A The archive
+
+2A.1 `apply --archive` moves a folder to `.tempo/archive/<id>` and stamps it with `.archived` (the time it moved). A folder archived before 0.33.0 has no stamp; its last write counts instead.
+2A.2 `<distill> archive --days <distill.archive_days> --repo <repo>` prints `OLD <name> <age>d` for each folder archived that many days ago or more, then `TOTAL:`. 0 prints `ARCHIVE: PRUNING-OFF` and never deletes.
+2A.3 `archive --days <n> --delete <name> ...` deletes the named OLD folders, and refuses the whole call when one is not OLD. Only with Jorge's explicit yes to that list; `--yes` never covers it. Never delete an archive folder any other way.
 
 ## 3 The suggestion
 

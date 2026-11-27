@@ -94,6 +94,8 @@ limits:
 
 distill:
   suggest_after: 10             # finished sessions under .tempo/ before TEMPO suggests /tempo:distill once (0 = never)
+  abandoned_after_days: 30      # unshipped sessions idle this long: /tempo:distill offers them, with approval (0 = never)
+  archive_days: 90              # .tempo/archive/ folders this old: /tempo:distill offers to delete them (0 = never)
 
 task:
   id: ticket                    # ticket | sequence

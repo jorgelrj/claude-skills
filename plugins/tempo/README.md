@@ -40,7 +40,7 @@ After editing files here, restart Claude Code (Option A) or run `/plugin marketp
 | `/tempo:plan --offline <request>` | Skip the base fetch and use the local base branch as it is. Without it every command first fetches the base and fast-forwards it, or stops (0.20.0). Works on `/tempo:feature` and `/tempo:bug` too |
 | `/tempo:resume <task-id> [build \| answer]` | Continue a task from its last artifact, answer the question it is waiting on, or `build` a planned task |
 | `/tempo:sweep [--yes] [task-id]` | List processes TEMPO or a coding session left running (emulators, servers, watchers, Java stacks), with memory and age, and stop the ones you pick (0.17.0) |
-| `/tempo:distill [--yes] [--delete]` | Save the rules Jorge gave in finished sessions into `.tempo/rules.md`, which every later run loads, then archive (or delete) those session folders. Shows the rules and sessions first and waits for a yes. Never touches running or unshipped tasks, or tasks whose PR is still open (0.32.0) |
+| `/tempo:distill [--yes] [--delete]` | Save the rules Jorge gave in finished sessions into `.tempo/rules.md`, which every later run loads, then archive (or delete) those session folders. Shows the rules and sessions first and waits for a yes. Offers long-abandoned sessions and old `.tempo/archive/` folders in their own lists, only with an explicit yes (0.33.0). Never touches running tasks or tasks whose PR is still open (0.32.0) |
 | `/tempo:report [--task <id>] [--dry-run] <what went wrong>` | File a GitHub issue on the TEMPO repo about something TEMPO just did wrong, with the run's state, artifacts and transcript path attached; the task keeps going (0.19.0) |
 | `/tempo:dash [stop \| status] [folder]` | Start the local, read-only dashboard of running and recent tasks and print its URL; `stop` ends it (0.22.0) |
 | `/tempo:init [repo\|workspace] [notes]` | Write or update the TEMPO config for a repo or a multi-repo workspace, detected from the code |
@@ -547,3 +547,14 @@ Rules Jorge gave during a session ("from now on, run the API tests with make") s
 
 - **`apply` cleans up.** Before it archives or deletes a folder, it removes every registry record that points at that folder. An archived session gets no new record: the tag is the folder's path, and the archive is not a live task.
 - **Reading the registry prunes it.** `tempo_procs.py` drops the record of any folder that no longer exists when it reads the registry, so records left by a folder deleted by hand go too. A process still tagged with such a folder shows in `sweep` as LEFTOVER (`task UNREGISTERED`).
+
+### Abandoned sessions and the archive (0.33.0)
+
+`/tempo:distill` kept every FAILED, ABORTED, closed-unmerged and no-PR session forever, and never cleared `.tempo/archive/`, so both piled up with nothing offering to clear them (#24). From 0.33.0:
+
+- **Abandoned sessions.** A new key, `distill.abandoned_after_days` (default 30, 0 = never). A session that never shipped and whose folder has had no write for that long shows as ABANDONED in `tempo_distill.py list --abandoned-after <days>`. A running task, an open PR, a PR state gh cannot read and a task with a worktree left stay KEPT at any age; a parent and its slices still go together.
+- **Their rules count.** Distill reads an abandoned session's decisions, escalation answers, Task Card and PR body like a finished one's: a rule Jorge gave at a gate holds even when the PR died.
+- **Only with an explicit yes.** Abandoned sessions come in their own list, and `--yes` never covers it. `apply` takes them only as `--abandoned <id>` with `--abandoned-after`, never as `--task`, and always with `--archive` (one that can still be resumed is never deleted); it refuses one written to since `list`.
+- **Archive pruning.** A new key, `distill.archive_days` (default 90, 0 = never). `apply --archive` stamps each folder with `.archived`; `tempo_distill.py archive --days <n>` lists folders archived that long ago (a folder from before 0.33.0 counts from its last write), and `--delete <name> ...` deletes them. Distill shows them in their own list and deletes them only with an explicit yes.
+- **Upgrade order.** A config that sets either key fails `check` on 0.32 and older, so update every machine first.
+

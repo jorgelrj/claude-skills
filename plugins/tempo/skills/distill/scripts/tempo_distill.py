@@ -5,15 +5,24 @@ Standard library only, plus `gh` to read a PR's state. Only this script writes .
 and only it deletes or archives a session folder.
 
 Usage: tempo_distill.py <command> --repo R [args]
-  list     [--json]                      every session folder under R/.tempo (a folder with state.json):
+  list     [--abandoned-after D] [--json]
+                                         every session folder under R/.tempo (a folder with state.json):
                                          ELIGIBLE <id> <reason> | SOURCES: <files to read for rules>
+                                         ABANDONED <id> <reason> | SOURCES: ...   (only with D above 0)
                                          KEPT <id> <reason>
-                                         then TOTAL: <n> eligible, <n> kept
-  apply    --task ID ... (--delete | --archive)
-                                         checks every task again and refuses a KEPT one (exit 1, nothing
-                                         changes); deletes the folders, or moves them to .tempo/archive/<id>,
-                                         and removes their task-registry records (~/.cache/tempo/tasks, see
-                                         tempo_procs.py). Clears the DUE mark, so `due` can suggest distill again
+                                         then TOTAL: <n> eligible, <n> abandoned, <n> kept
+  apply    --task ID ... [--abandoned ID ... --abandoned-after D] (--delete | --archive)
+                                         checks every task again and refuses the whole call (exit 1, nothing
+                                         changes) when a --task is not ELIGIBLE, or an --abandoned is KEPT
+                                         (--abandoned needs --archive: it is never deleted);
+                                         deletes the folders, or moves them to .tempo/archive/<id> with an
+                                         .archived stamp, and removes their task-registry records
+                                         (~/.cache/tempo/tasks, see tempo_procs.py). Clears the DUE mark, so
+                                         `due` can suggest distill again
+  archive  --days N [--delete NAME ...]  OLD <name> <age>d for each folder under .tempo/archive/ archived N
+                                         or more days ago, then TOTAL: <n> archived, <n> older than N days.
+                                         N 0 prints ARCHIVE: PRUNING-OFF. --delete removes the named folders,
+                                         and refuses the whole call when one is not OLD
   due      --threshold N [--mark]        DISTILL: DUE <n> finished sessions (exit 0) once ELIGIBLE reaches N,
                                          else DISTILL: NOT-DUE (also when N is 0, or the mark is set).
                                          --mark records that Jorge was told, so DUE prints once per pile
@@ -31,6 +40,10 @@ Eligibility. A session is ELIGIBLE only when all of these hold:
   - git lists no linked worktree named after it (<id> or <id>-...);
   - it is not a child whose parent is under the same .tempo and KEPT, and no child under the same
     .tempo is KEPT (a parent and its slices go together).
+Abandoned. With --abandoned-after D above 0, a session that never shipped and that nothing has written
+for D days is ABANDONED instead of KEPT: FAILED or ABORTED, its PR closed without merge, or DONE with no PR.
+It still needs no linked worktree, and it goes with its parent and slices (KEPT beats ABANDONED beats
+ELIGIBLE). A running task, an open PR and a PR state gh cannot read are KEPT at any age.
 Everything else is KEPT with the reason. gh missing or failing keeps the task.
 Exit 0 ok, 1 error or refused, 3 duplicate rule.
 """
@@ -41,6 +54,8 @@ import re
 import shutil
 import subprocess
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 MAX_RULE = 200
@@ -50,6 +65,9 @@ HEADER = ("# TEMPO rules\n"
           "The orchestrator reads this file at the start of every run. Edit it with `rules add` and `rules drop`.\n\n")
 SOURCE_GLOBS = ("decisions.md", "esc-*.md", "task.md", "pr.md")
 MARK = ".distill-due"
+STAMP = ".archived"
+DAY = 86400
+RANK = {"ELIGIBLE": 0, "ABANDONED": 1, "KEPT": 2}
 
 
 def registry_dir():
@@ -108,54 +126,80 @@ def linked_worktrees(repo):
     return paths[1:]  # the first is the main checkout
 
 
-def own_verdict(repo, d, s, worktrees, depth=0):
-    """(eligible, reason) from the task's own state, before parent and child links."""
+def newest_write(d):
+    """Seconds since the epoch of the last write to any file in folder d (the folder itself if empty)."""
+    times = [d.stat().st_mtime]
+    for root, _, files in os.walk(d):
+        for f in files:
+            try:
+                times.append((Path(root) / f).stat().st_mtime)
+            except OSError:
+                continue
+    return max(times)
+
+
+def idle_days(d):
+    return int((time.time() - newest_write(d)) // DAY)
+
+
+def own_verdict(repo, d, s, worktrees, abandon_days=0, depth=0):
+    """(verdict, reason) from the task's own state, before parent and child links.
+    verdict is ELIGIBLE, ABANDONED or KEPT."""
     if s is None:
-        return False, "no readable state.json"
+        return "KEPT", "no readable state.json"
     stage, status = s.get("stage"), s.get("status")
+    unshipped = None  # the reason, when the task ended without shipping
     if status in ("FAILED", "ABORTED"):
-        return False, f"status {status}: never shipped, can be resumed"
-    if stage != "DONE" and status != "DONE":
-        return False, f"running: stage {stage}, status {status}"
+        unshipped = f"status {status}: never shipped, can be resumed"
+    elif stage != "DONE" and status != "DONE":
+        return "KEPT", f"running: stage {stage}, status {status}"
     left = [w for w in worktrees if w.name == d.name or w.name.startswith(d.name + "-")]
     if left:
-        return False, f"worktree still there: {left[0]}"
-    pr = s.get("pr")
-    if pr:
-        state, err = pr_state(repo, pr)
-        if err:
-            return False, f"PR state unknown ({err})"
-        if state == "MERGED":
-            return True, "done, PR merged"
-        if state == "CLOSED":
-            return False, f"PR closed without merge: never shipped: {pr}"
-        return False, f"PR still {state or 'unknown'}: {pr}"
-    if s.get("parent"):
-        return True, "done, ships with its parent"
-    if s.get("children") and depth < 3:
-        for name, ch in s["children"].items():
-            cd = Path(ch.get("folder", ""))
-            if not cd.is_dir():
-                continue
-            crepo = cd.parent.parent
-            ok, why = own_verdict(crepo, cd, load(cd), linked_worktrees(crepo), depth + 1)
-            if not ok:
-                return False, f"child {name} is kept: {why}"
-        return True, "done, every child shipped"
-    if s.get("mode") == "PLAN-ONLY":
-        return True, "done, plan delivered"
-    return False, "done but no PR: never shipped"
+        return "KEPT", f"worktree still there: {left[0]}"
+    if unshipped is None:
+        pr = s.get("pr")
+        if pr:
+            state, err = pr_state(repo, pr)
+            if err:
+                return "KEPT", f"PR state unknown ({err})"
+            if state == "MERGED":
+                return "ELIGIBLE", "done, PR merged"
+            if state != "CLOSED":
+                return "KEPT", f"PR still {state or 'unknown'}: {pr}"
+            unshipped = f"PR closed without merge: never shipped: {pr}"
+        elif s.get("parent"):
+            return "ELIGIBLE", "done, ships with its parent"
+        elif s.get("children") and depth < 3:
+            worst = ("ELIGIBLE", "done, every child shipped")
+            for name, ch in s["children"].items():
+                cd = Path(ch.get("folder", ""))
+                if not cd.is_dir():
+                    continue
+                crepo = cd.parent.parent
+                v, why = own_verdict(crepo, cd, load(cd), linked_worktrees(crepo), abandon_days, depth + 1)
+                if RANK[v] > RANK[worst[0]]:
+                    worst = (v, f"child {name} is {v.lower()}: {why}")
+            return worst
+        elif s.get("mode") == "PLAN-ONLY":
+            return "ELIGIBLE", "done, plan delivered"
+        else:
+            unshipped = "done but no PR: never shipped"
+    idle = idle_days(d)
+    if abandon_days > 0 and idle >= abandon_days:
+        return "ABANDONED", f"{unshipped}; idle {idle} days"
+    return "KEPT", unshipped
 
 
-def sessions(repo):
-    """[(id, dir, eligible, reason)] for every folder under .tempo with a state.json, sorted by id."""
+def sessions(repo, abandon_days=0):
+    """[(id, dir, verdict, reason)] for every folder under .tempo with a state.json, sorted by id.
+    verdict is ELIGIBLE, ABANDONED (only when abandon_days is above 0) or KEPT."""
     root = tempo(repo)
     if not root.is_dir():
         return []
     dirs = sorted(e for e in root.iterdir() if e.is_dir() and (e / "state.json").exists())
     states = {d.name: load(d) for d in dirs}
     wts = linked_worktrees(repo)
-    verdict = {d.name: own_verdict(repo, d, states[d.name], wts) for d in dirs}
+    verdict = {d.name: own_verdict(repo, d, states[d.name], wts, abandon_days) for d in dirs}
     parent_of = {}
     for d in dirs:
         p = (states[d.name] or {}).get("parent")
@@ -164,12 +208,13 @@ def sessions(repo):
             if pp.resolve().parent == root.resolve() and pp.name in verdict:
                 parent_of[d.name] = pp.name
     changed = True
-    while changed:  # a KEPT parent keeps its children, a KEPT child keeps its parent
+    while changed:  # a parent and its slices take the worst verdict of the group: KEPT, then ABANDONED
         changed = False
         for child, parent in parent_of.items():
-            for a, b, why in ((child, parent, f"parent {parent} is kept"), (parent, child, f"child {child} is kept")):
-                if verdict[a][0] and not verdict[b][0]:
-                    verdict[a] = (False, why)
+            for a, b, who in ((child, parent, f"parent {parent}"), (parent, child, f"child {child}")):
+                v = verdict[b][0]
+                if RANK[verdict[a][0]] < RANK[v]:
+                    verdict[a] = (v, f"{who} is {v.lower()}")
                     changed = True
     return [(d.name, d, *verdict[d.name]) for d in dirs]
 
@@ -181,34 +226,44 @@ def sources(d):
     return list(dict.fromkeys(found))
 
 
-def cmd_list(repo, as_json):
-    rows = sessions(repo)
+def cmd_list(repo, abandon_days, as_json):
+    rows = sessions(repo, abandon_days)
     if as_json:
-        print(json.dumps([{"id": i, "eligible": ok, "reason": why, "sources": sources(d) if ok else []}
-                          for i, d, ok, why in rows], indent=2))
+        print(json.dumps([{"id": i, "verdict": v, "eligible": v == "ELIGIBLE", "reason": why,
+                           "sources": sources(d) if v != "KEPT" else []}
+                          for i, d, v, why in rows], indent=2))
         return 0
-    for i, d, ok, why in rows:
-        if ok:
-            print(f"ELIGIBLE {i} {why}")
-            print(f"  SOURCES: {' '.join(str(d / f) for f in sources(d)) or 'NIL'}")
-    for i, d, ok, why in rows:
-        if not ok:
-            print(f"KEPT {i} {why}")
-    n = sum(1 for r in rows if r[2])
-    print(f"TOTAL: {n} eligible, {len(rows) - n} kept")
+    for kind in ("ELIGIBLE", "ABANDONED", "KEPT"):
+        for i, d, v, why in rows:
+            if v == kind:
+                print(f"{v} {i} {why}")
+                if v != "KEPT":
+                    print(f"  SOURCES: {' '.join(str(d / f) for f in sources(d)) or 'NIL'}")
+    n = {k: sum(1 for r in rows if r[2] == k) for k in RANK}
+    print(f"TOTAL: {n['ELIGIBLE']} eligible, {n['ABANDONED']} abandoned, {n['KEPT']} kept")
     return 0
 
 
-def cmd_apply(repo, tasks, archive):
-    rows = {i: (d, ok, why) for i, d, ok, why in sessions(repo)}
-    bad = [f"REFUSED {t}: {'no such session' if t not in rows else rows[t][2]}"
-           for t in tasks if t not in rows or not rows[t][1]]
+def cmd_apply(repo, tasks, abandoned, abandon_days, archive):
+    if abandoned and (abandon_days <= 0 or not archive):
+        print("REFUSED: --abandoned needs --abandoned-after D above 0 (distill.abandoned_after_days) and --archive:"
+              " an abandoned session can still be resumed, so it is archived, never deleted")
+        print("Nothing was changed.")
+        return 1
+    rows = {i: (d, v, why) for i, d, v, why in sessions(repo, abandon_days if abandoned else 0)}
+    bad = []
+    for t, allowed in [(t, ("ELIGIBLE",)) for t in tasks] + [(t, ("ELIGIBLE", "ABANDONED")) for t in abandoned]:
+        if t not in rows:
+            bad.append(f"REFUSED {t}: no such session")
+        elif rows[t][1] not in allowed:
+            why = rows[t][2] + (" (abandoned: pass it with --abandoned)" if rows[t][1] == "ABANDONED" else "")
+            bad.append(f"REFUSED {t}: {why}")
     if bad:
         print("\n".join(bad))
         print("Nothing was changed.")
         return 1
     root = tempo(repo)
-    for t in dict.fromkeys(tasks):
+    for t in dict.fromkeys(tasks + abandoned):
         d = rows[t][0]
         unregister(d)  # the tag is the folder's path: a moved or deleted folder leaves its record stale
         if archive:
@@ -219,6 +274,8 @@ def cmd_apply(repo, tasks, archive):
                 n += 1
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(d), str(dest))
+            (dest / STAMP).write_text(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") + "\n",
+                                      encoding="utf-8")
             print(f"ARCHIVED {t} -> {dest}")
         else:
             shutil.rmtree(d)
@@ -234,8 +291,55 @@ def cmd_due(repo, threshold, mark):
         (root / MARK).write_text("suggested\n", encoding="utf-8")
         print("DISTILL: MARKED")
         return 0
-    n = sum(1 for r in sessions(repo) if r[2]) if threshold > 0 and not (root / MARK).exists() else 0
+    n = sum(1 for r in sessions(repo) if r[2] == "ELIGIBLE") if threshold > 0 and not (root / MARK).exists() else 0
     print(f"DISTILL: DUE {n} finished sessions" if threshold > 0 and n >= threshold else "DISTILL: NOT-DUE")
+    return 0
+
+
+def archived_at(d):
+    """When folder d moved to the archive: its .archived stamp, else its last write (archived before 0.33.0)."""
+    try:
+        text = (d / STAMP).read_text(encoding="utf-8").strip()
+        return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+    except (OSError, ValueError):
+        return newest_write(d)
+
+
+def old_archives(repo, days):
+    """([(name, age in days)] older than days, how many archived folders there are)."""
+    root = tempo(repo) / "archive"
+    dirs = sorted(e for e in root.iterdir() if e.is_dir()) if root.is_dir() else []
+    ages = [(d.name, int((time.time() - archived_at(d)) // DAY)) for d in dirs]
+    return [(n, a) for n, a in ages if a >= days], len(dirs)
+
+
+def cmd_archive(repo, days, delete):
+    if days <= 0:
+        print("ARCHIVE: PRUNING-OFF (distill.archive_days is 0)")
+        if delete:
+            print("REFUSED: nothing is deleted while pruning is off")
+            return 1
+        return 0
+    old, total = old_archives(repo, days)
+    if delete:
+        names, bad = dict(old), []
+        for n in delete:
+            if n not in names:  # only plain folder names under archive/ are ever in `old`
+                where = tempo(repo) / "archive" / n
+                plain = "/" not in n and n not in (".", "..")
+                why = "not in .tempo/archive" if not plain or not where.is_dir() else f"archived under {days} days ago"
+                bad.append(f"REFUSED {n}: {why}")
+        if bad:
+            print("\n".join(bad))
+            print("Nothing was changed.")
+            return 1
+        for n in dict.fromkeys(delete):
+            shutil.rmtree(tempo(repo) / "archive" / n)
+            print(f"DELETED archive/{n}")
+        return 0
+    for n, a in old:
+        print(f"OLD {n} {a}d")
+    print(f"TOTAL: {total} archived, {len(old)} older than {days} days")
     return 0
 
 
@@ -297,11 +401,17 @@ def main(argv=None):
     sub = p.add_subparsers(dest="cmd", required=True)
     ls = sub.add_parser("list")
     ls.add_argument("--json", action="store_true")
+    ls.add_argument("--abandoned-after", type=int, default=0, metavar="DAYS")
     ap = sub.add_parser("apply")
-    ap.add_argument("--task", action="append", required=True)
+    ap.add_argument("--task", action="append", default=[])
+    ap.add_argument("--abandoned", action="append", default=[], metavar="ID")
+    ap.add_argument("--abandoned-after", type=int, default=0, metavar="DAYS")
     how = ap.add_mutually_exclusive_group(required=True)
     how.add_argument("--delete", action="store_true")
     how.add_argument("--archive", action="store_true")
+    ar = sub.add_parser("archive")
+    ar.add_argument("--days", type=int, required=True)
+    ar.add_argument("--delete", nargs="+", default=[], metavar="NAME")
     du = sub.add_parser("due")
     du.add_argument("--threshold", type=int, default=0)
     du.add_argument("--mark", action="store_true")
@@ -313,15 +423,19 @@ def main(argv=None):
     ra.add_argument("--from", dest="source")
     rd = rs.add_parser("drop")
     rd.add_argument("numbers", type=int, nargs="+")
-    for sp in (ls, ap, du, ru):
+    for sp in (ls, ap, ar, du, ru):
         sp.add_argument("--repo", default=".")
     for sp in (rs.choices.values()):
         sp.add_argument("--repo", default=argparse.SUPPRESS)
     a = p.parse_args(argv)
     if a.cmd == "list":
-        return cmd_list(a.repo, a.json)
+        return cmd_list(a.repo, a.abandoned_after, a.json)
     if a.cmd == "apply":
-        return cmd_apply(a.repo, a.task, a.archive)
+        if not a.task and not a.abandoned:
+            p.error("apply needs --task or --abandoned")
+        return cmd_apply(a.repo, a.task, a.abandoned, a.abandoned_after, a.archive)
+    if a.cmd == "archive":
+        return cmd_archive(a.repo, a.days, a.delete)
     if a.cmd == "due":
         return cmd_due(a.repo, a.threshold, a.mark)
     return cmd_rules(a.repo, a)

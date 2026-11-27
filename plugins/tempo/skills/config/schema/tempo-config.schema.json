@@ -257,6 +257,18 @@
           "minimum": 0,
           "maximum": 1000,
           "description": "Finished sessions (DONE, PR merged, or a plan delivered) under .tempo/ before the orchestrator suggests /tempo:distill, once per pile, at the end of a task. 0 never suggests it."
+        },
+        "abandoned_after_days": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3650,
+          "description": "Days with no write to a session folder before /tempo:distill offers a session that never shipped (FAILED, ABORTED, PR closed without merge, DONE with no PR) in its own list, archived only with Jorge's explicit approval. 0 never offers them."
+        },
+        "archive_days": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3650,
+          "description": "Days since a folder moved to .tempo/archive/ before /tempo:distill offers to delete it, with Jorge's approval. 0 never prunes the archive."
         }
       }
     },

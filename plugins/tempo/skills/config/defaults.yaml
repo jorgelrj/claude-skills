@@ -72,6 +72,8 @@ limits:
   spec_slice_kb: 30       # Spec larger than this: each order carries the terms and design it needs (0 = off)
 distill:
   suggest_after: 10       # finished sessions under .tempo/ before the orchestrator suggests /tempo:distill once (0 = never)
+  abandoned_after_days: 30  # FAILED, ABORTED, closed-unmerged or no-PR sessions idle this long are offered to clear, with approval (0 = never)
+  archive_days: 90        # folders in .tempo/archive/ this old are offered for deletion, with approval (0 = never)
 task:
   id: ticket
   ticket_pattern: "[A-Z][A-Z0-9]+-\\d+"

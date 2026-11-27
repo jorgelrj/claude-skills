@@ -1,4 +1,5 @@
-"""Tests for tempo_distill.py: which sessions distill may clear, apply, the DUE suggestion and rules.md.
+"""Tests for tempo_distill.py: which sessions distill may clear, abandoned sessions, apply, archive pruning,
+the DUE suggestion and rules.md.
 
 Run: python3 -m unittest discover -s <plugin>/tests -v
 """
@@ -9,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -78,8 +80,17 @@ class Base(unittest.TestCase):
             code = td.main([*args, "--repo", str(self.repo)])
         return code, out.getvalue()
 
-    def verdicts(self):
-        return {i: (ok, why) for i, _, ok, why in td.sessions(self.repo)}
+    def verdicts(self, days=0):
+        return {i: (v == "ELIGIBLE", why) for i, _, v, why in td.sessions(self.repo, days)}
+
+    def kinds(self, days):
+        return {i: v for i, _, v, _ in td.sessions(self.repo, days)}
+
+    def age(self, d, days):
+        """Make every file in d look last written `days` days ago."""
+        t = time.time() - days * td.DAY - 60
+        for f in [d, *d.rglob("*")]:
+            os.utime(f, (t, t))
 
 
 class Eligibility(Base):
@@ -161,7 +172,7 @@ class Eligibility(Base):
         self.assertIn("esc-1.md", out)
         self.assertNotIn("spec.md", out)
         self.assertIn("KEPT T-002 running", out)
-        self.assertIn("TOTAL: 1 eligible, 1 kept", out)
+        self.assertIn("TOTAL: 1 eligible, 0 abandoned, 1 kept", out)
 
 
 class Apply(Base):
@@ -214,6 +225,138 @@ class Apply(Base):
         code, out = self.run_cli("apply", "--task", "T-404", "--delete")
         self.assertEqual(code, 1)
         self.assertIn("no such session", out)
+
+
+class Abandoned(Base):
+    def unshipped(self):
+        return [self.task("T-003", pr="https://x/pull/3", pr_state="CLOSED"),
+                self.task("T-005", stage="QA", status="ABORTED"),
+                self.task("T-006", stage="BUILD", status="FAILED"),
+                self.task("T-007")]
+
+    def test_old_unshipped_sessions_are_abandoned_only_past_the_age(self):
+        old = self.unshipped()
+        for d in old:
+            self.age(d, 40)
+        self.age(self.task("T-002", pr="https://x/pull/2", pr_state="OPEN"), 400)
+        self.age(self.task("T-004", stage="BUILD", status="RUNNING"), 400)
+        self.age(self.task("T-009", pr="https://x/pull/9"), 400)  # gh does not know it
+        self.task("T-010", stage="BUILD", status="FAILED")  # failed today
+        k = self.kinds(30)
+        self.assertEqual({i for i, v in k.items() if v == "ABANDONED"}, {"T-003", "T-005", "T-006", "T-007"})
+        self.assertEqual({i for i, v in k.items() if v == "KEPT"}, {"T-002", "T-004", "T-009", "T-010"})
+        self.assertEqual(set(self.kinds(0).values()), {"KEPT"})  # 0: never offered
+        self.assertEqual(self.kinds(41)["T-006"], "KEPT")
+        _, why = self.verdicts(30)["T-006"]
+        self.assertIn("FAILED", why)
+        self.assertIn("idle 40 days", why)
+
+    def test_a_worktree_keeps_an_abandoned_task(self):
+        d = self.task("T-006", stage="BUILD", status="FAILED")
+        self.age(d, 40)
+        subprocess.run(["git", "-C", str(self.repo), "worktree", "add", "-q", "--detach",
+                        str(self.tmp / "wt" / "T-006-wo-01")], check=True)
+        self.assertEqual(self.kinds(30)["T-006"], "KEPT")
+
+    def test_slices_of_an_abandoned_parent_are_abandoned(self):
+        self.age(self.task("T-001", stage="BUILD", status="FAILED"), 40)
+        self.task("T-001-s1", parent="T-001")
+        k = self.kinds(30)
+        self.assertEqual(k, {"T-001": "ABANDONED", "T-001-s1": "ABANDONED"})
+        self.assertIn("parent T-001 is abandoned", self.verdicts(30)["T-001-s1"][1])
+
+    def test_a_running_slice_keeps_an_abandoned_parent(self):
+        self.age(self.task("T-001", stage="BUILD", status="FAILED"), 40)
+        self.task("T-001-s1", stage="BUILD", status="RUNNING", parent="T-001")
+        self.assertEqual(set(self.kinds(30).values()), {"KEPT"})
+
+    def test_list_shows_abandoned_with_sources(self):
+        self.age(self.task("T-006", stage="BUILD", status="FAILED", files=("decisions.md", "esc-1.md")), 40)
+        self.task("T-001", pr="https://x/pull/1", pr_state="MERGED")
+        code, out = self.run_cli("list", "--abandoned-after", "30")
+        self.assertEqual(code, 0)
+        self.assertIn("ABANDONED T-006 status FAILED", out)
+        self.assertIn("esc-1.md", out.split("ABANDONED T-006")[1])
+        self.assertIn("TOTAL: 1 eligible, 1 abandoned, 0 kept", out)
+        self.assertIn("KEPT T-006", self.run_cli("list")[1])
+        rows = json.loads(self.run_cli("list", "--abandoned-after", "30", "--json")[1])
+        self.assertEqual({r["id"]: r["verdict"] for r in rows}, {"T-001": "ELIGIBLE", "T-006": "ABANDONED"})
+
+    def test_apply_needs_the_abandoned_flag_for_each_one(self):
+        d = self.task("T-006", stage="BUILD", status="FAILED")
+        self.age(d, 40)
+        code, out = self.run_cli("apply", "--task", "T-006", "--abandoned-after", "30", "--archive")
+        self.assertEqual(code, 1)
+        self.assertIn("REFUSED T-006", out)
+        code, out = self.run_cli("apply", "--abandoned", "T-006", "--archive")
+        self.assertEqual(code, 1)
+        self.assertIn("--abandoned-after", out)
+        code, out = self.run_cli("apply", "--abandoned", "T-006", "--abandoned-after", "30", "--delete")
+        self.assertEqual(code, 1)
+        self.assertIn("never deleted", out)
+        self.assertTrue(d.exists())
+        code, out = self.run_cli("apply", "--abandoned", "T-006", "--abandoned-after", "30", "--archive")
+        self.assertEqual(code, 0, out)
+        self.assertTrue((self.root / "archive" / "T-006" / "state.json").exists())
+        self.assertFalse(d.exists())
+
+    def test_apply_refuses_an_abandoned_task_that_came_back(self):
+        d = self.task("T-006", stage="BUILD", status="FAILED")
+        self.age(d, 40)
+        (d / "decisions.md").write_text("resumed today\n")
+        code, out = self.run_cli("apply", "--abandoned", "T-006", "--abandoned-after", "30", "--archive")
+        self.assertEqual(code, 1)
+        self.assertIn("REFUSED T-006", out)
+        self.assertTrue(d.exists())
+
+
+class ArchivePrune(Base):
+    def archive(self, tid, days):
+        self.task(tid, pr=f"https://x/pull/{tid}", pr_state="MERGED", files=("decisions.md",))
+        self.assertEqual(self.run_cli("apply", "--task", tid, "--archive")[0], 0)
+        d = self.root / "archive" / tid
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - days * td.DAY - 60))
+        (d / td.STAMP).write_text(stamp + "\n")
+        return d
+
+    def test_lists_and_deletes_only_old_archives(self):
+        old = self.archive("T-001", 100)
+        new = self.archive("T-002", 5)
+        legacy = self.root / "archive" / "T-000"  # archived before the stamp existed
+        legacy.mkdir()
+        (legacy / "state.json").write_text("{}")
+        self.age(legacy, 200)
+        code, out = self.run_cli("archive", "--days", "90")
+        self.assertEqual(code, 0)
+        self.assertIn("OLD T-001 100d", out)
+        self.assertIn("OLD T-000 200d", out)
+        self.assertNotIn("T-002", out)
+        self.assertIn("TOTAL: 3 archived, 2 older than 90 days", out)
+        code, out = self.run_cli("archive", "--days", "90", "--delete", "T-001", "T-002")
+        self.assertEqual(code, 1)
+        self.assertIn("REFUSED T-002: archived under 90 days ago", out)
+        self.assertTrue(old.exists() and new.exists())
+        code, out = self.run_cli("archive", "--days", "90", "--delete", "T-001", "T-000")
+        self.assertEqual(code, 0)
+        self.assertFalse(old.exists() or legacy.exists())
+        self.assertTrue(new.exists())
+
+    def test_refuses_names_outside_the_archive(self):
+        self.archive("T-001", 100)
+        for bad in ("../T-001", "..", "T-404"):
+            code, out = self.run_cli("archive", "--days", "90", "--delete", bad)
+            self.assertEqual(code, 1, bad)
+            self.assertIn("not in .tempo/archive", out)
+        self.assertTrue(self.root.exists())
+
+    def test_zero_turns_pruning_off(self):
+        self.archive("T-001", 1000)
+        self.assertIn("PRUNING-OFF", self.run_cli("archive", "--days", "0")[1])
+        self.assertEqual(self.run_cli("archive", "--days", "0", "--delete", "T-001")[0], 1)
+        self.assertTrue((self.root / "archive" / "T-001").exists())
+
+    def test_no_archive_folder(self):
+        self.assertIn("TOTAL: 0 archived, 0 older than 90 days", self.run_cli("archive", "--days", "90")[1])
 
 
 class Due(Base):

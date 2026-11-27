@@ -86,6 +86,8 @@ qa:
 ```
 
 2.9 Distill. `distill.suggest_after` (default 10) is how many finished sessions may pile up under `.tempo/` before the orchestrator suggests `/tempo:distill`, once per pile, at the end of a task. 0 never suggests it. A finished session is one `/tempo:distill` may clear: DONE with its PR merged, or a plan delivered (the distill skill, §2).
+  - 2.9.1 `distill.abandoned_after_days` (default 30): a session that never shipped (FAILED, ABORTED, PR closed without merge, DONE with no PR) and has had no write for this many days is offered by `/tempo:distill` in its own list, cleared only with Jorge's explicit yes. 0 never offers them.
+  - 2.9.2 `distill.archive_days` (default 90): folders in `.tempo/archive/` archived this many days ago are offered for deletion, with Jorge's explicit yes. 0 never prunes the archive.
 
 ## 3 The script
 
