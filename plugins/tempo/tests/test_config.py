@@ -1,6 +1,6 @@
 """Tests for tempo_config.py: a config written for 0.21.0 still passes, gates.full_bars: verify, task.trackers,
 run: final targets, tests.always and tests.slow, dupes and the space WARN, the ci tier, run: ci targets, the
-machine override file, sync merged and the qa surfaces.
+machine override file, sync merged, the qa surfaces, and worktree links kept out of commits.
 
 Run: python3 -m unittest discover -s <plugin>/tests -v
 The script needs PyYAML and jsonschema, so it runs the way the plugin runs it, with `uv run`.
@@ -63,6 +63,7 @@ class Config(unittest.TestCase):
         for f in ("app/pubspec.yaml", "app/lib/foo.dart", "app/test/foo_test.dart", ".tempo/config.yaml"):
             (self.repo / f).parent.mkdir(parents=True, exist_ok=True)
             (self.repo / f).write_text("")
+        (self.repo / ".gitignore").write_text(".fvm\n")  # OLD links app/.fvm, which a real repo ignores
         subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
         subprocess.run(["git", "-C", str(self.repo), "add", "app"], check=True)  # targets reads the tracked files
         self.write(OLD)
@@ -298,6 +299,47 @@ class Config(unittest.TestCase):
         self.assertIn("port", self.cfg("check", code=1))
         self.write(OLD + QA.replace("kind: service", "kind: database"))
         self.assertIn("'database' is not one of", self.cfg("check", code=1))
+
+    def test_check_flags_a_link_ignored_only_as_a_folder(self):
+        self.write(OLD.replace("link: [app/.fvm]", "link: [app/.fvm, node_modules/]"))
+        (self.repo / "node_modules").mkdir()  # the real folder in the checkout matches `node_modules/`; the link would not
+        (self.repo / ".gitignore").write_text(".fvm\nnode_modules/\n")
+        warns = [l for l in self.cfg("check").splitlines() if l.startswith("WARN")]
+        self.assertEqual(warns, ["WARN: worktree.link node_modules: .gitignore ignores it only as a folder (`node_modules/`), "
+                                 "so the symlink a worktree gets is not ignored and `git add -A` there stages it; "
+                                 "write `node_modules` without the slash"])
+        (self.repo / ".gitignore").write_text(".fvm\nnode_modules\n")
+        self.assertNotIn("WARN", self.cfg("check"))
+        (self.repo / ".gitignore").write_text(".fvm\n")
+        self.assertIn("WARN: worktree.link node_modules is not git-ignored", self.cfg("check"))
+        (self.repo / "app" / ".gitignore").write_text("/node_modules\n")  # a nested .gitignore counts for a nested link
+        self.write(OLD.replace("link: [app/.fvm]", "link: [app/.fvm, app/node_modules]"))
+        self.assertNotIn("WARN", self.cfg("check"))
+
+    def test_a_worktree_commit_never_holds_a_link_or_copy_whatever_gitignore_says(self):
+        git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.test"]
+        self.write(OLD.replace("link: [app/.fvm]", "link: [node_modules, app/.fvm]\n  copy: [.env.local]"))
+        for f in ("node_modules/pkg/index.js", "app/.fvm/flutter_sdk", ".env.local"):
+            (self.repo / f).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / f).write_text("x")
+        for ignore in ("node_modules/\n.fvm/\n", ""):  # the slash form, then no ignore rule at all
+            (self.repo / ".gitignore").write_text(ignore)
+            subprocess.run([*git, "-C", str(self.repo), "add", ".gitignore", "app"], check=True)
+            subprocess.run([*git, "-C", str(self.repo), "commit", "-qm", "base", "--allow-empty"], check=True)
+            wt = self.tmp / f"wt-{len(ignore)}"
+            subprocess.run([*git, "-C", str(self.repo), "worktree", "add", "-q", "--detach", str(wt)], check=True)
+            for _ in range(2):  # run twice: the exclude lines are written once
+                steps = self.cfg("setup", "--worktree", wt)
+                subprocess.run(["sh", "-ec", steps], check=True, cwd=self.repo, env=self.env)
+            self.assertTrue((wt / "node_modules").is_symlink())
+            (wt / "app" / "lib" / "foo.dart").write_text("changed")
+            subprocess.run([*git, "-C", str(wt), "add", "-A"], check=True)
+            staged = subprocess.run([*git, "-C", str(wt), "diff", "--cached", "--name-only"], capture_output=True,
+                                    text=True, check=True).stdout.split()
+            self.assertEqual(staged, ["app/lib/foo.dart"])
+            exclude = (self.repo / ".git" / "info" / "exclude").read_text().splitlines()
+            self.assertEqual([l for l in exclude if not l.startswith("#")], ["/node_modules", "/app/.fvm", "/.env.local"])
+
 
 
 QA = """\

@@ -411,6 +411,15 @@ From PD-47 in pod1um: Flutter runs in a task worktree leave plugin sources under
 - A step that fails prints `BEFORE RUN: exit <n>: <step>` in the summary. The command runs anyway.
 - **Upgrade order.** A config that sets `worktree.before_run` fails `check` on 0.26.0 and older, so update every machine first.
 
+### Worktree links stay out of commits (0.30.3)
+
+`worktree.link: [node_modules]` puts a symlink in each worktree, and the common `.gitignore` line `node_modules/` matches only a folder. On tempo-bench (TB-2 and a `/tempo:feature` run) a builder's `git add -A` committed the link, and it had to be removed and the report rewritten. From 0.30.3:
+
+- **Setup.** `<cfg> setup` first adds every `worktree.link` and `worktree.copy` path to the repo's `info/exclude`, anchored and without a slash, so `git add -A` in any worktree skips them whatever `.gitignore` says.
+- **Builders and the integrator.** They stage by path, never `git add -A`, `git add .` or `git commit -a`, and check the staged list and the merged diff for keep-out paths. The orchestrator's scope check sends such a path back to the builder to drop, not to the architect.
+- **Check.** `tempo_config.py check` warns when a `worktree.link` path is ignored only as a folder (`node_modules/`) or not at all, and suggests the form without the slash.
+- **Init.** `/tempo:init` makes link ignores symlink-safe and says to exclude `.tempo/**` from a test runner that walks the repo (vitest, jest, pytest), since worktrees live under `.tempo/worktrees/`.
+
 ### A Done-when step is never dropped (0.30.2)
 
 On TP-62 the Done-when said a table is "posted on #92". Triage assumed posting was outside the sandbox and made the output a file for Jorge to post, the work order's OUT said "Nothing is posted to GitHub", and QA passed the card with the step "left to the owner". `gh` worked in the sandbox all along. From 0.30.2:
