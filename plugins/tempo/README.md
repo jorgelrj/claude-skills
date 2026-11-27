@@ -411,6 +411,16 @@ From PD-47 in pod1um: Flutter runs in a task worktree leave plugin sources under
 - A step that fails prints `BEFORE RUN: exit <n>: <step>` in the summary. The command runs anyway.
 - **Upgrade order.** A config that sets `worktree.before_run` fails `check` on 0.26.0 and older, so update every machine first.
 
+### A Done-when step is never dropped (0.30.2)
+
+On TP-62 the Done-when said a table is "posted on #92". Triage assumed posting was outside the sandbox and made the output a file for Jorge to post, the work order's OUT said "Nothing is posted to GitHub", and QA passed the card with the step "left to the owner". `gh` worked in the sandbox all along. From 0.30.2:
+
+- **Triage.** The Task Card lists each Done-when step as `DW-n` (§4), outside actions included. No assumption drops, shrinks or reassigns one. A step triage thinks it cannot do is checked read-only first (`gh auth status`, `gh issue view`); if it still cannot, Outcome is not PRESENT and Jorge gets a NEEDS-JORGE question (rubric 2.10).
+- **Architect.** Every `DW-n` maps to a criterion or a named later stage (Ship) in a Done-when map; an outside action is a criterion with its own Live line. Out of scope and an order's OUT never remove a step.
+- **QA.** The report walks every `DW-n`. A step nobody did is FAIL; "left to the owner" is never a PASS.
+- **Checker.** `check_doc.py` rule DONEWHEN fails a QA report that skips a Task Card step, passes one with no passing `By: AC-n`, or hands one to Jorge or the owner.
+- The Done gate on the board is app-side (jorgelrj/TEMPO#107).
+
 ### Findings say whether a MEDIUM blocks (0.30.1)
 
 The board's review bar (`blocking-medium`, the default) sends a card back for a MEDIUM only when the findings say `Blocking: yes` with a `Failure scenario:`. The verifier never wrote either, so on the board a confirmed MEDIUM that broke a Done-when line passed as "Review passed. Risk low." (tempo-bench TB-2, TB-3), while the terminal flow sent it back. From 0.30.1:

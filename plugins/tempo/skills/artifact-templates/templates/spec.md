@@ -3,6 +3,7 @@ Lane: {{M|L}} · Inputs: task.md, context.md · Issued by: architect
 
 ## 1 Assumptions and open decisions
 - Assumption: {{copied from the Task Card, plus any the architect added}}
+- Done-when map: {{each Task Card DW-n and the criteria that prove it (DW-1 → AC-2, AC-3), or the later stage that does it (DW-2 → Ship: PR body `Closes #93`)}}
 - D-1: {{question}} Options: (a) {{option}} (b) {{option}}. Recommended: {{a}}, because {{reason}}.
 
 ## 2 Terms
