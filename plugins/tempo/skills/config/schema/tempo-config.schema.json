@@ -223,6 +223,11 @@
           "type": "array",
           "items": {"type": "string"},
           "description": "Globs. A change to a matching file runs FULL bars even when full_bars is on_demand."
+        },
+        "no_code_paths": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Globs added to the built-in no-code set (*.md; .rst, .txt and .adoc under docs/; images; LICENSE). Any other file under docs/ (a docs site's config, components, .mdx) is code. When every changed path matches one and none matches full_paths, bars prints BARS: NONE: the integrate merges and runs no build, lint or test command, whatever full_bars says."
         }
       }
     },

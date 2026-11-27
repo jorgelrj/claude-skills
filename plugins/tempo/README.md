@@ -512,3 +512,12 @@ For a repo whose PR checks run the suites and an AI review, so a weak laptop run
 - PLAN-ONLY together with a split (plan.md slices per group of orders) has not run yet.
 - Whether MISSING-SOURCE (0.13.0) stops for things Jorge would rather TEMPO stand in for, and whether the `decide` text check refuses real decisions; both show in the run's esc files and stderr.
 - Whether slugs (0.11.0) read well as branch names, and whether outward text still names a local id; `git log --all | grep -E 'T-[0-9]+'` finds leftovers.
+
+### No bars for a doc-only change (0.31.0)
+
+The first real run of the TEMPO app took a one-line wording change in `docs/*.md` through Work. The integrator spent 5 minutes on the repo's whole `build` and `lint` commands for a diff that touched no code, because `bars` printed `BARS: NARROW` for any routine change. From 0.31.0:
+
+- **`BARS: NONE`.** `<cfg> bars --paths` prints `BARS: NONE  WHY: no code paths (docs only)`, and no `ALWAYS:` or `SLOW:` line, when every path is Markdown, a `.rst`, `.txt` or `.adoc` file under `docs/`, an image or `LICENSE`, and none matches `gates.full_paths`. It wins over every `gates.full_bars` value and `--critical`. A new key, `gates.no_code_paths`, adds globs to that set. Any other file under `docs/` (a docs site's config, components, `.mdx` pages) is code and keeps its bars.
+- **Integrator.** Under NONE it merges and runs no test, typecheck, build, lint or target command, and writes `Bars: NONE` with the reason in §4 of `integration.md`. The template's §4 now starts with a `Bars:` line.
+- **Work orders.** Architect HANDOFF gets the `BARS:` line too. A doc-only order's §5 is a content check (`grep` for the new wording, the old wording gone) instead of build and lint.
+- **Upgrade order.** A config that sets `gates.no_code_paths` fails `check` on 0.30 and older, so update every machine first.

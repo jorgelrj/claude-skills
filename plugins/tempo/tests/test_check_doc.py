@@ -280,5 +280,41 @@ class FindingsRules(unittest.TestCase):
         self.assertEqual(self.check("- Note: NIL", severity="LOW"), [])
 
 
+
+INTEGRATION_NONE = """\
+# Integration Report: T-2
+Inputs: report-01.md · Issued by: integrator
+
+## 1 Branch
+- Integration branch: docs/fix-wording
+- Base: main at abc123
+
+## 2 Merged orders
+- WO-01: tempo/fix-wording-wo-01 merged at def456
+
+## 3 Conflicts
+- NIL
+
+## 4 Verification
+- Bars: NONE: no code paths (docs only)
+- NIL: no command runs on a diff with no code
+
+## 5 Result
+PASS
+
+## 6 Returned to build
+- NIL
+"""
+
+
+class IntegrationRules(unittest.TestCase):
+    def test_a_doc_only_integrate_with_no_command_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "integration.md"
+            p.write_text(INTEGRATION_NONE, encoding="utf-8")
+            findings, _ = check_doc.check_file(str(p), check_doc.load_templates())
+            self.assertEqual(findings, [])
+
+
 if __name__ == "__main__":
     unittest.main()

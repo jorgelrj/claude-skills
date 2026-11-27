@@ -31,6 +31,7 @@ gates:
     - "**/Cargo.lock"
     - "**/go.sum"
     - "**/.fvmrc"
+  no_code_paths: []      # globs added to the built-in no-code set (*.md, .rst, .txt and .adoc under docs/, images, LICENSE); a diff of only these runs BARS: NONE
 git:
   base_branch: main
   branch: "{type}/{ticket}"    # pushed, opens the PR: feat/AV-1, fix/fix-safari-export. {ticket} is the key, else a slug
