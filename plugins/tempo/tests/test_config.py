@@ -142,6 +142,27 @@ class Config(unittest.TestCase):
         self.assertEqual(self.cfg("targets", "--paths", "app/lib/foo.dart", "--full"),
                          "web\tcd app && melos run test:web:full\tadvisory\n" + e2e)
 
+    def test_bars_are_none_for_a_change_with_no_code(self):
+        none = "BARS: NONE  WHY: no code paths (docs only)\n"
+        self.write(OLD + "tests:\n  always: [app/test/guard_test.dart]\n")
+        self.assertEqual(self.cfg("bars", "--paths", "docs/a.md", "README.md"), none)  # no ALWAYS: line either
+        self.assertEqual(self.cfg("bars", "--paths", "docs/guide/setup.txt", "app/assets/logo.png", "LICENSE"), none)
+        self.assertEqual(self.cfg("bars", "--critical", "--paths", "docs/a.md"), none)
+        narrow = "BARS: NARROW  WHY: routine change\nALWAYS: app/test/guard_test.dart\n"
+        for code in ("docs/src/x.ts", "docs/site/config.js", "docs/pages/intro.mdx"):  # a docs site is code
+            self.assertEqual(self.cfg("bars", "--paths", code, "docs/a.md"), narrow)
+        self.assertEqual(self.cfg("bars", "--paths", "docs/a.md", "src/x.ts"),
+                         "BARS: NARROW  WHY: routine change\nALWAYS: app/test/guard_test.dart\n")
+        self.assertEqual(self.cfg("bars"), "BARS: NARROW  WHY: routine change\nALWAYS: app/test/guard_test.dart\n")
+        for gate in ("ci", "verify", "integrate"):
+            self.write(OLD + f"gates:\n  full_bars: {gate}\nlimits:\n  ci_rounds: 3\n")
+            self.assertEqual(self.cfg("bars", "--paths", "docs/a.md"), none)
+            self.assertNotEqual(self.cfg("bars", "--paths", "docs/a.md", "src/x.ts"), none)
+        self.write(OLD + "gates:\n  no_code_paths: ['*.txt']\n  full_paths: ['CODEOWNERS.md']\n")
+        self.assertIn("PASS: ", self.cfg("check"))
+        self.assertEqual(self.cfg("bars", "--paths", "notes.txt", "README.md"), none)
+        self.assertEqual(self.cfg("bars", "--paths", "CODEOWNERS.md"), "BARS: FULL  WHY: gates.full_paths matches CODEOWNERS.md\n")
+
     def test_bars_print_always_and_the_slow_files_a_change_touches_or_mirrors(self):
         for f in ("app/lib/bar.dart", "app/test/bar_test.dart"):
             (self.repo / f).write_text("")

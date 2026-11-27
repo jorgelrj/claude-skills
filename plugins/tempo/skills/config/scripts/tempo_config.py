@@ -41,7 +41,9 @@ Commands:
                                          its whole command prints `# DEFERRED whole suite` instead.
                                          Under gates.full_bars: ci a target prints `# DEFERRED to CI` (its
                                          command with --verify); a run: ci target never prints
-  bars    [--paths P ...] [--critical]   print the bars an integrate runs: BARS: FULL|NARROW and why. With
+  bars    [--paths P ...] [--critical]   print the bars an integrate runs: BARS: FULL|NARROW and why. NONE, and
+                                         nothing more, when every path is docs, images or LICENSE (plus
+                                         gates.no_code_paths) and none is in gates.full_paths. With
                                          gates.full_bars: verify it is NARROW, plus a DEFERRED: line when the
                                          change would have run the whole suite. With gates.full_bars: ci it is
                                          LOCAL plus a DEFERRED: ci line. Then one ALWAYS: line per
@@ -798,6 +800,20 @@ def full_bars(cfg):
     return (cfg.get("gates") or {}).get("full_bars")
 
 
+# Paths no build, lint or test reads: a diff made only of these runs BARS: NONE. gates.no_code_paths adds to it.
+# Under docs/ only text and images: a docs site's config, components and .mdx pages are code.
+NO_CODE_PATHS = ["*.md", "docs/*.rst", "docs/*.txt", "docs/*.adoc", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.svg", "*.webp", "*.ico", "LICENSE", "LICENSE.*"]
+
+
+def no_code_change(cfg, paths):
+    """True when paths is not empty and every path is outside code: in the no-code set and in no gates.full_paths glob."""
+    gates = cfg.get("gates") or {}
+    pats = NO_CODE_PATHS + list(gates.get("no_code_paths") or [])
+    full = gates.get("full_paths") or []
+    return bool(paths) and all(any(_matches(f, p) for p in pats) and not any(_matches(f, p) for p in full)
+                               for f in paths)
+
+
 def ci_gaps(cfg):
     """Settings that make the local tier or CI-WAIT a trap."""
     out, rounds = [], (cfg.get("limits") or {}).get("ci_rounds") or 0
@@ -1133,6 +1149,9 @@ def main(argv=None):
         if a.cmd == "bars":
             gates = cfg.get("gates") or {}
             hit = [f for f in a.paths if any(_matches(f, pat) for pat in gates.get("full_paths") or [])]
+            if no_code_change(cfg, a.paths):  # nothing a build, lint or test reads: whatever the gate or critical flag
+                print("BARS: NONE  WHY: no code paths (docs only)")
+                return 0
             if gates.get("full_bars") == "ci":  # the local tier: whole suites, build and targets run in the PR's CI
                 print("BARS: LOCAL  WHY: gates.full_bars is ci")
                 print("DEFERRED: ci" + (" (critical change)" if a.critical else ""))
