@@ -65,6 +65,15 @@ Commands:
                                          sync: sets for the event (Jira via atlassian-multi's atl.py, GitHub
                                          via gh and its Projects board). Prints ASSIGNED:/MOVED:/WARN:/SYNC: OFF
                                          lines and exits 0 whatever the tracker answers
+  keys    [PREFIX ...] [--format tsv|json]
+                                         one line per config key in the schema: key, resolved value (JSON), the
+                                         file that set it (default|workspace|config|local|unset), the source
+                                         /tempo:init recorded (detected|answered|guess|default|machine) and a
+                                         flag: CHANGED (value differs from the record), GUESS, UNRECORDED or -
+  record  --source S KEY ... [--note N]  record each key's resolved value and where it came from in
+                                         .tempo/init-answers.yaml; an unchanged entry keeps its date
+  machine [--format lines|json]          this machine's CPUs, memory and load, and the concurrency to suggest
+                                         for config.local.yaml (SUGGEST: lines) plus TEST_WORKERS per test run
 Common option: --repo PATH (default: current directory).
 Exit codes: 0 ok, 1 invalid config or usage error, 2 missing dependency, 3 dupes found.
 """
@@ -465,6 +474,7 @@ def resolve(repo_arg):
 
     defaults = load_yaml(DEFAULTS_PATH)
     defaults.pop("version", None)
+    labeled = [("default", copy.deepcopy(defaults))]  # (file kind, raw layer): `keys` names the file that set a key
     layers_before_tc = [defaults]
     layers_after_tc = []
     doc_layers = []  # (root, docs block); paths in a block are relative to its root
@@ -475,6 +485,7 @@ def resolve(repo_arg):
         errors += validate(ws, wpath)
         info["files"].append(str(wpath))
         layers_before_tc.append(ws.get("defaults") or {})
+        labeled.append(("workspace", copy.deepcopy({**(ws.get("defaults") or {}), **({"docs": ws["docs"]} if ws.get("docs") else {})})))
         if ws.get("docs"):
             doc_layers.append((ws_root, ws["docs"]))
         if repo:
@@ -485,6 +496,7 @@ def resolve(repo_arg):
                     if entry.get("docs"):
                         doc_layers.append((repo, entry["docs"]))
                     layers_after_tc.append(e)
+                    labeled.append(("workspace", copy.deepcopy({**e, **({"docs": entry["docs"]} if entry.get("docs") else {})})))
                     info["depends_on"] = entry.get("depends_on", []) or []
                     break
             else:
@@ -496,6 +508,7 @@ def resolve(repo_arg):
             rc = load_yaml(rpath)
             errors += validate(rc, rpath)
             rc.pop("version", None)
+            labeled.append(("config", copy.deepcopy(rc)))
             if rc.get("docs"):
                 doc_layers.append((repo, rc.pop("docs")))
             layers_after_tc.append(rc)
@@ -505,6 +518,7 @@ def resolve(repo_arg):
         elif lpath.is_file():
             rc, unmapped = migrate_md(lpath.read_text(encoding="utf-8"))
             rc.pop("version", None)
+            labeled.append(("config", copy.deepcopy(rc)))
             layers_after_tc.append(rc)
             info["files"].append(str(lpath) + " (legacy, converted on the fly)")
             info["warnings"].append(f"{lpath} is the legacy format; run `tempo_config.py migrate {lpath} > {rpath}`")
@@ -516,6 +530,7 @@ def resolve(repo_arg):
             mc.setdefault("version", 1)  # optional here: the file only overrides
             errors += validate(mc, mpath)
             mc.pop("version", None)
+            labeled.append(("local", copy.deepcopy(mc)))
             layers_after_tc.append(mc)
             info["files"].append(str(mpath))
             tracked = subprocess.run(["git", "-C", str(mpath.parents[1]), "ls-files", "--error-unmatch", str(LOCAL_FILE)],
@@ -533,6 +548,7 @@ def resolve(repo_arg):
         else:
             try:
                 tc = toolchain_layer(ws, tc_name)
+                labeled.insert(2, ("workspace", copy.deepcopy(tc)))  # merge order: after the workspace defaults
                 merged = {}
                 for layer in layers_before_tc + [tc] + layers_after_tc:
                     merged = deep_merge(merged, layer)
@@ -554,6 +570,7 @@ def resolve(repo_arg):
                          for n in repo_order(ws)]
     if errors:
         raise ConfigError("\n".join(errors))
+    info["_layers"] = labeled  # internal: never printed by resolve
     return merged, info
 
 
@@ -953,6 +970,189 @@ def migrate_md(text):
 
 # ---------- CLI ----------
 
+# ---------- init: every key, its source, and this machine ----------
+
+ANSWERS_FILE = Path(".tempo/init-answers.yaml")
+INIT_SOURCES = ("detected", "answered", "guess", "default", "machine")
+_UNSET = object()
+
+
+def schema_keys():
+    """Every setting of a repo file as a dotted key, in schema order: the leaves, where a mapping with fixed
+    properties stops (lists, maps of free keys and scalars are one key each). `version` is not a setting."""
+    defs = schema()["$defs"]
+
+    def node(n):
+        while "$ref" in n:
+            n = defs[n["$ref"].split("/")[-1]]
+        return n
+
+    def walk(n, path):
+        n = node(n)
+        if "properties" in n:
+            for k, v in n["properties"].items():
+                yield from walk(v, path + [k])
+        else:
+            yield ".".join(path)
+
+    return [k for k in walk(defs["repoFile"], []) if k != "version"]
+
+
+def get_path(data, key):
+    cur = data
+    for part in key.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return _UNSET
+        cur = cur[part]
+    return cur
+
+
+def key_value(cfg, key):
+    """The resolved value of a dotted key. docs.paths and docs.exclude add up over every docs block."""
+    if key in ("docs.paths", "docs.exclude"):
+        field = key.split(".")[1]
+        return [p for src in (cfg.get("docs") or {}).get("sources", []) for p in src[field]]
+    v = get_path(cfg, key)
+    return None if v is _UNSET else v
+
+
+def answers_path(repo):
+    """The init record: the repo's own, else the main checkout's when repo is a linked worktree."""
+    repo = Path(repo)
+    try:
+        common = subprocess.run(["git", "-C", str(repo), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                capture_output=True, text=True, check=True).stdout.strip()
+        if Path(common).name == ".git" and not (repo / ANSWERS_FILE).is_file():
+            return Path(common).parent / ANSWERS_FILE
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+    return repo / ANSWERS_FILE
+
+
+def load_answers(path):
+    if not path.is_file():
+        return {}
+    data = load_yaml(path)
+    keys = data.get("keys") or {}
+    if not isinstance(keys, dict):
+        raise ConfigError(f"{path}: keys: SHALL be a mapping of dotted key to {{source, value, at}}")
+    return keys
+
+
+def key_rows(cfg, info, prefixes=()):
+    """One row per schema key: value, the file kind that set it last, the init record and a flag.
+    flag: CHANGED when the value differs from the one recorded (the code, a hand edit or another file moved it),
+    GUESS when init recorded a guess, UNRECORDED when init never recorded the key, else empty."""
+    answers = load_answers(answers_path(info["repo"])) if info.get("repo") else {}
+    rows = []
+    for key in schema_keys():
+        if prefixes and not any(key == p or key.startswith(p.rstrip(".") + ".") for p in prefixes):
+            continue
+        value = key_value(cfg, key)
+        file = "default" if key.startswith("docs.") else "unset"  # docs: built in; else derived (pr.base) or absent
+        for kind, layer in info.get("_layers", []):
+            if get_path(layer, key) is not _UNSET:
+                file = kind
+        rec = answers.get(key) or {}
+        source = rec.get("source", "")
+        if not rec:
+            flag = "UNRECORDED"
+        elif rec.get("value") != value:
+            flag = "CHANGED"
+        elif source == "guess":
+            flag = "GUESS"
+        else:
+            flag = ""
+        rows.append({"key": key, "value": value, "file": file, "source": source, "flag": flag,
+                     "note": rec.get("note", "")})
+    return rows
+
+
+def record_keys(cfg, info, keys, source, note=None, today=None):
+    """Write each key's resolved value and its source to the init record. Unchanged entries keep their date,
+    so a rerun that changes nothing leaves the file as it was. Return the lines to print."""
+    known = set(schema_keys())
+    bad = [k for k in keys if k not in known]
+    if bad:
+        raise ConfigError("record: not a config key: " + ", ".join(bad) + " (`keys` lists them)")
+    if not info.get("repo"):
+        raise ConfigError("record: not inside a git repository")
+    path = answers_path(info["repo"])
+    answers = load_answers(path)
+    today = today or __import__("datetime").date.today().isoformat()
+    out, changed = [], False
+    for key in keys:
+        value = key_value(cfg, key)
+        old = answers.get(key) or {}
+        new = {"source": source, "value": value}
+        if note:
+            new["note"] = note
+        elif old.get("note") and old.get("source") == source:
+            new["note"] = old["note"]
+        if old and old.get("source") == source and old.get("value") == value and old.get("note") == new.get("note"):
+            out.append(f"UNCHANGED: {key} ({source})")
+            continue
+        new["at"] = today
+        answers[key] = new
+        changed = True
+        out.append(f"RECORDED: {key} = {json.dumps(value, ensure_ascii=False)} ({source})")
+    if changed:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        ordered = {k: answers[k] for k in [*schema_keys(), *sorted(answers)] if k in answers}
+        head = ("# Written by /tempo:init through tempo_config.py record: where each key's value came from, so a rerun\n"
+                "# asks only about what is new, a guess, or changed. Machine-local, like the rest of .tempo/.\n")
+        path.write_text(head + yaml.safe_dump({"version": 1, "keys": ordered}, sort_keys=False,
+                                              allow_unicode=True, width=1000), encoding="utf-8")
+    return out
+
+
+def machine_facts():
+    """CPUs, total and free memory in MB, and the 1-minute load, or None for what cannot be read here."""
+    facts = {"os": sys.platform, "cpus": os.cpu_count() or 1, "memory_mb": None, "free_mb": None, "load1": None}
+    try:
+        facts["load1"] = round(os.getloadavg()[0], 2)
+    except (OSError, AttributeError):  # Windows has no load average
+        pass
+    try:
+        if sys.platform.startswith("linux"):
+            with open("/proc/meminfo", encoding="utf-8") as f:
+                info = {l.split(":")[0]: int(l.split()[1]) for l in f if l.split()[1:2] and l.split()[1].isdigit()}
+            facts["memory_mb"] = info.get("MemTotal", 0) // 1024 or None
+            facts["free_mb"] = info.get("MemAvailable", 0) // 1024 or None
+        elif sys.platform == "darwin":
+            run = lambda *c: subprocess.run(list(c), capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL).stdout
+            facts["memory_mb"] = int(run("sysctl", "-n", "hw.memsize").strip()) // 2 ** 20
+            ncpu = run("sysctl", "-n", "hw.ncpu").strip()
+            facts["cpus"] = int(ncpu) if ncpu.isdigit() else facts["cpus"]
+            out = run("vm_stat")
+            page = int(re.search(r"page size of (\d+) bytes", out).group(1))
+            pages = dict(re.findall(r"^Pages ([a-z ]+):\s+(\d+)\.", out, re.M))
+            facts["free_mb"] = sum(int(pages.get(k, 0)) for k in ("free", "inactive", "speculative")) * page // 2 ** 20
+    except (OSError, ValueError, AttributeError, subprocess.TimeoutExpired):
+        pass
+    return facts
+
+
+def machine_suggest(f):
+    """Concurrency for this machine, from its facts. A starting point, tuned after a few runs:
+    a builder wants about 3 CPUs and 6 GB, a heavy run about 4 CPUs and 8 GB."""
+    cpus, mem_gb = f["cpus"], (f["memory_mb"] or 0) / 1024
+    builders = max(1, min(4, cpus // 3, int(mem_gb // 6) if f["memory_mb"] else 4))
+    slots = max(1, min(4, cpus // 4, int(mem_gb // 8) if f["memory_mb"] else 4))
+    limits = {"max_parallel_builders": builders, "heavy_slots": slots}
+    if f["memory_mb"] and f["free_mb"] is not None:
+        limits["heavy_min_free_mb"] = min(2048, max(512, f["memory_mb"] // 16 // 256 * 256))
+    notes = []
+    if f["load1"] is not None and f["load1"] / cpus > 0.7:
+        notes.append(f"the machine was busy when measured (load {f['load1']} / {cpus} CPUs); the suggestion counts "
+                     "CPUs and memory, not the load")
+    if f["memory_mb"] is None:
+        notes.append("total memory could not be read here; the suggestion counts CPUs only")
+    if f["free_mb"] is None:
+        notes.append("free memory cannot be read here, so heavy_min_free_mb stays off")
+    return {"limits": limits, "test_workers": max(1, cpus // builders), "notes": notes}
+
+
 class Parser(argparse.ArgumentParser):
     # Usage errors exit 1; 2 is reserved for a missing dependency (the orchestrator's uv fallback).
     def error(self, message):
@@ -997,6 +1197,12 @@ def main(argv=None):
     du = add("dupes"); du.add_argument("--ticket", required=True)
     du.add_argument("--branch", action="append", required=True, help="the task's own branch; repeat for a split task's slices")
     sy = add("sync"); sy.add_argument("event", choices=["start", "pr", "merged"]); sy.add_argument("--text", required=True)
+    ks = add("keys"); ks.add_argument("prefixes", nargs="*", help="only these keys or sections, e.g. limits pr.draft")
+    ks.add_argument("--format", choices=["tsv", "json"], default="tsv")
+    rc = add("record"); rc.add_argument("keys", nargs="+")
+    rc.add_argument("--source", required=True, choices=INIT_SOURCES)
+    rc.add_argument("--note", help="why: the evidence for a detected value, or what a guess rests on")
+    mh = add("machine"); mh.add_argument("--format", choices=["lines", "json"], default="lines")
     a = p.parse_args(argv)
 
     try:
@@ -1016,6 +1222,22 @@ def main(argv=None):
                 print("WARN: " + w)
             print("PASS: " + ", ".join(info["files"])); return 0
 
+        if a.cmd == "machine":
+            f = machine_facts()
+            sug = machine_suggest(f)
+            if a.format == "json":
+                print(json.dumps({"machine": f, **sug}, indent=2)); return 0
+            mem = f"{f['memory_mb']} MB memory" if f["memory_mb"] else "memory unknown"
+            free = f"{f['free_mb']} MB free" if f["free_mb"] is not None else "free memory unknown"
+            load = f"load {f['load1']}" if f["load1"] is not None else "no load average"
+            print(f"MACHINE: {f['os']}, {f['cpus']} CPUs, {mem}, {free}, {load}")
+            for k, v in sug["limits"].items():
+                print(f"SUGGEST: limits.{k}: {v}")
+            print(f"TEST_WORKERS: {sug['test_workers']}")
+            for n in sug["notes"]:
+                print(f"NOTE: {n}")
+            return 0
+
         if a.cmd == "migrate":
             cfg, unmapped = migrate_md(Path(a.file).read_text(encoding="utf-8"))
             out = "# Converted from " + a.file + " by tempo_config.py migrate.\n"
@@ -1034,7 +1256,7 @@ def main(argv=None):
             sys.stderr.write("WARN: " + w + "\n")
 
         if a.cmd == "resolve":
-            doc = {"config": cfg, "sources": info}
+            doc = {"config": cfg, "sources": {k: v for k, v in info.items() if not k.startswith("_")}}
             if a.format == "json":
                 print(json.dumps(doc, indent=2, ensure_ascii=False))
             else:
@@ -1244,6 +1466,21 @@ def main(argv=None):
             else:
                 print("\n".join(str(f) for f in files))
             return 0
+
+        if a.cmd == "keys":
+            rows = key_rows(cfg, info, a.prefixes)
+            if a.prefixes and not rows:
+                print(f"keys: no config key matches {' '.join(a.prefixes)}", file=sys.stderr); return 1
+            if a.format == "json":
+                print(json.dumps(rows, indent=2, ensure_ascii=False)); return 0
+            for r in rows:
+                v = json.dumps(r["value"], ensure_ascii=False)
+                v = v if len(v) <= 100 else v[:97] + "..."
+                print("\t".join([r["key"], v, r["file"], r["source"] or "-", r["flag"] or "-"]))
+            return 0
+
+        if a.cmd == "record":
+            print("\n".join(record_keys(cfg, info, a.keys, a.source, a.note))); return 0
 
         if a.cmd == "ticket":
             key, tr = find_ticket(cfg, a.text)

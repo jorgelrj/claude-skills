@@ -75,6 +75,7 @@ limits:
   heavy_max_load: 1.5     # a heavy run waits, holding its slot, while the 1-minute load per CPU is above this (0 = off)
   heavy_min_free_mb: 0    # ...or while free memory is under this many MB (0 = off)
   heavy_load_wait_minutes: 20  # past this the heavy run starts anyway
+  heavy_slots: 0          # heavy runs at once, machine-wide (0 = CPUs / 4, at least 1); per machine in config.local.yaml
 distill:
   suggest_after: 10       # finished sessions under .tempo/ before the orchestrator suggests /tempo:distill once (0 = never)
   abandoned_after_days: 30  # FAILED, ABORTED, closed-unmerged or no-PR sessions idle this long are offered to clear, with approval (0 = never)

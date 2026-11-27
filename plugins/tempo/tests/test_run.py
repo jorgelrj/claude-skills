@@ -251,6 +251,16 @@ class Load(Base):
         with mock.patch.object(tempo_run, "load1", return_value=None):  # Windows: no load average, slots only
             self.assertIsNone(tempo_run.busy({"max_load": 0.1}))
 
+    def test_heavy_slots_come_from_the_env_then_the_config_then_the_cpus(self):
+        with mock.patch.object(tempo_run.os, "cpu_count", return_value=12):
+            self.assertEqual(tempo_run.default_slots({}, {}), 3)
+            self.assertEqual(tempo_run.default_slots({"heavy_slots": 0}, {}), 3)  # 0: CPUs / 4
+            self.assertEqual(tempo_run.default_slots({"heavy_slots": 2}, {}), 2)
+            self.assertEqual(tempo_run.default_slots({"heavy_slots": 2}, {"TEMPO_HEAVY_SLOTS": "5"}), 5)
+            self.assertEqual(tempo_run.default_slots({"heavy_slots": 2}, {"TEMPO_HEAVY_SLOTS": "x"}), 2)
+        with mock.patch.object(tempo_run.os, "cpu_count", return_value=2):
+            self.assertEqual(tempo_run.default_slots(), 1)  # at least one
+
     def test_settings_come_from_the_env_then_the_config_then_the_defaults(self):
         self.assertEqual(tempo_run.room_settings({}, {}), {"max_load": 1.5, "min_free_mb": 0, "wait_minutes": 20})
         limits = {"heavy_max_load": 3, "heavy_min_free_mb": 1024, "heavy_load_wait_minutes": 5}

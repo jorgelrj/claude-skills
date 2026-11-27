@@ -357,6 +357,12 @@
           "maximum": 240,
           "description": "The longest a heavy run waits for load or memory; past it the run starts anyway and its summary says so. Env TEMPO_HEAVY_LOAD_WAIT_MINUTES overrides it."
         },
+        "heavy_slots": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 64,
+          "description": "Machine-wide slots for heavy runs (whole suites, platform targets, app builds): at most this many run at once. 0: CPUs / 4, at least 1. Per machine: set it in config.local.yaml (/tempo:init machine suggests it). Env TEMPO_HEAVY_SLOTS and tempo_run.py --slots override it."
+        },
         "ci_rounds": {
           "type": "integer",
           "minimum": 0,

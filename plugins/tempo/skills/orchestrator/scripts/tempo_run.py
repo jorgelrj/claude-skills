@@ -9,7 +9,7 @@ the agent calls `wait` with the printed ID until the summary comes. Nothing else
 polls: no background runs, no sleep loops, no reading of the log to see if it ended.
 
 --heavy takes one of a few machine-wide slots before it starts (default CPUs / 4, at
-least 1; env TEMPO_HEAVY_SLOTS or --slots). Use it for whole suites, platform targets
+least 1; limits.heavy_slots, env TEMPO_HEAVY_SLOTS or --slots). Use it for whole suites, platform targets
 and app builds: too many at once run slower than a queue. The wait happens inside the
 worker and is reported as WAITED. Scoped runs (one package, a few test files) do not
 take a slot, and never wait for load.
@@ -236,8 +236,16 @@ def summary(log, tail):
     return fails[:40], len(fails), [x[:300] for x in lines[-tail:]]
 
 
-def default_slots():
-    return int(os.environ.get("TEMPO_HEAVY_SLOTS") or max(1, (os.cpu_count() or 4) // 4))
+def default_slots(limits=None, env=None):
+    """Heavy slots: env TEMPO_HEAVY_SLOTS, then limits.heavy_slots (above 0), then CPUs / 4, at least 1."""
+    env = os.environ if env is None else env
+    for v in (env.get("TEMPO_HEAVY_SLOTS") or None, (limits or {}).get("heavy_slots") or None):
+        try:
+            if v is not None and int(v) > 0:
+                return int(v)
+        except (TypeError, ValueError):
+            continue
+    return max(1, (os.cpu_count() or 4) // 4)
 
 
 ROOM = {"max_load": 1.5, "min_free_mb": 0, "wait_minutes": 20}  # defaults.yaml limits.heavy_*: the same values
@@ -506,7 +514,7 @@ def main(argv=None):
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--heavy", action="store_true", help="take a machine-wide slot first")
     p.add_argument("--task", help="the task folder, .tempo/<task-id>")
-    p.add_argument("--slots", type=int, default=default_slots())
+    p.add_argument("--slots", type=int, help="heavy slots (default: env TEMPO_HEAVY_SLOTS, limits.heavy_slots, CPUs / 4)")
     p.add_argument("--label", help="a few words naming the run (default: the command)")
     p.add_argument("--log-dir", help="folder for the log (default: a new private temp folder)")
     p.add_argument("--tail", type=int, default=25)
@@ -527,6 +535,7 @@ def main(argv=None):
             limits = cfg["config"].get("limits") or {}
         except Exception:  # no config, or tempo_config.py cannot run here: the caller's flag decides, as before
             pass
+    a.slots = a.slots or default_slots(limits)
     # a hung run ends on its own; the default clears a whole suite or package folder several times over under load
     a.timeout = a.timeout or DEFAULT_TIMEOUT
     label = a.label or " ".join(cmd)[:80]

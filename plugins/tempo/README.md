@@ -43,7 +43,7 @@ After editing files here, restart Claude Code (Option A) or run `/plugin marketp
 | `/tempo:distill [--yes] [--delete]` | Save the rules Jorge gave in finished sessions into `.tempo/rules.md`, which every later run loads, then archive (or delete) those session folders. Shows the rules and sessions first and waits for a yes. Offers long-abandoned sessions and old `.tempo/archive/` folders in their own lists, only with an explicit yes (0.33.0). Never touches running tasks or tasks whose PR is still open (0.32.0) |
 | `/tempo:report [--task <id>] [--dry-run] <what went wrong>` | File a GitHub issue on the TEMPO repo about something TEMPO just did wrong, with the run's state, artifacts and transcript path attached; the task keeps going (0.19.0) |
 | `/tempo:dash [stop \| status] [folder]` | Start the local, read-only dashboard of running and recent tasks and print its URL; `stop` ends it (0.22.0) |
-| `/tempo:init [repo\|workspace] [notes]` | Write or update the TEMPO config for a repo or a multi-repo workspace, detected from the code |
+| `/tempo:init [repo\|workspace] [area] [notes]` | Write or update the TEMPO config for a repo or a multi-repo workspace and this machine: every key inferred from the code and the machine, asked, or kept at its default on purpose. `area` (`ci`, `pr`, `task`, `machine` ...) redoes one area |
 
 Everything for a task lives in `.tempo/<task-id>/` in the target repo. The task ID is the ticket key when the request names one (`AV-5696`), else `T-NNN`. A `T-NNN` id is local: each machine numbers its own tasks, so it never appears in a branch, commit, PR, issue or tracker (0.11.0). `tempo_state.py claim` hands out the id with an atomic mkdir, so tasks started in parallel never share one (0.17.1). TEMPO adds `.tempo/` to `.git/info/exclude`, so artifacts and config never show up in the diff.
 
@@ -581,3 +581,16 @@ Heavy runs were capped only by a fixed number of slots, so a heavy run took a fr
 - **Events.** `run-end` gains `load_wait`, the seconds spent waiting for load or memory, alongside `waited` (both waits) and `load1`.
 - **Defaults are a guess.** No `run-end` events from real runs were at hand when the defaults were chosen. Read `load1`, `waited`, `load_wait` and `killed` after some runs, and tune the keys.
 - **Upgrade order.** A config that sets any of these keys fails `check` on 0.34 and older, so update every machine first.
+
+### Init covers every key, asks what it cannot infer, and sizes the machine (0.36.0)
+
+`/tempo:init` detected commands, branches, docs and QA surfaces, but the keys the code cannot answer (CI, tracker, PRs, working style, this machine's concurrency) stayed at their defaults unless you knew to edit them, and init never asked (#27). From 0.36.0:
+
+- **Every key has a row.** `commands/init.md` §11 lists every schema key with its area and how init sets it: `infer`, `ask` or `default` on purpose. A test fails when a schema key has no row, so a new key cannot be skipped.
+- **Infer first, then ask.** New detection for CI (workflow files, required checks, CI-only platforms), the tracker (ticket keys in branches, commits and PR titles) and PR habits (`gh pr list`). What stays open is asked with AskUserQuestion in rounds by topic (CI, task management, PRs, working style, machine), at most 4 questions each, the inferred value first as `(Recommended)`.
+- **This machine.** `tempo_config.py machine` reads the CPUs, total and free memory and the load (`sysctl` on macOS, `/proc/meminfo` on Linux) and prints `SUGGEST: limits.max_parallel_builders`, `limits.heavy_slots` and `limits.heavy_min_free_mb`, plus `TEST_WORKERS` for a `-j N` flag. Init writes the accepted values to `.tempo/config.local.yaml`, never `config.yaml`.
+- **`limits.heavy_slots`.** A new key (default 0 = CPUs / 4) for the machine-wide heavy-run slots, so they can live in `config.local.yaml`. `tempo_run.py` reads `--slots`, then `TEMPO_HEAVY_SLOTS`, then the key (with `--task`), then CPUs / 4.
+- **Recorded, safe to rerun.** `tempo_config.py record --source detected|answered|guess|default|machine <key> ...` writes each key's value and source to `.tempo/init-answers.yaml`; an unchanged entry keeps its date, so a rerun with nothing new writes nothing. `tempo_config.py keys [prefix ...]` prints every key's value, the file that set it, its recorded source and a flag (`CHANGED`, `GUESS`, `UNRECORDED`). A rerun asks only about unrecorded keys, guesses and detections the code now contradicts, keeps your answers, and takes a hand edit as an answer.
+- **One area.** `/tempo:init ci`, `/tempo:init machine`, `/tempo:init pr` ... redo that area's keys only.
+- **Not covered.** TEMPO has no key for PR reviewers or labels; init says so when you name some.
+- **Upgrade order.** A config that sets `limits.heavy_slots` fails `check` on 0.35 and older, so update every machine first.

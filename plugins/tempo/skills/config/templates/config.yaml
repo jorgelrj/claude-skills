@@ -84,7 +84,7 @@ docs:                           # the project's own docs; agents read them befor
   exclude: []                   # globs or re: regexes to drop
   rules: true                   # conventions, ADRs and design-system docs count as review rules
 
-limits:
+limits:                         # the machine keys (max_parallel_builders, heavy_*) belong in config.local.yaml: /tempo:init machine
   max_parallel_builders: 3
   review_rounds: 3
   review_extensions: 1
@@ -96,6 +96,7 @@ limits:
   heavy_max_load: 1.5           # heavy runs wait while load per CPU is above this (0 = off); per machine in config.local.yaml
   heavy_min_free_mb: 0          # ...or while free memory is under this many MB (0 = off)
   heavy_load_wait_minutes: 20   # past this a heavy run starts anyway
+  # heavy_slots: 0              # heavy runs at once on this machine (0 = CPUs / 4)
 
 distill:
   suggest_after: 10             # finished sessions under .tempo/ before TEMPO suggests /tempo:distill once (0 = never)

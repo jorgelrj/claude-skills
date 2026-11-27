@@ -20,7 +20,7 @@ description: TEMPO's structured configuration. The YAML files (.tempo/config.yam
 1.3 A workspace file holds `defaults:` (shared settings), `toolchains:` (named sets of env, commands and worktree setup) and `repos:` (path, `depends_on`, toolchain, per-repo overrides).
 1.4 Inside the workspace file the merge order is: `defaults:`, then the toolchain the repo names, then the repo's own entry. The repo's `config.yaml` comes last.
 1.5 Mappings merge key by key. Lists and scalars replace. An explicit `null` command means "not available". `docs:` is the exception (2.6).
-1.5.1 The machine file. `config.local.yaml` takes the same keys as `config.yaml`, `version` optional, and holds what one machine needs: a slow laptop sets `limits.max_parallel_builders: 1` and caps its test runs with its own `commands.test_one` (`cd {package} && flutter test -j 2 {tests}`), or its own `commands.test_local` under `gates.full_bars: ci`, since that is the one `cmd test_one` prints there. A machine that runs emulators or other work beside TEMPO sets its own `limits.heavy_max_load` and `limits.heavy_min_free_mb`. Keep it out of git; `check` warns when it is committed. A linked worktree with no file of its own uses the main checkout's.
+1.5.1 The machine file. `config.local.yaml` takes the same keys as `config.yaml`, `version` optional, and holds what one machine needs: a slow laptop sets `limits.max_parallel_builders: 1` and caps its test runs with its own `commands.test_one` (`cd {package} && flutter test -j 2 {tests}`), or its own `commands.test_local` under `gates.full_bars: ci`, since that is the one `cmd test_one` prints there. A machine that runs emulators or other work beside TEMPO sets its own `limits.heavy_max_load` and `limits.heavy_min_free_mb`, and its own `limits.heavy_slots` (heavy runs at once; 0 = CPUs / 4). `/tempo:init machine` suggests these from `machine` (3.2) and writes them here. Keep it out of git; `check` warns when it is committed. A linked worktree with no file of its own uses the main checkout's.
 1.6 The schema is `schema/tempo-config.schema.json`. Unknown keys are errors. Add this first line to a config file for editor completion: `# yaml-language-server: $schema=<absolute path to the schema>`.
 
 ## 2 Values
@@ -114,6 +114,9 @@ qa:
 | `<cfg> repos` | workspace repos in dependency order, with paths |
 | `<cfg> docs [--format json]` | the doc files `docs:` matches, one absolute path per line, index files first; warns on a path that does not exist |
 | `<cfg> migrate <.tempo/config.md>` | the legacy markdown config as YAML on stdout; unmapped lines as comments |
+| `<cfg> keys [<prefix> ...] [--format json]` | one line per schema key: `key  value  file  source  flag`. `file` is the last file that sets it (`default`, `workspace`, `config`, `local`, `unset`); `source` is what `/tempo:init` recorded; `flag` is `CHANGED` (the value differs from the record), `GUESS`, `UNRECORDED` or `-`. A prefix matches whole parts (`limits`, `pr.draft`) |
+| `<cfg> record --source detected\|answered\|guess\|default\|machine <key> ... [--note <why>]` | writes each key's resolved value and source to `.tempo/init-answers.yaml` (the main checkout's from a linked worktree). An unchanged entry keeps its date and the file is not rewritten. Exit 1 on a key the schema lacks |
+| `<cfg> machine [--format json]` | `MACHINE:` CPUs, memory, free memory, load; `SUGGEST: limits.<key>: <n>` for `max_parallel_builders`, `heavy_slots` and `heavy_min_free_mb` (about 3 CPUs and 6 GB per builder, 4 CPUs and 8 GB per heavy run); `TEST_WORKERS: <n>` per test run; `NOTE:` for what could not be read |
 
 ## 4 Legacy config.md
 
@@ -124,4 +127,4 @@ qa:
 
 5.1 `templates/config.yaml`: a commented repo config.
 5.2 `templates/workspace.yaml`: a commented workspace config.
-5.3 `/tempo:init` fills one of them from what it detects in the repo or workspace.
+5.3 `/tempo:init` fills one of them from what it detects in the repo or workspace, asks about the rest, writes this machine's keys to `config.local.yaml`, and records each key's source with `record`.

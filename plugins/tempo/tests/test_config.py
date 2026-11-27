@@ -1,7 +1,7 @@
 """Tests for tempo_config.py: a config written for 0.21.0 still passes, gates.full_bars: verify, task.trackers,
 run: final targets, tests.always and tests.slow, dupes and the space WARN, the ci tier, run: ci targets, the
 machine override file, sync merged, the qa surfaces, worktree links kept out of commits, distill.suggest_after, and the
-scoped build and lint commands.
+scoped build and lint commands, and the keys, record and machine commands /tempo:init uses.
 
 Run: python3 -m unittest discover -s <plugin>/tests -v
 The script needs PyYAML and jsonschema. It runs the way tempo_procs.py runs it: `uv run --quiet` when uv is
@@ -423,6 +423,69 @@ class Config(unittest.TestCase):
             self.assertEqual(staged, ["app/lib/foo.dart"])
             exclude = (self.repo / ".git" / "info" / "exclude").read_text().splitlines()
             self.assertEqual([l for l in exclude if not l.startswith("#")], ["/node_modules", "/app/.fvm", "/.env.local"])
+
+    def test_init_covers_every_schema_key_in_its_table(self):
+        keys = [r["key"] for r in json.loads(self.cfg("keys", "--format", "json"))]
+        rows = {}
+        for line in (CONFIG.parents[1] / "commands" / "init.md").read_text().splitlines():
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if line.startswith("| `") and len(cells) == 4:
+                rows[cells[0].strip("`")] = cells[1:3]
+        self.assertEqual(sorted(set(keys) - set(rows)), [], "schema keys /tempo:init's table lacks")
+        self.assertEqual(sorted(set(rows) - set(keys)), [], "table rows that are not schema keys")
+        areas = {"commands", "git", "pr", "ci", "task", "style", "machine", "worktree", "docs", "qa"}
+        for key, (area, how) in rows.items():
+            self.assertIn(area, areas, key)
+            self.assertIn(how, {"infer", "ask", "default"}, key)
+        self.assertIn("limits.heavy_slots", keys)
+        self.assertNotIn("version", keys)
+
+    def test_keys_name_the_file_and_record_keeps_a_rerun_unchanged(self):
+        local = self.repo / ".tempo" / "config.local.yaml"
+        local.write_text("limits:\n  max_parallel_builders: 1\n")
+        rows = {r["key"]: r for r in json.loads(self.cfg("keys", "--format", "json"))}
+        self.assertEqual((rows["git.base_branch"]["value"], rows["git.base_branch"]["file"]), ("develop", "config"))
+        self.assertEqual((rows["limits.max_parallel_builders"]["value"], rows["limits.max_parallel_builders"]["file"]), (1, "local"))
+        self.assertEqual(rows["limits.qa_rounds"]["file"], "default")
+        self.assertEqual(rows["docs.rules"]["file"], "default")
+        self.assertEqual({r["flag"] for r in rows.values()}, {"UNRECORDED"})
+        self.cfg("keys", "limits.qa", code=1)  # a prefix matches whole parts: limits.qa is not limits.qa_rounds
+        self.assertEqual(len(self.cfg("keys", "pr", "distill").splitlines()), 10)
+        self.assertEqual(self.cfg("keys", "limits.qa_rounds"), "limits.qa_rounds\t3\tdefault\t-\tUNRECORDED\n")
+        self.cfg("keys", "nothing", code=1)
+
+        self.assertEqual(self.cfg("record", "--source", "detected", "git.base_branch", "task.tracker"),
+                         'RECORDED: git.base_branch = "develop" (detected)\nRECORDED: task.tracker = "github" (detected)\n')
+        self.cfg("record", "--source", "guess", "--note", "two branches", "task.ticket_pattern")
+        self.cfg("record", "--source", "machine", "limits.max_parallel_builders")
+        answers = self.repo / ".tempo" / "init-answers.yaml"
+        before = answers.read_text()
+        self.assertEqual(self.cfg("record", "--source", "detected", "git.base_branch"), "UNCHANGED: git.base_branch (detected)\n")
+        self.assertEqual(answers.read_text(), before)  # a rerun that changes nothing writes nothing
+        self.assertIn("RECORDED", self.cfg("record", "--source", "answered", "git.base_branch"))  # a new source is a change
+        self.cfg("record", "--source", "detected", "git.base_branch")
+        self.assertIn("not a config key: pr.reviewers", self.cfg("record", "--source", "answered", "pr.reviewers", code=1))
+
+        self.write(OLD.replace("base_branch: develop", "base_branch: main"))  # the code moved on: the record is stale
+        flags = {r["key"]: (r["flag"], r["source"], r["note"]) for r in json.loads(self.cfg("keys", "--format", "json"))}
+        self.assertEqual(flags["git.base_branch"], ("CHANGED", "detected", ""))
+        self.assertEqual(flags["task.tracker"], ("", "detected", ""))
+        self.assertEqual(flags["task.ticket_pattern"], ("GUESS", "guess", "two branches"))
+        self.assertEqual(flags["limits.max_parallel_builders"][0], "")
+        self.assertIn("PASS", self.cfg("check"))
+
+    def test_machine_suggests_keys_the_local_file_accepts(self):
+        out = self.cfg("machine")
+        self.assertTrue(out.startswith("MACHINE: "), out)
+        self.assertIn("TEST_WORKERS: ", out)
+        doc = json.loads(self.cfg("machine", "--format", "json"))
+        self.assertGreaterEqual(doc["machine"]["cpus"], 1)
+        self.assertTrue({"max_parallel_builders", "heavy_slots"} <= set(doc["limits"]))
+        self.assertGreaterEqual(doc["test_workers"], 1)
+        lines = "".join(f"  {k}: {v}\n" for k, v in doc["limits"].items())
+        (self.repo / ".tempo" / "config.local.yaml").write_text("limits:\n" + lines)
+        self.assertIn("PASS", self.cfg("check"))
+        self.assertEqual(json.loads(self.cfg("resolve"))["config"]["limits"]["heavy_slots"], doc["limits"]["heavy_slots"])
 
 
 
